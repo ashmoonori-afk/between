@@ -1,7 +1,7 @@
 {
   "project": "between-gateway-forge",
   "methodology": "PWSForge (builtin: .claude/skills/PWSForge)",
-  "phase": "3-telegram-discord",
+  "phase": "4-onboarding",
   "phases": [
     "0-intake",
     "1-interview",
@@ -17,6 +17,7 @@
   "decisions": {
     "credentials": "none -> echo first",
     "gateway": "native node port",
-    "forge": "skill files + programmatic phases"
+    "forge": "skill files + programmatic phases",
+    "onboarding": "wizard: env-only tokens + smoke; between onboard"
   }
 }

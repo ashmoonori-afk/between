@@ -1,3 +1,4 @@
+import * as readline from 'node:readline/promises'
 import { Command } from 'commander'
 import { execa } from 'execa'
 import { SystemClock } from './core/clock'
@@ -60,10 +61,59 @@ program
       print(`  project: ${res.project.name}`)
       if (res.project.obsidian_project_path)
         print(`  vault:   ${res.project.obsidian_project_path}`)
+      if (!res.alreadyExisted) print('  next:    run `between onboard` to wire a chat gateway')
     } catch (e) {
       await fail(e)
     }
   })
+
+program
+  .command('onboard')
+  .description(
+    'First-run wizard: scaffold the workspace, pick a gateway channel, and smoke-test it',
+  )
+  .option('--channel <name>', 'gateway channel: echo | telegram | discord')
+  .option('--agent <preset>', 'agent wrappers: fake | claude | codex')
+  .option('--vault <path>', 'Obsidian vault root for human-readable project memory')
+  .option('--chat-id <id>', 'telegram chat id or discord channel id to notify (non-secret)')
+  .option('--yes', 'non-interactive: use flags/defaults, never prompt')
+  .action(
+    async (opts: {
+      channel?: string
+      agent?: string
+      vault?: string
+      chatId?: string
+      yes?: boolean
+    }) => {
+      const { runOnboard } = await import('./onboard/wizard')
+      const interactive = Boolean(process.stdin.isTTY) && !opts.yes
+      const rl = interactive
+        ? readline.createInterface({ input: process.stdin, output: process.stdout })
+        : null
+      try {
+        await runOnboard(
+          root(),
+          {
+            channel: opts.channel as never,
+            agent: opts.agent as never,
+            vault: opts.vault,
+            chatId: opts.chatId,
+            nonInteractive: !interactive,
+          },
+          {
+            ask: async (q) => (rl ? (await rl.question(q)).trim() : ''),
+            print,
+            env: process.env,
+          },
+        )
+        print('between: onboarding complete')
+      } catch (e) {
+        await fail(e)
+      } finally {
+        rl?.close()
+      }
+    },
+  )
 
 program
   .command('status')
