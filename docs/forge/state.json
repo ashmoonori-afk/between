@@ -1,7 +1,7 @@
 {
   "project": "between-gateway-forge",
   "methodology": "PWSForge (builtin: .claude/skills/PWSForge)",
-  "phase": "1-interview",
+  "phase": "2-gateway-core",
   "phases": [
     "0-intake",
     "1-interview",
