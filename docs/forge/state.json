@@ -1,7 +1,7 @@
 {
   "project": "between-gateway-forge",
   "methodology": "PWSForge (builtin: .claude/skills/PWSForge)",
-  "phase": "4-onboarding",
+  "phase": "5-forge-wiring",
   "phases": [
     "0-intake",
     "1-interview",
@@ -17,7 +17,7 @@
   "decisions": {
     "credentials": "none -> echo first",
     "gateway": "native node port",
-    "forge": "skill files + programmatic phases",
+    "forge": "builtin: between forge phase-machine + CLI-forced build handoff to broker",
     "onboarding": "wizard: env-only tokens + smoke; between onboard"
   }
 }
