@@ -1,0 +1,98 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PWSForge State",
+  "type": "object",
+  "required": [
+    "project_name",
+    "current_phase",
+    "phase_status",
+    "platform_priority",
+    "approved_assumptions",
+    "open_questions",
+    "open_blockers",
+    "decisions",
+    "last_verified_command",
+    "last_verified_result",
+    "next_recommended_action"
+  ],
+  "properties": {
+    "project_name": { "type": "string" },
+    "current_phase": {
+      "type": "string",
+      "enum": [
+        "intake",
+        "interview",
+        "startup_prd",
+        "ui_direction",
+        "handoff_prd",
+        "architecture_stack",
+        "implementation_plan",
+        "build",
+        "qa",
+        "release_prep",
+        "deployment_upload",
+        "retrospective"
+      ]
+    },
+    "phase_status": {
+      "type": "string",
+      "enum": ["not_started", "in_progress", "blocked", "ready_for_review", "approved", "verified"]
+    },
+    "platform_priority": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "desired_output_depth": { "type": "string" },
+    "approved_assumptions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "open_blockers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["severity", "description"],
+        "properties": {
+          "severity": { "type": "string", "enum": ["P0", "P1", "P2", "P3"] },
+          "description": { "type": "string" },
+          "evidence": { "type": "string" },
+          "owner": { "type": "string" },
+          "next_action": { "type": "string" }
+        }
+      }
+    },
+    "selected_stack": { "type": "object" },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["decision", "reason"],
+        "properties": {
+          "decision": { "type": "string" },
+          "reason": { "type": "string" },
+          "alternatives_considered": { "type": "array", "items": { "type": "string" } },
+          "date": { "type": "string" }
+        }
+      }
+    },
+    "phase_scores": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "average": { "type": "number" },
+          "p0_blockers": { "type": "integer" },
+          "notes": { "type": "string" }
+        }
+      }
+    },
+    "last_verified_command": { "type": "string" },
+    "last_verified_result": { "type": "string" },
+    "last_verified_artifact": { "type": "string" },
+    "next_recommended_action": { "type": "string" }
+  }
+}
