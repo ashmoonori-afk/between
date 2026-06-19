@@ -1,63 +1,37 @@
-import { readFile } from 'node:fs/promises'
-import type { BetweenConfig } from '../core/config-schema'
-import type {
-  ApprovalScope,
-  BetweenEvent,
-  BetweenState,
-  Clock,
-  EventName,
-  SignalTarget,
-  SignalTransport,
-} from '../core/types'
+import type { BetweenEvent, BetweenState, EventName } from '../core/types'
 import { transition } from '../core/fsm'
-import { setPhase, touch, recordReviewedHash, isAlreadyReviewed } from '../core/state'
-import { openCycle, isCycleCapReached, cycleName } from '../core/cycle'
-import { stepDebounce, emptyDebounce } from '../core/debounce'
-import { hashDiff, isEmptyDiff } from '../core/diff-hash'
-import { redactSecrets } from '../core/redact'
-import {
-  parseReviewRecord,
-  parseVerifyRecord,
-  reviewMatchesCurrent,
-  reviewIsClean,
-  cycleShouldEnd,
-} from '../core/findings'
-import type { GitAdapter } from '../adapters/git'
-import type { StateRepository } from '../adapters/state-repository'
-import type { EventsLog } from '../adapters/events-log'
-import type { SnapshotStore } from '../adapters/snapshot-store'
-import type { CommandBus, Command } from '../adapters/command-bus'
-import { buildSignal, reviewerSignalBody, developerSignalBody } from '../adapters/signal-transport'
-import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
+import { setPhase, touch } from '../core/state'
 import { reconcile } from './reconcile'
+import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
+import { watchForNewDiff, runDebounce, awaitAck, awaitReview, handleReviewWritten } from './phases'
+import { drainCommands } from './commands'
 
-export interface DaemonDeps {
-  root: string
-  config: BetweenConfig
-  clock: Clock
-  git: GitAdapter
-  state: StateRepository
-  events: EventsLog
-  transport: SignalTransport
-  snapshots: SnapshotStore
-  commands: CommandBus
-  log?: (msg: string) => void
-}
+export type { DaemonDeps } from './context'
 
 /**
- * The broker daemon. Composes core (FSM, debounce, hashing) with adapters (git, state,
- * events, transport, snapshots) into the §8 poll loop. `tick()` performs exactly one
- * iteration and is the unit the integration tests drive with a controllable clock.
+ * The broker daemon. Owns the single-writer state (`persist`/`emit`/`dispatch`) and the §8
+ * poll loop; the phase/command handlers live in phases.ts / commands.ts and reach state
+ * through a `DaemonContext`. `tick()` performs exactly one iteration and is the unit the
+ * integration tests drive with a controllable clock.
  */
 export class Daemon {
   private current: BetweenState
   private stopRequested = false
+  private readonly ctx: DaemonContext
 
   constructor(
     private readonly deps: DaemonDeps,
     initial: BetweenState,
   ) {
     this.current = initial
+    this.ctx = {
+      deps: this.deps,
+      current: () => this.current,
+      persist: (next) => this.persist(next),
+      emit: (event, extra) => this.emit(event, extra),
+      dispatch: (event, mutate) => this.dispatch(event, mutate),
+      requestStop: () => this.requestStop(),
+    }
   }
 
   get state(): BetweenState {
@@ -83,10 +57,7 @@ export class Daemon {
     await this.deps.state.write(next)
   }
 
-  private async emit(
-    event: string,
-    extra?: { target?: SignalTarget; diff_hash?: string; detail?: Record<string, unknown> },
-  ): Promise<void> {
+  private async emit(event: string, extra?: EmitExtra): Promise<void> {
     const e: Omit<BetweenEvent, 'v'> = {
       ts: this.deps.clock.nowIso(),
       cycle: this.current.workflow.cycle,
@@ -120,7 +91,7 @@ export class Daemon {
   // ---- one iteration -------------------------------------------------------
 
   async tick(): Promise<void> {
-    await this.drainCommands()
+    await drainCommands(this.ctx)
     const phase = this.current.workflow.phase
     if (phase === 'paused' || phase === 'done') return
 
@@ -154,19 +125,19 @@ export class Daemon {
         break
       case 'developing':
       case 'applying_review':
-        await this.watchForNewDiff()
+        await watchForNewDiff(this.ctx)
         break
       case 'debouncing':
-        await this.runDebounce()
+        await runDebounce(this.ctx)
         break
       case 'review_requested':
-        await this.awaitAck()
+        await awaitAck(this.ctx)
         break
       case 'reviewing':
-        await this.awaitReview()
+        await awaitReview(this.ctx)
         break
       case 'review_written':
-        await this.handleReviewWritten()
+        await handleReviewWritten(this.ctx)
         break
       default:
         break // idle, human_gate, error, verifying: driven by commands / external records
@@ -187,417 +158,8 @@ export class Daemon {
   requestStop(): void {
     this.stopRequested = true
   }
-
-  // ---- phase handlers ------------------------------------------------------
-
-  private async currentDiff() {
-    const input = await this.deps.git.diffInput({
-      reviewUntracked: this.deps.config.review_untracked,
-      untrackedGlobs: this.deps.config.untracked_file_globs,
-    })
-    return { input, hash: isEmptyDiff(input) ? null : hashDiff(input) }
-  }
-
-  private async watchForNewDiff(): Promise<void> {
-    const { hash } = await this.currentDiff()
-    if (
-      hash !== null &&
-      hash !== this.current.diff.hash &&
-      !isAlreadyReviewed(this.current, hash)
-    ) {
-      const c = this.deps.clock
-      const step = stepDebounce(
-        emptyDebounce(),
-        hash,
-        c.nowIso(),
-        c.now(),
-        this.deps.config.diff_debounce_seconds,
-      )
-      await this.dispatch('diff_detected', (s) => ({
-        ...s,
-        debounce: step.state,
-        diff: { ...s.diff, previous_hash: s.diff.hash },
-      }))
-      return
-    }
-    // no new diff: time out applying_review if the developer never produced a fix (P3-13)
-    if (
-      this.current.workflow.phase === 'applying_review' &&
-      this.signalTimedOut(this.deps.config.developer_timeout_seconds)
-    ) {
-      await this.dispatch('developer_timeout', (s) => ({
-        ...s,
-        workflow: { ...s.workflow, error: this.timeoutError('developer did not produce a fix') },
-      }))
-    }
-  }
-
-  private async runDebounce(): Promise<void> {
-    const { input, hash } = await this.currentDiff()
-    if (hash === null) {
-      await this.dispatch('diff_reverted', (s) => ({ ...s, debounce: emptyDebounce() }))
-      return
-    }
-    const c = this.deps.clock
-    const step = stepDebounce(
-      this.current.debounce,
-      hash,
-      c.nowIso(),
-      c.now(),
-      this.deps.config.diff_debounce_seconds,
-    )
-
-    if (step.decision === 'restarted') {
-      await this.dispatch('diff_changed', (s) => ({ ...s, debounce: step.state }))
-      return
-    }
-    if (step.decision === 'started' || step.decision === 'pending') {
-      await this.persist(touch({ ...this.current, debounce: step.state }, c))
-      return
-    }
-
-    // stable
-    if (isAlreadyReviewed(this.current, hash)) {
-      await this.dispatch('diff_reverted', (s) => ({ ...s, debounce: emptyDebounce() }))
-      return
-    }
-    if (
-      isCycleCapReached(
-        this.current.workflow.cycles_this_goal,
-        this.deps.config.max_cycles_per_goal,
-      )
-    ) {
-      await this.dispatch('max_cycles_reached', (s) => ({ ...s, debounce: emptyDebounce() }))
-      return
-    }
-    await this.openCycleAndSignal(input.tracked, hash)
-  }
-
-  private async openCycleAndSignal(trackedDiff: string, hash: string): Promise<void> {
-    const counters = openCycle({
-      cycle: this.current.workflow.cycle,
-      cycles_this_goal: this.current.workflow.cycles_this_goal,
-    })
-    const summary = await this.deps.git.summary()
-    const redacted = redactSecrets(trackedDiff)
-    await this.deps.snapshots.write(
-      counters.cycle,
-      redacted.text,
-      this.deps.config.snapshot_retention_cycles,
-      this.deps.config.snapshot_max_total_mb,
-    )
-    const snapRel = `.between/snapshots/${cycleName(counters.cycle)}.diff.gz`
-
-    // persist the new cycle + diff state BEFORE sending any signal (I11)
-    await this.dispatch('diff_stable', (s) => ({
-      ...s,
-      workflow: {
-        ...s.workflow,
-        cycle: counters.cycle,
-        cycles_this_goal: counters.cycles_this_goal,
-      },
-      diff: {
-        hash,
-        previous_hash: this.current.diff.hash,
-        changed_files: summary.changed_files,
-        insertions: summary.insertions,
-        deletions: summary.deletions,
-        snapshot_path: snapRel,
-      },
-      debounce: emptyDebounce(),
-    }))
-
-    const sig = buildSignal(
-      'reviewer',
-      counters.cycle,
-      hash,
-      reviewerSignalBody(),
-      this.deps.clock.nowIso(),
-    )
-    await this.deps.transport.send(sig)
-    await this.persist(
-      touch(
-        {
-          ...this.current,
-          // preserve the phase-projected broker.status; only the genuine (non-derived)
-          // signal fields are updated here, so this second persist can't drift from the
-          // projection (HIGH-1 / I12). last_signal_at is stamped AFTER send, by design.
-          broker: {
-            ...this.current.broker,
-            last_signal: 'review_requested',
-            last_signal_at: this.deps.clock.nowIso(),
-          },
-        },
-        this.deps.clock,
-      ),
-    )
-    await this.emit('signal_sent', { target: 'reviewer', diff_hash: hash })
-    if (redacted.redactedCount > 0) {
-      await this.emit('snapshot_redacted', { detail: { count: redacted.redactedCount } })
-    }
-  }
-
-  private expectedSignalId(): string | null {
-    const hash = this.current.diff.hash
-    if (!hash) return null
-    return buildSignal('reviewer', this.current.workflow.cycle, hash, '', '').id
-  }
-
-  private async awaitAck(): Promise<void> {
-    if (await this.superseded()) return // live diff changed -> abandon (P1-3)
-    const id = this.expectedSignalId()
-    if (id) {
-      const ack = await this.deps.transport.pollAck(id)
-      if (ack) {
-        await this.dispatch('review_acked')
-        return
-      }
-    }
-    if (this.signalTimedOut(this.deps.config.review_timeout_seconds)) {
-      await this.dispatch('review_timeout', (s) => ({
-        ...s,
-        workflow: { ...s.workflow, error: this.timeoutError('reviewer did not acknowledge') },
-      }))
-    }
-  }
-
-  private async awaitReview(): Promise<void> {
-    if (await this.superseded()) return // live diff changed -> abandon (P1-3)
-    const record = await this.readReview()
-    const hash = this.current.diff.hash
-    if (record && hash && reviewMatchesCurrent(record, hash)) {
-      await this.dispatch('review_written')
-      return
-    }
-    if (this.signalTimedOut(this.deps.config.review_timeout_seconds)) {
-      await this.dispatch('review_timeout', (s) => ({
-        ...s,
-        workflow: { ...s.workflow, error: this.timeoutError('reviewer did not write a review') },
-      }))
-    }
-  }
-
-  private async handleReviewWritten(): Promise<void> {
-    if (await this.superseded()) return // live diff changed under us -> abandon (P1-3)
-    const record = await this.readReview()
-    if (!record) {
-      await this.maybeReviewTimeout('reviewer did not write a review')
-      return
-    }
-    // ignore a review file replaced with one for a different cycle/hash (TOCTOU, I14, HIGH-2)
-    if (record.diff_hash !== this.current.diff.hash) return
-    if (reviewIsClean(record)) {
-      const verify = await this.readVerify()
-      if (cycleShouldEnd(record, verify)) {
-        // commit the hash as reviewed ONLY when the cycle actually completes (I4, HIGH-3)
-        const reviewed = this.current.diff.hash
-        await this.dispatch('verify_passed', (s) =>
-          reviewed ? recordReviewedHash(s, reviewed) : s,
-        )
-        return
-      }
-      // verify is present but failed / hash-mismatched -> back to developing, not a stall (P1-4)
-      if (verify && (!verify.passed || verify.diff_hash !== record.diff_hash)) {
-        await this.dispatch('verify_failed', (s) => ({
-          ...s,
-          workflow: { ...s.workflow, error: this.timeoutError('verification did not pass') },
-        }))
-        return
-      }
-      // clean review, verify still missing -> wait, but don't stall forever (P1-4)
-      await this.maybeReviewTimeout('verification did not arrive')
-      return
-    }
-    // blocking findings -> signal the developer, THEN move to applying_review (P1-1)
-    await this.sendDeveloperSignal(record.diff_hash)
-    await this.dispatch('review_applied')
-  }
-
-  /** Route to human_gate (via the universal review_timeout interrupt) once the wait runs out. */
-  private async maybeReviewTimeout(message: string): Promise<void> {
-    if (this.signalTimedOut(this.deps.config.review_timeout_seconds)) {
-      await this.dispatch('review_timeout', (s) => ({
-        ...s,
-        workflow: { ...s.workflow, error: this.timeoutError(message) },
-      }))
-    }
-  }
-
-  /** Notify the developer that blocking review feedback is ready (P1-1, §9 To Developer). */
-  private async sendDeveloperSignal(hash: string): Promise<void> {
-    const sig = buildSignal(
-      'developer',
-      this.current.workflow.cycle,
-      hash,
-      developerSignalBody(),
-      this.deps.clock.nowIso(),
-    )
-    await this.deps.transport.send(sig)
-    await this.persist(
-      touch(
-        {
-          ...this.current,
-          broker: {
-            ...this.current.broker,
-            last_signal: 'developer_review_available',
-            last_signal_at: this.deps.clock.nowIso(),
-          },
-        },
-        this.deps.clock,
-      ),
-    )
-    await this.emit('signal_sent', { target: 'developer', diff_hash: hash })
-  }
-
-  /**
-   * Abandon an outstanding review when the live worktree diff changed out from under it
-   * (a developer edit during review_requested/reviewing/review_written), so a stale review
-   * can't be approved (P1-3 / I14). Returns true after dispatching the supersede.
-   */
-  private async superseded(): Promise<boolean> {
-    const { hash } = await this.currentDiff()
-    if (hash === null || hash === this.current.diff.hash) return false
-    await this.dispatch('diff_superseded', (s) => ({ ...s, debounce: emptyDebounce() }))
-    return true
-  }
-
-  private signalTimedOut(timeoutSeconds: number): boolean {
-    const at = this.current.broker.last_signal_at
-    if (!at) return false
-    return this.deps.clock.now() - Date.parse(at) > timeoutSeconds * 1000
-  }
-
-  private timeoutError(message: string) {
-    return {
-      code: 'timeout',
-      message,
-      occurred_at: this.deps.clock.nowIso(),
-      recoverable: true,
-    }
-  }
-
-  private async readReview() {
-    return readJson(
-      reviewPath(betweenPaths(this.deps.root), this.current.workflow.cycle),
-      parseReviewRecord,
-    )
-  }
-
-  private async readVerify() {
-    return readJson(
-      verifyPath(betweenPaths(this.deps.root), this.current.workflow.cycle),
-      parseVerifyRecord,
-    )
-  }
-
-  // ---- commands ------------------------------------------------------------
-
-  private async drainCommands(): Promise<void> {
-    const pending = await this.deps.commands.drain()
-    for (const { file, command } of pending) {
-      await this.applyCommand(command)
-      await this.deps.commands.ack(file)
-    }
-  }
-
-  private async applyCommand(command: Command): Promise<void> {
-    switch (command.kind) {
-      case 'goal':
-        if (this.current.workflow.phase === 'idle' || this.current.workflow.phase === 'done') {
-          await this.dispatch('goal_locked', (s) => ({
-            ...s,
-            workflow: {
-              ...s.workflow,
-              cycles_this_goal: 0,
-              started_at: this.deps.clock.nowIso(),
-              error: null,
-            },
-          }))
-          // redact before the goal text reaches the durable event log (C2)
-          await this.emit('goal_set', { detail: { goal: redactSecrets(command.goal).text } })
-        }
-        break
-      case 'pause':
-        await this.dispatch('pause')
-        break
-      case 'resume':
-        await this.dispatch('resume')
-        break
-      case 'review_now':
-        await this.forceReview()
-        break
-      case 'approve':
-        await this.approve(command.scope)
-        break
-      case 'stop':
-        this.requestStop()
-        break
-      default:
-        break
-    }
-  }
-
-  private async approve(scope: ApprovalScope): Promise<void> {
-    const next = {
-      ...this.current,
-      approval: {
-        actor: 'human' as const,
-        scope,
-        diff_hash: this.current.diff.hash,
-        granted_at: this.deps.clock.nowIso(),
-      },
-    }
-    await this.persist(touch(next, this.deps.clock))
-    if (this.current.workflow.phase === 'human_gate') {
-      await this.dispatch('human_approved')
-    }
-  }
-
-  private async forceReview(): Promise<void> {
-    const phase = this.current.workflow.phase
-    if (phase !== 'developing' && phase !== 'applying_review' && phase !== 'debouncing') return
-    const { input, hash } = await this.currentDiff()
-    if (hash === null) return
-    if (
-      this.deps.config.same_hash_review_policy === 'skip' &&
-      isAlreadyReviewed(this.current, hash)
-    ) {
-      return
-    }
-    // review-now must honor the per-goal cycle cap, just like the debounce path (P2-10)
-    if (
-      isCycleCapReached(
-        this.current.workflow.cycles_this_goal,
-        this.deps.config.max_cycles_per_goal,
-      )
-    ) {
-      await this.dispatch('max_cycles_reached', (s) => ({ ...s, debounce: emptyDebounce() }))
-      return
-    }
-    // move into debouncing if needed, then force a cycle immediately
-    if (phase !== 'debouncing') {
-      await this.dispatch('diff_detected', (s) => ({
-        ...s,
-        debounce: {
-          candidate_hash: hash,
-          candidate_first_seen_at: this.deps.clock.nowIso(),
-          debounce_restarts: 0,
-        },
-      }))
-    }
-    await this.openCycleAndSignal(input.tracked, hash)
-  }
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function readJson<T>(path: string, parse: (raw: unknown) => T): Promise<T | null> {
-  try {
-    const raw = await readFile(path, 'utf8')
-    return parse(JSON.parse(raw))
-  } catch {
-    return null
-  }
 }
