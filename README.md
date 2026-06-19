@@ -39,9 +39,7 @@ Verified pieces:
 Known alpha limitations:
 
 - Blocking reviewer feedback does not yet create a verified developer signal.
-- `npm run test:cov` is currently unstable on this Windows host.
-- PTY and one-shot agent embedding are being wired in active worktree changes.
-- `@lydell/node-pty` and the runtime PTY probe still need alignment.
+- One-shot and PTY agent embedding are implemented (`between start --embed`, modes `oneshot`/`pty`); the live PTY panes need a real terminal, and a real `claude`/`codex` to replace the bundled `fake-agent`.
 - Merge and deploy approval are protocol tokens, not a sandbox boundary.
 
 ## Installation

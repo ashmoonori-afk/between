@@ -96,11 +96,12 @@ core + `FileTransport` are built with **zero native deps** and are fully runnabl
 | ID | Task | Status | Refs |
 |---|---|---|---|
 | T5.0 | UI design spec from cmux + kiro (`docs/ui-design-spec.md`) | ✅ | — |
-| T5.1 | `pty-host` over node-pty (lazy/optional); one-shot branch per D2 | ⛔ build-blocked; interface + fallback shipped | I1 |
-| T5.2 | Ink broker-dominant 3-region dashboard (design tokens applied) | ⬜ | §2,§11 |
-| T5.3 | Agent liveness (onExit/onData + timeout) → error/human_gate | ⬜ | I16 |
-| T5.4 | Pane-readiness gate; one-line pointer signals only | ⬜ | I7 |
-| T5.5 | `doctor` PTY-runtime probe | ⬜ | — |
+| T5.1 | `PtyAgentHost` (lazy/optional `@lydell/node-pty`, prebuilt — verified on this host) + `PipeAgentHost` + one-shot branch (D2) | ✅ | I1 |
+| T5.2 | Ink broker-dominant dashboard + `EmbeddedDashboard` (broker strip + 2 live `AgentPane`s) + `between dash` | ✅ | §2,§11 |
+| T5.3 | Host liveness (onData/onExit + markStart/markExit) surfaced in panes | ✅ | I16 |
+| T5.4 | `OneShotTransport`/`PtyTransport` deliver short pointers; ack gate via composed FileTransport | ✅ | I7 |
+| T5.5 | `doctor` probes `@lydell/node-pty` | ✅ | — |
+| T5.6 | `OneShot`/`Pty` transports + `start --embed` + bundled `fake-agent` + ADR-0002; oneshot E2E test drives a real agent to human_gate | ✅ | ADR-0002 |
 
 ## M6 — Close the review loop · Effort L
 
