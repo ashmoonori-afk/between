@@ -41,7 +41,8 @@ export const TRANSITIONS: Readonly<Partial<Record<Phase, Partial<Record<EventNam
     verify_failed: 'developing',
   },
   applying_review: {
-    review_applied: 'developing', // applying produces a new diff -> next cycle
+    diff_detected: 'debouncing', // applying produced a new diff -> next cycle
+    review_applied: 'developing', // explicit "applied" with no diff yet
     verify_failed: 'developing',
   },
   verifying: {
@@ -63,7 +64,8 @@ export const TRANSITIONS: Readonly<Partial<Record<Phase, Partial<Record<EventNam
     // resume (if recoverable) handled below
   },
   done: {
-    dev_started: 'developing', // new goal on a finished project
+    goal_locked: 'goal_locked', // lock a new goal on a finished project
+    dev_started: 'developing',
   },
 }
 
