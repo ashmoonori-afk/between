@@ -57,6 +57,9 @@ export function isBetweenState(value: unknown): value is BetweenState {
   const wf = v.workflow as Record<string, unknown> | undefined
   if (!wf || typeof wf.phase !== 'string') return false
   if (!(PHASES as readonly string[]).includes(wf.phase)) return false
+  // reviewed_hashes MUST be an array or isAlreadyReviewed() throws at runtime (HIGH-4)
+  if (!Array.isArray(wf.reviewed_hashes)) return false
+  if (typeof wf.cycle !== 'number' || typeof wf.cycles_this_goal !== 'number') return false
   return typeof v.diff === 'object' && typeof v.debounce === 'object'
 }
 

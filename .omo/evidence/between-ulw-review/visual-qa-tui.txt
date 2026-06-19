@@ -1,0 +1,27 @@
+﻿{
+  "command": "tui-check",
+  "expectedColumns": 80,
+  "lineCount": 14,
+  "lineWidths": [
+    80,
+    55,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    80,
+    61
+  ],
+  "maxWidth": 80,
+  "overflowLines": [],
+  "borderMisaligned": false,
+  "wideCharColumns": [],
+  "hasAnsi": false,
+  "summary": "14 line(s); max width 80/80."
+}

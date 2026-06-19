@@ -10,12 +10,7 @@ import type {
   SignalTransport,
 } from '../core/types'
 import { transition } from '../core/fsm'
-import {
-  setPhase,
-  touch,
-  recordReviewedHash,
-  isAlreadyReviewed,
-} from '../core/state'
+import { setPhase, touch, recordReviewedHash, isAlreadyReviewed } from '../core/state'
 import { openCycle, isCycleCapReached, cycleName } from '../core/cycle'
 import { stepDebounce, emptyDebounce } from '../core/debounce'
 import { hashDiff, isEmptyDiff } from '../core/diff-hash'
@@ -252,7 +247,12 @@ export class Daemon {
       await this.dispatch('diff_reverted', (s) => ({ ...s, debounce: emptyDebounce() }))
       return
     }
-    if (isCycleCapReached(this.current.workflow.cycles_this_goal, this.deps.config.max_cycles_per_goal)) {
+    if (
+      isCycleCapReached(
+        this.current.workflow.cycles_this_goal,
+        this.deps.config.max_cycles_per_goal,
+      )
+    ) {
       await this.dispatch('max_cycles_reached', (s) => ({ ...s, debounce: emptyDebounce() }))
       return
     }
@@ -293,14 +293,23 @@ export class Daemon {
       debounce: emptyDebounce(),
     }))
 
-    const sig = buildSignal('reviewer', counters.cycle, hash, reviewerSignalBody(), this.deps.clock.nowIso())
+    const sig = buildSignal(
+      'reviewer',
+      counters.cycle,
+      hash,
+      reviewerSignalBody(),
+      this.deps.clock.nowIso(),
+    )
     await this.deps.transport.send(sig)
     await this.persist(
       touch(
         {
           ...this.current,
+          // preserve the phase-projected broker.status; only the genuine (non-derived)
+          // signal fields are updated here, so this second persist can't drift from the
+          // projection (HIGH-1 / I12). last_signal_at is stamped AFTER send, by design.
           broker: {
-            status: 'stable',
+            ...this.current.broker,
             last_signal: 'review_requested',
             last_signal_at: this.deps.clock.nowIso(),
           },
@@ -341,7 +350,7 @@ export class Daemon {
     const record = await this.readReview()
     const hash = this.current.diff.hash
     if (record && hash && reviewMatchesCurrent(record, hash)) {
-      await this.dispatch('review_written', (s) => recordReviewedHash(s, hash))
+      await this.dispatch('review_written')
       return
     }
     if (this.signalTimedOut(this.deps.config.review_timeout_seconds)) {
@@ -355,10 +364,16 @@ export class Daemon {
   private async handleReviewWritten(): Promise<void> {
     const record = await this.readReview()
     if (!record) return
+    // ignore a review file replaced with one for a different cycle/hash (TOCTOU, I14, HIGH-2)
+    if (record.diff_hash !== this.current.diff.hash) return
     if (reviewIsClean(record)) {
       const verify = await this.readVerify()
       if (cycleShouldEnd(record, verify)) {
-        await this.dispatch('verify_passed')
+        // commit the hash as reviewed ONLY when the cycle actually completes (I4, HIGH-3)
+        const reviewed = this.current.diff.hash
+        await this.dispatch('verify_passed', (s) =>
+          reviewed ? recordReviewedHash(s, reviewed) : s,
+        )
       }
       return // clean but no passing verify yet: wait
     }
@@ -418,7 +433,8 @@ export class Daemon {
               error: null,
             },
           }))
-          await this.emit('goal_set', { detail: { goal: command.goal } })
+          // redact before the goal text reaches the durable event log (C2)
+          await this.emit('goal_set', { detail: { goal: redactSecrets(command.goal).text } })
         }
         break
       case 'pause':
@@ -462,14 +478,21 @@ export class Daemon {
     if (phase !== 'developing' && phase !== 'applying_review' && phase !== 'debouncing') return
     const { input, hash } = await this.currentDiff()
     if (hash === null) return
-    if (this.deps.config.same_hash_review_policy === 'skip' && isAlreadyReviewed(this.current, hash)) {
+    if (
+      this.deps.config.same_hash_review_policy === 'skip' &&
+      isAlreadyReviewed(this.current, hash)
+    ) {
       return
     }
     // move into debouncing if needed, then force a cycle immediately
     if (phase !== 'debouncing') {
       await this.dispatch('diff_detected', (s) => ({
         ...s,
-        debounce: { candidate_hash: hash, candidate_first_seen_at: this.deps.clock.nowIso(), debounce_restarts: 0 },
+        debounce: {
+          candidate_hash: hash,
+          candidate_first_seen_at: this.deps.clock.nowIso(),
+          debounce_restarts: 0,
+        },
       }))
     }
     await this.openCycleAndSignal(input.tracked, hash)

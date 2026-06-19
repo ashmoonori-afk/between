@@ -56,7 +56,8 @@ export class SnapshotStore {
           total += s.size
         }
       } catch {
-        keep.delete(name)
+        // can't stat (transient/locked) — KEEP the file rather than deleting a maybe-valid
+        // snapshot (HIGH-5). Leaving it in `keep` excludes it from the deletion pass below.
       }
     }
     for (const name of sorted) {

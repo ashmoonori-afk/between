@@ -1,0 +1,11 @@
+﻿# npm audit report
+
+esbuild  0.27.3 - 0.28.0
+esbuild allows arbitrary file read when running the development server on Windows - https://github.com/advisories/GHSA-g7r4-m6w7-qqqr
+fix available via `npm audit fix`
+node_modules/esbuild
+
+1 low severity vulnerability
+
+To address all issues, run:
+  npm audit fix

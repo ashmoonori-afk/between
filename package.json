@@ -8,7 +8,7 @@
     "between": "dist/cli.js"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22.12.0"
   },
   "files": [
     "dist"
@@ -21,8 +21,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:cov": "vitest run --coverage",
-    "lint": "eslint .",
-    "format": "prettier --write ."
+    "lint": "prettier --check \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\"",
+    "format": "prettier --write \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\""
   },
   "license": "MIT",
   "dependencies": {

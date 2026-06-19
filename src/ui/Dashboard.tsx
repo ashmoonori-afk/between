@@ -17,7 +17,17 @@ function eventColor(event: string): string {
   return COLORS.textMuted
 }
 
-function Chip({ glyph, label, color, dim }: { glyph: string; label: string; color: string; dim?: boolean }) {
+function Chip({
+  glyph,
+  label,
+  color,
+  dim,
+}: {
+  glyph: string
+  label: string
+  color: string
+  dim?: boolean
+}) {
   return (
     <Text>
       <Text color={color} dimColor={dim}>
@@ -64,12 +74,7 @@ export function Dashboard({ state, events, now }: DashboardProps) {
       </Box>
 
       {/* broker pane */}
-      <Box
-        flexDirection="column"
-        borderStyle="round"
-        borderColor={COLORS.focusRing}
-        paddingX={1}
-      >
+      <Box flexDirection="column" borderStyle="round" borderColor={COLORS.focusRing} paddingX={1}>
         <Text>
           <Text color={ps.color} bold>
             {`${ps.glyph} ${ps.label}`}
@@ -102,11 +107,19 @@ export function Dashboard({ state, events, now }: DashboardProps) {
 
       {/* bottom split: developer | reviewer */}
       <Box flexDirection="row">
-        <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={COLORS.border} paddingX={1}>
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          borderStyle="round"
+          borderColor={COLORS.border}
+          paddingX={1}
+        >
           <Text color={dev.color} bold>
             {`${GLYPH.dev} DEVELOPER`}
           </Text>
-          <Text color={COLORS.textMuted}>{`${state.developer.name} · ${state.developer.status}`}</Text>
+          <Text
+            color={COLORS.textMuted}
+          >{`${state.developer.name} · ${state.developer.status}`}</Text>
           <Text>
             <Text color={COLORS.textFaint} dimColor>
               {`${diff.changed_files} files `}
@@ -118,13 +131,23 @@ export function Dashboard({ state, events, now }: DashboardProps) {
             {diff.hash ? `${diff.hash.slice(0, 12)}  ${diff.snapshot_path ?? ''}` : 'no diff'}
           </Text>
         </Box>
-        <Box flexDirection="column" flexGrow={1} borderStyle="round" borderColor={COLORS.border} paddingX={1}>
+        <Box
+          flexDirection="column"
+          flexGrow={1}
+          borderStyle="round"
+          borderColor={COLORS.border}
+          paddingX={1}
+        >
           <Text color={rev.color} bold>
             {`${GLYPH.reviewer} REVIEWER`}
           </Text>
-          <Text color={COLORS.textMuted}>{`${state.reviewer.name} · ${state.reviewer.status}`}</Text>
+          <Text
+            color={COLORS.textMuted}
+          >{`${state.reviewer.name} · ${state.reviewer.status}`}</Text>
           <Text color={COLORS.textFaint} dimColor>
-            {wf.last_reviewed_hash ? `last reviewed ${wf.last_reviewed_hash.slice(0, 12)}` : 'no review yet'}
+            {wf.last_reviewed_hash
+              ? `last reviewed ${wf.last_reviewed_hash.slice(0, 12)}`
+              : 'no review yet'}
           </Text>
         </Box>
       </Box>

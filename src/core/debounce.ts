@@ -60,7 +60,9 @@ export function stepDebounce(
   }
 
   // candidate unchanged — has it been stable long enough?
-  const firstSeenMs = prev.candidate_first_seen_at ? Date.parse(prev.candidate_first_seen_at) : nowMs
+  const firstSeenMs = prev.candidate_first_seen_at
+    ? Date.parse(prev.candidate_first_seen_at)
+    : nowMs
   const elapsedMs = nowMs - firstSeenMs
   if (elapsedMs >= windowSeconds * 1000) {
     return { decision: 'stable', state: { ...prev } }

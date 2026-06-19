@@ -38,10 +38,15 @@ program
   .action(async (opts: { vault?: string }) => {
     try {
       const res = await initProject(root(), { vaultPath: opts.vault }, new SystemClock())
-      print(res.alreadyExisted ? 'between: already initialized (refreshed missing files)' : 'between: initialized')
+      print(
+        res.alreadyExisted
+          ? 'between: already initialized (refreshed missing files)'
+          : 'between: initialized',
+      )
       for (const c of res.created) print(`  + ${c}`)
       print(`  project: ${res.project.name}`)
-      if (res.project.obsidian_project_path) print(`  vault:   ${res.project.obsidian_project_path}`)
+      if (res.project.obsidian_project_path)
+        print(`  vault:   ${res.project.obsidian_project_path}`)
     } catch (e) {
       await fail(e)
     }
@@ -61,16 +66,26 @@ program
       }
       const events = await new EventsLog(root()).read()
       const last = events.at(-1) ?? null
+      const cfg = await loadConfig(root()).catch(() => null)
       if (opts.json) {
-        printJson({ workflow: state.workflow, diff: state.diff, broker: state.broker, last_event: last })
+        printJson({
+          workflow: state.workflow,
+          diff: state.diff,
+          broker: state.broker,
+          last_event: last,
+        })
         return
       }
       const wf = state.workflow
       print(`Between · ${state.project.name}`)
       print(`  phase:      ${wf.phase}`)
-      print(`  cycle:      ${wf.cycle} (this goal: ${wf.cycles_this_goal}/${'?'})`)
+      print(
+        `  cycle:      ${wf.cycle} (this goal: ${wf.cycles_this_goal}/${cfg?.max_cycles_per_goal ?? '?'})`,
+      )
       print(`  waiting on: ${wf.waiting_on ?? '-'}`)
-      print(`  diff:       ${state.diff.hash ? state.diff.hash.slice(0, 12) : '-'} · ${state.diff.changed_files} files +${state.diff.insertions} -${state.diff.deletions}`)
+      print(
+        `  diff:       ${state.diff.hash ? state.diff.hash.slice(0, 12) : '-'} · ${state.diff.changed_files} files +${state.diff.insertions} -${state.diff.deletions}`,
+      )
       print(`  developer:  ${state.developer.name} (${state.developer.status})`)
       print(`  reviewer:   ${state.reviewer.name} (${state.reviewer.status})`)
       if (wf.error) print(`  error:      ${wf.error.code} — ${wf.error.message}`)
@@ -107,13 +122,22 @@ function enqueue(label: string, makeCmd: () => Parameters<CommandBus['submit']>[
   }
 }
 
-program.command('pause').description('Pause the loop').action(enqueue('pause', () => ({ kind: 'pause' })))
-program.command('resume').description('Resume the loop').action(enqueue('resume', () => ({ kind: 'resume' })))
+program
+  .command('pause')
+  .description('Pause the loop')
+  .action(enqueue('pause', () => ({ kind: 'pause' })))
+program
+  .command('resume')
+  .description('Resume the loop')
+  .action(enqueue('resume', () => ({ kind: 'resume' })))
 program
   .command('review-now')
   .description('Force a review of the current diff (unless already reviewed)')
   .action(enqueue('review-now', () => ({ kind: 'review_now' })))
-program.command('stop').description('Ask the running broker to stop').action(enqueue('stop', () => ({ kind: 'stop' })))
+program
+  .command('stop')
+  .description('Ask the running broker to stop')
+  .action(enqueue('stop', () => ({ kind: 'stop' })))
 
 program
   .command('goal <text...>')
@@ -184,7 +208,9 @@ program
       checks.push({ ok: true, label: 'between initialized (config valid)' })
       checks.push({
         ok: cfg.vault_path ? true : 'warn',
-        label: cfg.vault_path ? `vault: ${cfg.vault_path}` : 'vault: not set (Obsidian memory disabled)',
+        label: cfg.vault_path
+          ? `vault: ${cfg.vault_path}`
+          : 'vault: not set (Obsidian memory disabled)',
       })
     } catch {
       checks.push({ ok: false, label: 'between initialized (run `between init`)' })
@@ -200,7 +226,9 @@ program
     }
     checks.push({
       ok: ptyOk ? true : 'warn',
-      label: ptyOk ? 'node-pty available (terminal mode ready)' : 'node-pty unavailable (headless file-signal mode only)',
+      label: ptyOk
+        ? 'node-pty available (terminal mode ready)'
+        : 'node-pty unavailable (headless file-signal mode only)',
     })
 
     for (const c of checks) {
@@ -242,7 +270,9 @@ program
     }
   })
 
-program.parseAsync(process.argv).catch(() => {
-  // errors already reported via fail(); ensure non-zero exit
+program.parseAsync(process.argv).catch((e: unknown) => {
+  // action errors were already printed by fail() (which set exitCode); this also surfaces
+  // parse-time errors (bad flags) that would otherwise fail silently (LOW-1).
+  if (!process.exitCode && e instanceof Error) printErr(`between: ${e.message}`)
   if (!process.exitCode) process.exitCode = 1
 })

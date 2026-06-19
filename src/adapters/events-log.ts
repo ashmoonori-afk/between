@@ -20,9 +20,12 @@ export class EventsLog {
 
   append(event: Omit<BetweenEvent, 'v'>): Promise<void> {
     const line = JSON.stringify({ v: EVENT_SCHEMA_VERSION, ...event }) + '\n'
-    // chain onto the queue so writes serialize
-    this.queue = this.queue.then(() => this.writeLine(line)).catch(() => {})
-    return this.queue
+    // Serialize writes onto the queue. The RETURNED promise rejects to the caller if this
+    // write fails (never silently swallowed); the queue is advanced with a swallowed copy
+    // so one failed write doesn't poison every future append (CRITICAL-5 fix).
+    const write = this.queue.then(() => this.writeLine(line))
+    this.queue = write.catch(() => {})
+    return write
   }
 
   private async writeLine(line: string): Promise<void> {

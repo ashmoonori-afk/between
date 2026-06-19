@@ -59,7 +59,9 @@ export async function runDashboard(root: string, opts: DashOptions = {}): Promis
       process.stdout.write('between: no state found — run `between init`\n')
       return
     }
-    const app = render(<Dashboard state={s} events={e} now={new SystemClock().nowIso().slice(11, 19)} />)
+    const app = render(
+      <Dashboard state={s} events={e} now={new SystemClock().nowIso().slice(11, 19)} />,
+    )
     app.unmount()
     return
   }

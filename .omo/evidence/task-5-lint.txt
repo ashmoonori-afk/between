@@ -1,0 +1,6 @@
+﻿
+> between@0.1.0 lint
+> prettier --check "src/**/*.{ts,tsx}" "test/**/*.{ts,tsx}"
+
+Checking formatting...
+All matched files use Prettier code style!

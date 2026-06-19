@@ -1,0 +1,18 @@
+﻿
+> between@0.1.0 build
+> tsup
+
+CLI Building entry: src/cli.ts
+CLI Using tsconfig: tsconfig.json
+CLI tsup v8.5.1
+CLI Using tsup config: C:\Users\lg\marketing for companies\between\tsup.config.ts
+CLI Target: node20
+CLI Cleaning output folder
+ESM Build start
+ESM dist\dash-L3EMHGOP.js      10.40 KB
+ESM dist\cli.js                48.43 KB
+ESM dist\chunk-MEY633OT.js     4.98 KB
+ESM dist\dash-L3EMHGOP.js.map  17.97 KB
+ESM dist\cli.js.map            105.34 KB
+ESM dist\chunk-MEY633OT.js.map 21.07 KB
+ESM ⚡️ Build success in 330ms

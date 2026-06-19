@@ -1,0 +1,5 @@
+﻿package.json root requires node >=22.12.0
+package-lock root requires node >=20
+node_modules/commander 15.0.0 requires node >=22.12.0
+node_modules/ink 7.1.0 requires node >=22
+current node v24.13.0

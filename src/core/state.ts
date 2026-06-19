@@ -81,9 +81,7 @@ export function recordReviewedHash(state: BetweenState, hash: string): BetweenSt
 
 /** True when `hash` has already been reviewed (dedup guard, I4). */
 export function isAlreadyReviewed(state: BetweenState, hash: string): boolean {
-  return (
-    state.workflow.last_reviewed_hash === hash || state.workflow.reviewed_hashes.includes(hash)
-  )
+  return state.workflow.last_reviewed_hash === hash || state.workflow.reviewed_hashes.includes(hash)
 }
 
 /** Set the phase + previous_phase and reproject derived fields. Pure. */

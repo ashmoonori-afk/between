@@ -1,0 +1,3 @@
+﻿Number(nope)= NaN
+setInterval idle timeout= 1
+setInterval zero timeout= 1

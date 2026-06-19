@@ -1,0 +1,55 @@
+﻿v20.18.3
+Usage: between [options] [command]
+
+A local terminal broker for AI pair development.
+
+Options:
+  -V, --version     output the version number
+  -h, --help        display help for command
+
+Commands:
+  init [options]    Create .between/ scaffolding, config, and initial state in
+                    the current repo
+  status [options]  Print the current phase, cycle, waiting actor, diff hash,
+                    and latest event
+  start [options]   Start the broker watcher loop (headless file-signal mode)
+  pause             Pause the loop
+  resume            Resume the loop
+  review-now        Force a review of the current diff (unless already reviewed)
+  stop              Ask the running broker to stop
+  goal <text...>    Lock a new goal for the developer
+  approve <scope>   Approve a human-gated action: merge | deploy | promote_rule
+  ack               (reviewer helper) acknowledge the outstanding review signal
+                    for the current cycle
+  doctor            Diagnose the environment and repo for Between
+  summarize         Summarize cycle/phase analytics from events.jsonl
+  dash [options]    Live broker dashboard (cmux/Kiro-inspired TUI)
+  help [command]    display help for command
+$ npx -p node@20.18.3 node dist/cli.js init
+between: initialized
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\snapshots
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\signals
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\acks
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\reviews
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\verify
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\commands
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\cycles
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\config.yaml
+  + C:\Users\lg\AppData\Local\Temp\between-node20-3863f0dd89ea4332949e491e74a6b008\.between\state.json
+  project: between-node20-3863f0dd89ea4332949e491e74a6b008
+$ npx -p node@20.18.3 node dist/cli.js dash --once
+⊙ BETWEEN                                                      ● IDLE   01:54:45
+session:between-node20-3863f0dd89ea4332949e491e74a6b008
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ● IDLE  → -   cycle 0 · this goal 0                                          │
+│ ────────────────────────────────────────────────────────────────────────     │
+│ ▎ no events yet — run `between goal "<your goal>"`                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────╮╭──────────────────────────────────────╮
+│ ⚒ DEVELOPER                          ││ ◎ REVIEWER                           │
+│ claude · idle                        ││ codex · idle                         │
+│ 0 files +0 -0                        ││ no review yet                        │
+│ no diff                              ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+between goal · pause · resume · review-now · approve · status

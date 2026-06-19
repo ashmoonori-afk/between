@@ -74,9 +74,7 @@ export class GitAdapter {
     // unmerged paths (conflict) via porcelain status
     const status = await this.run(['status', '--porcelain'])
     if (status.exitCode === 0) {
-      const hasConflict = status.stdout
-        .split('\n')
-        .some((l) => /^(DD|AU|UD|UA|DU|AA|UU) /.test(l))
+      const hasConflict = status.stdout.split('\n').some((l) => /^(DD|AU|UD|UA|DU|AA|UU) /.test(l))
       if (hasConflict) return { busy: true, reason: 'unmerged paths (conflict)' }
     }
     return { busy: false, reason: null }
@@ -120,9 +118,16 @@ export class GitAdapter {
       .filter((f) => f.length > 0 && !f.startsWith('.between/'))
       .filter((f) => matchesGlobs(f, opts.untrackedGlobs))
     if (files.length === 0) return []
-    const hashed = await this.run(['hash-object', '--', ...files])
-    if (hashed.exitCode !== 0) return []
-    const oids = hashed.stdout.split('\n').filter((l) => l.trim().length > 0)
+    // Chunk hash-object so a long file list can't blow the OS command-line length limit
+    // and silently drop ALL untracked entries (which would corrupt the diff hash, HIGH-9).
+    const CHUNK = 100
+    const oids: string[] = []
+    for (let i = 0; i < files.length; i += CHUNK) {
+      const hashed = await this.run(['hash-object', '--', ...files.slice(i, i + CHUNK)])
+      if (hashed.exitCode !== 0) return [] // can't hash reliably -> exclude untracked entirely
+      oids.push(...hashed.stdout.split('\n').filter((l) => l.trim().length > 0))
+    }
+    if (oids.length !== files.length) return []
     return files.map((path, i) => ({ path, oid: oids[i] ?? '' }))
   }
 

@@ -1,0 +1,59 @@
+﻿CURRENT_STATUS
+git status --short --untracked-files=all
+ M .github/workflows/ci.yml
+ M .omo/evidence/between-ulw-review/build.txt
+ M package.json
+ M src/adapters/git.ts
+ M src/adapters/init-project.ts
+ M src/cli.ts
+ M src/core/debounce.ts
+ M src/core/state.ts
+ M src/daemon/loop.ts
+ M src/ui/Dashboard.tsx
+ M src/ui/dash.tsx
+ M test/integration/loop.test.ts
+ M test/unit/dashboard.test.tsx
+ M test/unit/findings.test.ts
+?? .omo/evidence/between-ulw-review/dash-once.txt
+?? .omo/evidence/between-ulw-review/full-test.txt
+?? .omo/evidence/between-ulw-review/test-cov.txt
+?? .omo/evidence/between-ulw-review/visual-qa-tui.txt
+?? .omo/evidence/task-1-scope.txt
+?? .omo/evidence/task-2-interval-runtime.txt
+?? .omo/evidence/task-2-source-review.md
+?? .omo/evidence/task-3-node20-runtime.txt
+?? .omo/evidence/task-3-runtime-compat.txt
+?? .omo/evidence/task-4-docs-risk.md
+?? .omo/evidence/task-5-automated-verification.txt
+?? .omo/evidence/task-6-doctor.txt
+?? .omo/evidence/task-6-real-cli-tui.txt
+?? .omo/evidence/task-7-cli-error-paths.txt
+?? .omo/plans/between-heavy-review-wave.md
+
+CURRENT_DIFF
+git diff --name-only
+.github/workflows/ci.yml
+.omo/evidence/between-ulw-review/build.txt
+package.json
+src/adapters/git.ts
+src/adapters/init-project.ts
+src/cli.ts
+src/core/debounce.ts
+src/core/state.ts
+src/daemon/loop.ts
+src/ui/Dashboard.tsx
+src/ui/dash.tsx
+test/integration/loop.test.ts
+test/unit/dashboard.test.tsx
+test/unit/findings.test.ts
+
+USER_PROVIDED_CHANGED_FILES
+package-lock.json
+package.json
+src/cli.ts
+vitest.config.ts
+.gitattributes
+src/ui/dash.tsx
+src/ui/Dashboard.tsx
+src/ui/theme.ts
+test/unit/dashboard.test.tsx

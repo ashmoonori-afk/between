@@ -9,7 +9,12 @@ import {
 import type { Finding } from '../../src/core/types'
 
 const blocking: Finding = { id: 'f1', severity: 'blocking', summary: 'bug', target_hash: 'h1' }
-const nonBlocking: Finding = { id: 'f2', severity: 'non-blocking', summary: 'nit', target_hash: 'h1' }
+const nonBlocking: Finding = {
+  id: 'f2',
+  severity: 'non-blocking',
+  summary: 'nit',
+  target_hash: 'h1',
+}
 
 describe('findings', () => {
   it('counts blocking findings', () => {
@@ -39,8 +44,15 @@ describe('findings', () => {
   })
 
   it('parses a valid review record and rejects an invalid one', () => {
-    const ok = parseReviewRecord({ cycle: 7, diff_hash: 'h1', findings: [blocking], complete: true })
+    const ok = parseReviewRecord({
+      cycle: 7,
+      diff_hash: 'h1',
+      findings: [blocking],
+      complete: true,
+    })
     expect(ok.findings).toHaveLength(1)
-    expect(() => parseReviewRecord({ cycle: 7, diff_hash: 'h1', findings: [{ id: 'x' }], complete: true })).toThrow()
+    expect(() =>
+      parseReviewRecord({ cycle: 7, diff_hash: 'h1', findings: [{ id: 'x' }], complete: true }),
+    ).toThrow()
   })
 })

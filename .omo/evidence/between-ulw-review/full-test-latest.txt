@@ -1,0 +1,35 @@
+﻿
+> between@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/lg/marketing for companies/between
+
+ ❯ test/integration/loop.test.ts (2 tests | 1 failed) 26935ms
+     × drives edit -> debounce -> review_requested -> ack -> review -> human_gate, and survives restart 10030ms
+System.Management.Automation.RemoteException
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+System.Management.Automation.RemoteException
+ FAIL  test/integration/loop.test.ts > headless walking skeleton (M3) > drives edit -> debounce -> review_requested -> ack -> review -> human_gate, and survives restart
+Error: Hook timed out in 10000ms.
+If this is a long-running hook, pass a timeout value as the last argument or configure it globally with "hookTimeout".
+ ❯ test/integration/loop.test.ts:41:1
+     39| }
+     40|
+     41| beforeEach(async () => {
+       | ^
+     42|   dir = await mkdtemp(join(tmpdir(), 'between-it-'))
+     43|   await git(['init', '-b', 'main'])
+System.Management.Automation.RemoteException
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+System.Management.Automation.RemoteException
+ FAIL  test/integration/loop.test.ts > headless walking skeleton (M3) > drives edit -> debounce -> review_requested -> ack -> review -> human_gate, and survives restart
+Error: EBUSY: resource busy or locked, rmdir 'C:\Users\lg\AppData\Local\Temp\between-it-0NHZWh'
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+System.Management.Automation.RemoteException
+
+ Test Files  1 failed | 9 passed (10)
+      Tests  1 failed | 53 passed (54)
+   Start at  11:07:33
+   Duration  31.78s (transform 2.55s, setup 0ms, import 7.79s, tests 27.43s, environment 3ms)
+

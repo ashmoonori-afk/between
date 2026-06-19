@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile, access } from 'node:fs/promises'
+import { mkdir, readFile, writeFile, access, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
+import { stringify as yamlStringify } from 'yaml'
 import type { Clock, ProjectRef } from '../core/types'
 import { defaultConfigYaml } from '../core/config-schema'
 import { initialState } from '../core/state'
@@ -35,7 +36,18 @@ export async function initProject(
     }
   }
 
-  const vaultPath = opts.vaultPath?.trim()
+  let vaultPath = opts.vaultPath?.trim()
+  if (vaultPath) {
+    // I25 / security M4: validate the vault is an existing directory before storing it
+    vaultPath = resolve(vaultPath)
+    let isDir = false
+    try {
+      isDir = (await stat(vaultPath)).isDirectory()
+    } catch {
+      isDir = false
+    }
+    if (!isDir) throw new Error(`--vault path is not an existing directory: ${vaultPath}`)
+  }
   const project: ProjectRef = {
     name: basename(absRoot),
     root: absRoot,
@@ -47,7 +59,8 @@ export async function initProject(
   if (!existsSync(p.config)) {
     let body = defaultConfigYaml()
     if (vaultPath) {
-      body = body.replace("vault_path: ''", `vault_path: '${vaultPath.replace(/'/g, '')}'`)
+      // serialize via the YAML library so a path with quotes/backslashes/newlines is safe (H1)
+      body = body.replace("vault_path: ''", `vault_path: ${yamlStringify(vaultPath).trim()}`)
     }
     await writeFile(p.config, body, 'utf8')
     created.push(p.config)
@@ -77,6 +90,9 @@ async function ensureGitignore(root: string): Promise<void> {
   }
   const lines = contents.split(/\r?\n/).map((l) => l.trim())
   if (lines.includes(entry)) return
-  const next = contents.length > 0 && !contents.endsWith('\n') ? `${contents}\n${entry}\n` : `${contents}${entry}\n`
+  const next =
+    contents.length > 0 && !contents.endsWith('\n')
+      ? `${contents}\n${entry}\n`
+      : `${contents}${entry}\n`
   await writeFile(file, next, 'utf8')
 }

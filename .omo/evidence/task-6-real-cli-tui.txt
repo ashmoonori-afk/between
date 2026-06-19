@@ -1,0 +1,37 @@
+﻿$ node dist/cli.js init
+between: initialized
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\snapshots
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\signals
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\acks
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\reviews
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\verify
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\commands
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\cycles
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\config.yaml
+  + C:\Users\lg\AppData\Local\Temp\between-task6-3c6c1c07bf704d3cac93fef9e433bea7\.between\state.json
+  project: between-task6-3c6c1c07bf704d3cac93fef9e433bea7
+$ node dist/cli.js status
+Between · between-task6-3c6c1c07bf704d3cac93fef9e433bea7
+  phase:      idle
+  cycle:      0 (this goal: 0/?)
+  waiting on: -
+  diff:       - · 0 files +0 -0
+  developer:  claude (idle)
+  reviewer:   codex (idle)
+  last event: -
+$ node dist/cli.js dash --once
+⊙ BETWEEN                                                      ● IDLE   01:52:01
+session:between-task6-3c6c1c07bf704d3cac93fef9e433bea7
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ ● IDLE  → -   cycle 0 · this goal 0                                          │
+│ ────────────────────────────────────────────────────────────────────────     │
+│ ▎ no events yet — run `between goal "<your goal>"`                           │
+╰──────────────────────────────────────────────────────────────────────────────╯
+╭──────────────────────────────────────╮╭──────────────────────────────────────╮
+│ ⚒ DEVELOPER                          ││ ◎ REVIEWER                           │
+│ claude · idle                        ││ codex · idle                         │
+│ 0 files +0 -0                        ││ no review yet                        │
+│ no diff                              ││                                      │
+╰──────────────────────────────────────╯╰──────────────────────────────────────╯
+between goal · pause · resume · review-now · approve · status

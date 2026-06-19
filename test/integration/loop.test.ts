@@ -11,7 +11,13 @@ import { CommandBus } from '../../src/adapters/command-bus'
 import { AckStore } from '../../src/adapters/ack-store'
 import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
-import { betweenPaths, reviewPath, verifyPath, signalPath, snapshotPath } from '../../src/adapters/paths'
+import {
+  betweenPaths,
+  reviewPath,
+  verifyPath,
+  signalPath,
+  snapshotPath,
+} from '../../src/adapters/paths'
 import type { Ack } from '../../src/core/types'
 
 let dir: string
@@ -22,7 +28,13 @@ async function git(args: string[]): Promise<void> {
 
 async function ackCurrent(cycle: number, hash: string, fc: FakeClock): Promise<void> {
   const id = buildSignal('reviewer', cycle, hash, '', '').id
-  const ack: Ack = { signal_id: id, target: 'reviewer', cycle, diff_hash: hash, acked_at: fc.nowIso() }
+  const ack: Ack = {
+    signal_id: id,
+    target: 'reviewer',
+    cycle,
+    diff_hash: hash,
+    acked_at: fc.nowIso(),
+  }
   await new AckStore(dir).write(ack)
 }
 
@@ -81,17 +93,32 @@ describe('headless walking skeleton (M3)', () => {
     expect(d.state.workflow.phase).toBe('reviewing')
 
     // reviewer writes a clean structured review + a passing verify
-    await writeFile(reviewPath(p, 1), JSON.stringify({ cycle: 1, diff_hash: hash, findings: [], complete: true }))
-    await writeFile(verifyPath(p, 1), JSON.stringify({ diff_hash: hash, passed: true, summary: 'ok' }))
+    await writeFile(
+      reviewPath(p, 1),
+      JSON.stringify({ cycle: 1, diff_hash: hash, findings: [], complete: true }),
+    )
+    await writeFile(
+      verifyPath(p, 1),
+      JSON.stringify({ diff_hash: hash, passed: true, summary: 'ok' }),
+    )
     await d.tick()
     expect(d.state.workflow.phase).toBe('review_written')
-    expect(d.state.workflow.reviewed_hashes).toContain(hash)
     await d.tick()
     expect(d.state.workflow.phase).toBe('human_gate')
+    // hash is committed as reviewed only when the cycle completes (verify_passed -> human_gate)
+    expect(d.state.workflow.reviewed_hashes).toContain(hash)
 
     // §15.8: every transition is logged
     const names = (await events.read()).map((e) => e.event)
-    for (const expected of ['goal_locked', 'diff_detected', 'diff_stable', 'signal_sent', 'review_acked', 'review_written', 'verify_passed']) {
+    for (const expected of [
+      'goal_locked',
+      'diff_detected',
+      'diff_stable',
+      'signal_sent',
+      'review_acked',
+      'review_written',
+      'verify_passed',
+    ]) {
       expect(names).toContain(expected)
     }
 
@@ -126,8 +153,14 @@ describe('headless walking skeleton (M3)', () => {
 
     await ackCurrent(1, hash, fc)
     await d.tick() // -> reviewing
-    await writeFile(reviewPath(p, 1), JSON.stringify({ cycle: 1, diff_hash: hash, findings: [], complete: true }))
-    await writeFile(verifyPath(p, 1), JSON.stringify({ diff_hash: hash, passed: true, summary: 'ok' }))
+    await writeFile(
+      reviewPath(p, 1),
+      JSON.stringify({ cycle: 1, diff_hash: hash, findings: [], complete: true }),
+    )
+    await writeFile(
+      verifyPath(p, 1),
+      JSON.stringify({ diff_hash: hash, passed: true, summary: 'ok' }),
+    )
     await d.tick() // -> review_written (records reviewed hash)
     await d.tick() // -> human_gate
     await bus.submit({ kind: 'approve', scope: 'merge' })

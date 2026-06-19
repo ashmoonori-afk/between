@@ -1,0 +1,27 @@
+﻿$ node dist/cli.js status
+stdout:
+stderr:
+node.exe : between: no state found — run `between init`
+At line:10 char:3
++   & node "$repo\dist\cli.js" status > stdout.txt 2> stderr.txt; $code ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (between: no sta... `between init`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+status_exit=1
+$ node dist/cli.js dash --once
+stdout:
+between: no state found — run `between init`
+stderr:
+dash_exit=0
+$ node dist/cli.js approve ship
+stdout:
+stderr:
+node.exe : between: scope must be one of: merge, deploy, promote_rule
+At line:21 char:3
++   & node "$repo\dist\cli.js" approve ship > stdout.txt 2> stderr.txt; ...
++   ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (between: scope ...y, promote_rule:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+approve_exit=1

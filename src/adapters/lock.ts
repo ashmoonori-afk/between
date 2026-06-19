@@ -31,7 +31,7 @@ export class BrokerLock {
       this.release = await lockfile.lock(this.p.lock, {
         stale: 30_000,
         retries: 0,
-        realpath: false,
+        realpath: true,
       })
     } catch {
       const owner = await this.readOwner()
@@ -44,7 +44,14 @@ export class BrokerLock {
 
   async readOwner(): Promise<OwnerInfo | null> {
     try {
-      return JSON.parse(await readFile(this.p.owner, 'utf8')) as OwnerInfo
+      const raw = JSON.parse(await readFile(this.p.owner, 'utf8')) as Record<string, unknown>
+      const pid = Number(raw.pid)
+      if (!Number.isInteger(pid)) return null
+      // sanitize host before it reaches a terminal error message (strip ANSI/control, cap) — H4
+      const host = String(raw.host ?? '')
+        .replace(/[^\x20-\x7E]/g, '')
+        .slice(0, 64)
+      return { pid, host, acquired_at: String(raw.acquired_at ?? '') }
     } catch {
       return null
     }

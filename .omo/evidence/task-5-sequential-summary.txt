@@ -1,0 +1,6 @@
+﻿Sequential verification snapshot: 2026-06-19 11:08-11:10 local
+npm run lint: FAIL (Prettier reports src/daemon/loop.ts)
+npm run typecheck: PASS
+npm test: PASS (10 files, 54 tests)
+npm run test:cov: PASS (10 files, 54 tests; statements 93.84%, branches 91.46%, functions 90.9%, lines 95.9%)
+npm run build: PASS (tsup target node20; dist/cli.js 50.74 KB)

@@ -2,6 +2,7 @@ import { writeFile, readFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import type { Ack, Signal, SignalTarget, SignalTransport } from '../core/types'
 import { betweenPaths, signalPath, ackPath, type BetweenPaths } from './paths'
+import { parseAck } from './ack-store'
 
 /**
  * Build a signal whose id embeds (target, cycle, diff_hash) so that a re-send for the
@@ -46,8 +47,8 @@ export class FileTransport implements SignalTransport {
 
   async pollAck(signalId: string): Promise<Ack | null> {
     try {
-      const raw = await readFile(ackPath(this.p, signalId), 'utf8')
-      return JSON.parse(raw) as Ack
+      // validate rather than cast — ack files are agent-written, untrusted input (H2)
+      return parseAck(JSON.parse(await readFile(ackPath(this.p, signalId), 'utf8')))
     } catch {
       return null
     }
