@@ -1,4 +1,5 @@
 import type { ChatMessage, ChatTransport, InboundHandler } from './transport'
+import { fetchWithTimeout } from './http'
 
 /** Discord Gateway intents: GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT. */
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 15)
@@ -38,9 +39,15 @@ export class DiscordTransport implements ChatTransport {
     const ws = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json')
     this.ws = ws
     ws.addEventListener('message', (ev: MessageEvent) => this.onFrame(String(ev.data)))
-    ws.addEventListener('close', () => {
-      if (this.heartbeat) clearInterval(this.heartbeat)
-    })
+    ws.addEventListener('close', () => this.clearHeartbeat())
+    // without an 'error' listener an auth/network failure is silently swallowed and the
+    // heartbeat would leak — clear it and let close() fire (review).
+    ws.addEventListener('error', () => this.clearHeartbeat())
+  }
+
+  private clearHeartbeat(): void {
+    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.heartbeat = null
   }
 
   private onFrame(data: string): void {
@@ -52,7 +59,10 @@ export class DiscordTransport implements ChatTransport {
     }
     if (typeof payload.s === 'number') this.seq = payload.s
     if (payload.op === 10) {
-      const interval = (payload.d as { heartbeat_interval: number }).heartbeat_interval
+      // HELLO — validate the interval (external data) before scheduling the heartbeat (review).
+      const d = payload.d as { heartbeat_interval?: unknown } | null
+      const interval = d?.heartbeat_interval
+      if (typeof interval !== 'number' || interval <= 0) return
       this.heartbeat = setInterval(() => {
         this.ws?.send(JSON.stringify({ op: 1, d: this.seq }))
       }, interval)
@@ -66,6 +76,10 @@ export class DiscordTransport implements ChatTransport {
           },
         }),
       )
+    } else if (payload.op === 7 || payload.op === 9) {
+      // RECONNECT / INVALID_SESSION — stop heartbeating and close so cleanup runs (review).
+      this.clearHeartbeat()
+      this.ws?.close()
     } else if (payload.op === 0 && payload.t === 'MESSAGE_CREATE') {
       const msg = parseDiscordMessage(payload.d)
       if (msg) void this.handler?.(msg)
@@ -73,15 +87,19 @@ export class DiscordTransport implements ChatTransport {
   }
 
   async send(channelId: string, text: string): Promise<void> {
-    await fetch(`https://discord.com/api/v10/channels/${channelId}/messages`, {
-      method: 'POST',
-      headers: { authorization: `Bot ${this.token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ content: text }),
-    })
+    await fetchWithTimeout(
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bot ${this.token}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ content: text }),
+      },
+      10000,
+    )
   }
 
   async stop(): Promise<void> {
-    if (this.heartbeat) clearInterval(this.heartbeat)
+    this.clearHeartbeat()
     this.ws?.close()
     this.handler = null
   }

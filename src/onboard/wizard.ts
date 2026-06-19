@@ -4,10 +4,8 @@ import { SystemClock } from '../core/clock'
 import { initProject } from '../adapters/init-project'
 import { betweenPaths } from '../adapters/paths'
 import { planOnboarding, applyConfigPatch, TOKEN_ENV, type Channel, type AgentPreset } from './plan'
+import { AGENT_PRESETS, GATEWAY_CHANNELS } from '../core/constants'
 import { smokeChannel, type FetchLike, type SmokeResult } from './smoke'
-
-const CHANNELS: Channel[] = ['echo', 'telegram', 'discord']
-const AGENTS: AgentPreset[] = ['fake', 'claude', 'codex']
 
 export interface OnboardOptions {
   channel?: Channel
@@ -36,8 +34,12 @@ export interface OnboardOutcome {
   nextSteps: string[]
 }
 
-function asEnum<T extends string>(value: string | undefined, allowed: T[], fallback: T): T {
-  return value && (allowed as string[]).includes(value) ? (value as T) : fallback
+function asEnum<T extends string>(
+  value: string | undefined,
+  allowed: readonly T[],
+  fallback: T,
+): T {
+  return value && (allowed as readonly string[]).includes(value) ? (value as T) : fallback
 }
 
 /**
@@ -54,15 +56,15 @@ export async function runOnboard(
   const interactive = !opts.nonInteractive
 
   // 1) choose channel + agent (prompt only for what's missing)
-  let channel = asEnum(opts.channel, CHANNELS, 'echo')
+  let channel = asEnum(opts.channel, GATEWAY_CHANNELS, 'echo')
   if (interactive && !opts.channel) {
     const a = await io.ask(`Gateway channel? [echo|telegram|discord] (echo): `)
-    channel = asEnum(a, CHANNELS, 'echo')
+    channel = asEnum(a, GATEWAY_CHANNELS, 'echo')
   }
-  let agent = asEnum(opts.agent, AGENTS, 'fake')
+  let agent = asEnum(opts.agent, AGENT_PRESETS, 'fake')
   if (interactive && !opts.agent) {
     const a = await io.ask(`Agent wrappers? [fake|claude|codex] (fake): `)
-    agent = asEnum(a, AGENTS, 'fake')
+    agent = asEnum(a, AGENT_PRESETS, 'fake')
   }
   let vault = opts.vault
   if (interactive && opts.vault === undefined) {

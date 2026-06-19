@@ -10,16 +10,14 @@ import { AckStore } from './adapters/ack-store'
 import { GitAdapter } from './adapters/git'
 import { buildSignal } from './adapters/signal-transport'
 import type { Ack, ApprovalScope } from './core/types'
-import type { AgentPreset } from './agents/real-agents'
 import { signApproval, verifyApproval } from './core/approval'
+import { APPROVAL_SCOPES, AGENT_PRESETS, type AgentPreset } from './core/constants'
 import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from './adapters/approval-secret'
 import { loadConfig, runStart } from './runtime'
 import { print, printErr, printJson } from './cli/output'
 import { parseInterval } from './cli/args'
 
 const VERSION = '0.1.0'
-const APPROVAL_SCOPES: ApprovalScope[] = ['merge', 'deploy', 'promote_rule']
-const AGENT_PRESETS: AgentPreset[] = ['fake', 'claude', 'codex']
 /** Use ASCII markers when output isn't an interactive terminal (avoids Windows mojibake, P3-14). */
 const ASCII =
   !process.stdout.isTTY || Boolean(process.env.NO_COLOR) || Boolean(process.env.BETWEEN_ASCII)
@@ -44,7 +42,7 @@ program
   .command('init')
   .description('Create .between/ scaffolding, config, and initial state in the current repo')
   .option('--vault <path>', 'Obsidian vault root for human-readable project memory')
-  .option('--agent <preset>', 'agent wrappers: fake (default), claude, or codex')
+  .option('--agent <preset>', 'agent wrappers: fake | claude | codex (default fake)')
   .action(async (opts: { vault?: string; agent?: string }) => {
     try {
       const agent = opts.agent as AgentPreset | undefined
@@ -356,30 +354,34 @@ program
   .description('Run the chat gateway (telegram/discord/echo) bridging a chat to the broker')
   .option('--max-seconds <n>', 'auto-stop after N seconds (smoke testing)', (v) => Number(v))
   .action(async (opts: { maxSeconds?: number }) => {
+    const { createChatTransport } = await import('./gateway/factory')
+    const { GatewaySession } = await import('./gateway/session')
+    let session: InstanceType<typeof GatewaySession> | null = null
+    let notify: ReturnType<typeof setInterval> | null = null
+    const stop = async (): Promise<void> => {
+      if (notify) clearInterval(notify)
+      notify = null
+      process.removeListener('SIGINT', onSigint) // don't accumulate handlers across invocations
+      if (session) await session.stop()
+    }
+    const onSigint = (): void => void stop().then(() => process.exit(0))
     try {
       const config = await loadConfig(root())
-      const { createChatTransport } = await import('./gateway/factory')
-      const { GatewaySession } = await import('./gateway/session')
       const transport = createChatTransport(config)
-      const session = new GatewaySession(root(), transport)
+      session = new GatewaySession(root(), transport)
       await session.start()
       print(`between: gateway online (${transport.kind}). Ctrl-C to stop.`)
-      const notify = setInterval(() => void session.tick(), 1500)
-      const stop = async () => {
-        clearInterval(notify)
-        await session.stop()
-      }
+      notify = setInterval(() => void session?.tick(), 1500)
       if (opts.maxSeconds && opts.maxSeconds > 0) {
         await new Promise((r) => setTimeout(r, opts.maxSeconds! * 1000))
         await stop()
         print('between: gateway stopped.')
       } else {
-        process.on('SIGINT', () => {
-          void stop().then(() => process.exit(0))
-        })
+        process.on('SIGINT', onSigint)
         await new Promise<void>(() => {}) // run until signal
       }
     } catch (e) {
+      await stop().catch(() => {}) // guarantee timer/listener cleanup on any failure
       await fail(e)
     }
   })

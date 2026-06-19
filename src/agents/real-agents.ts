@@ -77,4 +77,4 @@ export const CODEX_AGENT_SOURCE = wrapper(
   'codex exec "<prompt>"   (needs OPENAI_API_KEY; verify --json/--output-schema for your version)',
 )
 
-export type AgentPreset = 'fake' | 'claude' | 'codex'
+export type { AgentPreset } from '../core/constants'

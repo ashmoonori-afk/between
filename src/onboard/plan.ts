@@ -1,9 +1,11 @@
 import type { BetweenConfig } from '../core/config-schema'
+import { PRESET_SCRIPT } from '../core/constants'
 
 /** Chat channels a first-run user can wire the broker to. */
 export type Channel = BetweenConfig['gateway_channel']
 /** Agent wrappers the developer/reviewer roles can run as. */
-export type AgentPreset = 'fake' | 'claude' | 'codex'
+import type { AgentPreset } from '../core/constants'
+export type { AgentPreset }
 
 export interface OnboardAnswers {
   channel: Channel
@@ -31,12 +33,6 @@ export interface OnboardPlan {
 export const TOKEN_ENV: Record<Exclude<Channel, 'echo'>, string> = {
   telegram: 'BETWEEN_TELEGRAM_TOKEN',
   discord: 'BETWEEN_DISCORD_TOKEN',
-}
-
-const PRESET_SCRIPT: Record<AgentPreset, string> = {
-  fake: 'fake-agent.mjs',
-  claude: 'claude-agent.mjs',
-  codex: 'codex-agent.mjs',
 }
 
 /** Quote a YAML scalar so paths with spaces/backslashes and numeric-looking ids stay literal. */
@@ -96,7 +92,8 @@ export function planOnboarding(answers: OnboardAnswers): OnboardPlan {
  * comment and indentation. Appends `key: value` if the key is absent. Pure + unit-tested.
  */
 export function setYamlScalar(text: string, key: string, value: string): string {
-  const re = new RegExp(`^(\\s*${key}:\\s*)(.*?)(\\s*#.*)?$`, 'm')
+  const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // escape regex metachars (review)
+  const re = new RegExp(`^(\\s*${safeKey}:\\s*)(.*?)(\\s*#.*)?$`, 'm')
   if (re.test(text)) {
     return text.replace(re, (_m, prefix: string, _old: string, comment = '') => {
       return `${prefix}${value}${comment ?? ''}`

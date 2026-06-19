@@ -8,7 +8,8 @@ import { initialState } from '../core/state'
 import { StateRepository } from './state-repository'
 import { betweenPaths, betweenSubdirs } from './paths'
 import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
-import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE, type AgentPreset } from '../agents/real-agents'
+import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE } from '../agents/real-agents'
+import { PRESET_SCRIPT, type AgentPreset } from '../core/constants'
 import { ensureApprovalSecret } from './approval-secret'
 import { installPrePushHook } from './git-hooks'
 
@@ -63,12 +64,7 @@ export async function initProject(
   }
 
   const preset: AgentPreset = opts.agent ?? 'fake'
-  const presetScript =
-    preset === 'claude'
-      ? 'claude-agent.mjs'
-      : preset === 'codex'
-        ? 'codex-agent.mjs'
-        : 'fake-agent.mjs'
+  const presetScript = PRESET_SCRIPT[preset]
 
   if (!existsSync(p.config)) {
     let body = defaultConfigYaml()

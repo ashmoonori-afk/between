@@ -2,10 +2,9 @@ import { CommandBus } from '../adapters/command-bus'
 import { StateRepository } from '../adapters/state-repository'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { signApproval } from '../core/approval'
+import { APPROVAL_SCOPES } from '../core/constants'
 import type { ApprovalScope, Phase } from '../core/types'
 import type { ChatMessage, ChatTransport } from './transport'
-
-const APPROVAL_SCOPES: ApprovalScope[] = ['merge', 'deploy', 'promote_rule']
 
 const HELP = [
   'Between gateway — commands:',

@@ -26,6 +26,19 @@ describe('parseTelegramUpdates (contract)', () => {
     expect(parseTelegramUpdates({ result: [] })).toEqual({ messages: [], nextOffset: null })
     expect(parseTelegramUpdates({})).toEqual({ messages: [], nextOffset: null })
   })
+
+  it('skips empty + over-length text but still advances the offset', () => {
+    const body = {
+      result: [
+        { update_id: 1, message: { chat: { id: 9 }, text: '' } }, // empty -> skipped
+        { update_id: 2, message: { chat: { id: 9 }, text: 'x'.repeat(5000) } }, // too long -> skipped
+        { update_id: 3, message: { chat: { id: 9 }, text: 'ok' } },
+      ],
+    }
+    const { messages, nextOffset } = parseTelegramUpdates(body)
+    expect(messages).toEqual([{ chatId: '9', text: 'ok', from: undefined }])
+    expect(nextOffset).toBe(4) // offset still advances past the skipped updates
+  })
 })
 
 describe('parseDiscordMessage (contract)', () => {

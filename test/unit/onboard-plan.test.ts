@@ -77,6 +77,13 @@ describe('setYamlScalar', () => {
     const out = setYamlScalar(text, 'telegram_chat_id', '"5"')
     expect(out).toBe('telegram_chat_id: "5"\ndiscord_channel_id: ""')
   })
+
+  it('escapes regex metacharacters in the key (no false matches)', () => {
+    // a dotted key must match literally, not as a regex wildcard
+    const text = 'vaultXpath: old\nvault.path: keep\n'
+    const out = setYamlScalar(text, 'vault.path', 'new')
+    expect(out).toBe('vaultXpath: old\nvault.path: new\n')
+  })
 })
 
 describe('applyConfigPatch', () => {
