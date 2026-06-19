@@ -1,7 +1,7 @@
 {
   "project": "between-gateway-forge",
   "methodology": "PWSForge (builtin: .claude/skills/PWSForge)",
-  "phase": "2-gateway-core",
+  "phase": "3-telegram-discord",
   "phases": [
     "0-intake",
     "1-interview",

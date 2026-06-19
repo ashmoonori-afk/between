@@ -50,6 +50,13 @@ export const ConfigSchema = z
     agent_cwd: z.string().default(''), // '' resolves to the project root
     agent_pane_scrollback: z.number().int().positive().default(2000),
     agent_pane_visible_rows: z.number().int().positive().default(10),
+
+    // --- gateway (chat bridge: `between gateway`) ---
+    gateway_channel: z.enum(['echo', 'telegram', 'discord']).default('echo'),
+    telegram_bot_token: z.string().default(''),
+    telegram_chat_id: z.string().default(''),
+    discord_bot_token: z.string().default(''),
+    discord_channel_id: z.string().default(''),
   })
   .strict()
 
@@ -116,5 +123,12 @@ reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'
 agent_cwd: ''                    # '' = project root
 agent_pane_scrollback: 2000      # lines retained per agent pane
 agent_pane_visible_rows: 10      # visible tail rows per agent pane
+
+# --- gateway (between gateway: chat <-> broker bridge) ---
+gateway_channel: echo            # echo | telegram | discord
+telegram_bot_token: ''           # @BotFather token (or set BETWEEN_TELEGRAM_TOKEN)
+telegram_chat_id: ''             # chat to notify (optional; learned from first message)
+discord_bot_token: ''            # Discord bot token (or set BETWEEN_DISCORD_TOKEN)
+discord_channel_id: ''           # channel to notify (optional; learned from first message)
 `
 }

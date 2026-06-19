@@ -302,6 +302,39 @@ program
   })
 
 program
+  .command('gateway')
+  .description('Run the chat gateway (telegram/discord/echo) bridging a chat to the broker')
+  .option('--max-seconds <n>', 'auto-stop after N seconds (smoke testing)', (v) => Number(v))
+  .action(async (opts: { maxSeconds?: number }) => {
+    try {
+      const config = await loadConfig(root())
+      const { createChatTransport } = await import('./gateway/factory')
+      const { GatewaySession } = await import('./gateway/session')
+      const transport = createChatTransport(config)
+      const session = new GatewaySession(root(), transport)
+      await session.start()
+      print(`between: gateway online (${transport.kind}). Ctrl-C to stop.`)
+      const notify = setInterval(() => void session.tick(), 1500)
+      const stop = async () => {
+        clearInterval(notify)
+        await session.stop()
+      }
+      if (opts.maxSeconds && opts.maxSeconds > 0) {
+        await new Promise((r) => setTimeout(r, opts.maxSeconds! * 1000))
+        await stop()
+        print('between: gateway stopped.')
+      } else {
+        process.on('SIGINT', () => {
+          void stop().then(() => process.exit(0))
+        })
+        await new Promise<void>(() => {}) // run until signal
+      }
+    } catch (e) {
+      await fail(e)
+    }
+  })
+
+program
   .command('verify-push')
   .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
   .action(async () => {
