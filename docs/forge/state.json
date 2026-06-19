@@ -1,9 +1,22 @@
 {
   "project": "between-gateway-forge",
   "methodology": "PWSForge (builtin: .claude/skills/PWSForge)",
-  "phase": "0-intake",
-  "phases": ["0-intake", "1-interview", "2-gateway-core", "3-telegram-discord", "4-onboarding", "5-forge-wiring", "6-dogfood-push"],
-  "open_p0": ["chat credentials", "gateway shape (node port vs python sidecar)", "forge builtin scope"],
+  "phase": "1-interview",
+  "phases": [
+    "0-intake",
+    "1-interview",
+    "2-gateway-core",
+    "3-telegram-discord",
+    "4-onboarding",
+    "5-forge-wiring",
+    "6-dogfood-push"
+  ],
+  "open_p0": [],
   "approval_boundary": "signed (P1-5) — merges human-gated",
-  "updated_at": "2026-06-19"
+  "updated_at": "2026-06-19",
+  "decisions": {
+    "credentials": "none -> echo first",
+    "gateway": "native node port",
+    "forge": "skill files + programmatic phases"
+  }
 }
