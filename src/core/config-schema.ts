@@ -87,7 +87,8 @@ review_timeout_seconds: 900      # reviewer must respond within this -> human_ga
 developer_timeout_seconds: 900   # developer must respond within this -> human_gate
 same_hash_review_policy: skip    # skip | always
 
-# --- human gate (§7) ---
+# --- human gate (§7) --- (reserved: approval is enforced via the human_gate phase + token,
+# not yet by these per-action booleans; see docs/AGENT-CONTRACT.md trust-boundary note)
 human_gate_required_for_merge: true
 human_gate_required_for_deploy: true
 
@@ -103,7 +104,7 @@ snapshot_max_total_mb: 200       # hard cap on snapshot dir size
 # --- vault ---
 vault_path: ''                   # Obsidian vault root (validated on start)
 
-# --- rule promotion (§13) ---
+# --- rule promotion (§13) --- (reserved: not yet implemented in the runtime loop)
 auto_propose_rules: true
 auto_promote_rules: false        # never auto-harden a rule without a human
 promotion_requires_human: true

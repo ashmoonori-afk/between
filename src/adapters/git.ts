@@ -12,6 +12,9 @@ const PIN = ['-c', 'core.autocrlf=false', '-c', 'core.quotepath=false', '-c', 'c
 /** Flags pinned so diff output is stable and review-friendly (I15). */
 const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-renames']
 
+/** Exclude the broker's own tree even if `.between/` was accidentally git-tracked (P2-8 / I22). */
+const TRACKED_EXCLUDE = ['--', ':(exclude).between/**']
+
 const PINNED_ENV = { GIT_PAGER: 'cat', LC_ALL: 'C', TZ: 'UTC' } as const
 
 export interface RepoState {
@@ -82,18 +85,24 @@ export class GitAdapter {
 
   /** `git diff <base>` (tracked, staging-invariant) with pinned flags. */
   private async trackedDiff(): Promise<string> {
-    const r = await this.run(['diff', await this.base(), ...DIFF_FLAGS])
+    const r = await this.run(['diff', await this.base(), ...DIFF_FLAGS, ...TRACKED_EXCLUDE])
     return r.stdout
   }
 
   private async trackedRaw(): Promise<string> {
-    const r = await this.run(['diff', await this.base(), '--raw', '--abbrev=40'])
+    const r = await this.run([
+      'diff',
+      await this.base(),
+      '--raw',
+      '--abbrev=40',
+      ...TRACKED_EXCLUDE,
+    ])
     return r.stdout
   }
 
   /** numstat summary -> changed files / insertions / deletions. */
   async summary(): Promise<DiffSummary> {
-    const r = await this.run(['diff', await this.base(), '--numstat'])
+    const r = await this.run(['diff', await this.base(), '--numstat', ...TRACKED_EXCLUDE])
     if (r.exitCode !== 0) return { changed_files: 0, insertions: 0, deletions: 0 }
     let changed = 0
     let ins = 0

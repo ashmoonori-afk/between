@@ -31,18 +31,21 @@ export class StateRepository {
   }
 
   async read(): Promise<BetweenState | null> {
+    // migrate() runs OUTSIDE tryRead so a newer-schema REFUSAL propagates instead of being
+    // swallowed by the corrupt-file fallback and silently downgrading (P2-7).
     const primary = await this.tryRead(this.p.state)
-    if (primary) return primary
+    if (primary) return migrate(primary)
     const backup = await this.tryRead(this.p.stateBak)
-    return backup
+    return backup ? migrate(backup) : null
   }
 
+  /** Parse + structural-validate only (no migration); returns null on corrupt/garbage. */
   private async tryRead(path: string): Promise<BetweenState | null> {
     if (!existsSync(path)) return null
     try {
       const raw = await readFile(path, 'utf8')
       const parsed: unknown = JSON.parse(raw)
-      return isBetweenState(parsed) ? migrate(parsed) : null
+      return isBetweenState(parsed) ? parsed : null
     } catch {
       return null
     }

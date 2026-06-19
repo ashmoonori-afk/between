@@ -27,7 +27,7 @@ import type { StateRepository } from '../adapters/state-repository'
 import type { EventsLog } from '../adapters/events-log'
 import type { SnapshotStore } from '../adapters/snapshot-store'
 import type { CommandBus, Command } from '../adapters/command-bus'
-import { buildSignal, reviewerSignalBody } from '../adapters/signal-transport'
+import { buildSignal, reviewerSignalBody, developerSignalBody } from '../adapters/signal-transport'
 import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
 import { reconcile } from './reconcile'
 
@@ -200,22 +200,36 @@ export class Daemon {
 
   private async watchForNewDiff(): Promise<void> {
     const { hash } = await this.currentDiff()
-    if (hash === null) return
-    if (hash === this.current.diff.hash) return // unchanged since last stable
-    if (isAlreadyReviewed(this.current, hash)) return // developer hasn't changed since review
-    const c = this.deps.clock
-    const step = stepDebounce(
-      emptyDebounce(),
-      hash,
-      c.nowIso(),
-      c.now(),
-      this.deps.config.diff_debounce_seconds,
-    )
-    await this.dispatch('diff_detected', (s) => ({
-      ...s,
-      debounce: step.state,
-      diff: { ...s.diff, previous_hash: s.diff.hash },
-    }))
+    if (
+      hash !== null &&
+      hash !== this.current.diff.hash &&
+      !isAlreadyReviewed(this.current, hash)
+    ) {
+      const c = this.deps.clock
+      const step = stepDebounce(
+        emptyDebounce(),
+        hash,
+        c.nowIso(),
+        c.now(),
+        this.deps.config.diff_debounce_seconds,
+      )
+      await this.dispatch('diff_detected', (s) => ({
+        ...s,
+        debounce: step.state,
+        diff: { ...s.diff, previous_hash: s.diff.hash },
+      }))
+      return
+    }
+    // no new diff: time out applying_review if the developer never produced a fix (P3-13)
+    if (
+      this.current.workflow.phase === 'applying_review' &&
+      this.signalTimedOut(this.deps.config.developer_timeout_seconds)
+    ) {
+      await this.dispatch('developer_timeout', (s) => ({
+        ...s,
+        workflow: { ...s.workflow, error: this.timeoutError('developer did not produce a fix') },
+      }))
+    }
   }
 
   private async runDebounce(): Promise<void> {
@@ -330,6 +344,7 @@ export class Daemon {
   }
 
   private async awaitAck(): Promise<void> {
+    if (await this.superseded()) return // live diff changed -> abandon (P1-3)
     const id = this.expectedSignalId()
     if (id) {
       const ack = await this.deps.transport.pollAck(id)
@@ -347,6 +362,7 @@ export class Daemon {
   }
 
   private async awaitReview(): Promise<void> {
+    if (await this.superseded()) return // live diff changed -> abandon (P1-3)
     const record = await this.readReview()
     const hash = this.current.diff.hash
     if (record && hash && reviewMatchesCurrent(record, hash)) {
@@ -362,8 +378,12 @@ export class Daemon {
   }
 
   private async handleReviewWritten(): Promise<void> {
+    if (await this.superseded()) return // live diff changed under us -> abandon (P1-3)
     const record = await this.readReview()
-    if (!record) return
+    if (!record) {
+      await this.maybeReviewTimeout('reviewer did not write a review')
+      return
+    }
     // ignore a review file replaced with one for a different cycle/hash (TOCTOU, I14, HIGH-2)
     if (record.diff_hash !== this.current.diff.hash) return
     if (reviewIsClean(record)) {
@@ -374,11 +394,71 @@ export class Daemon {
         await this.dispatch('verify_passed', (s) =>
           reviewed ? recordReviewedHash(s, reviewed) : s,
         )
+        return
       }
-      return // clean but no passing verify yet: wait
+      // verify is present but failed / hash-mismatched -> back to developing, not a stall (P1-4)
+      if (verify && (!verify.passed || verify.diff_hash !== record.diff_hash)) {
+        await this.dispatch('verify_failed', (s) => ({
+          ...s,
+          workflow: { ...s.workflow, error: this.timeoutError('verification did not pass') },
+        }))
+        return
+      }
+      // clean review, verify still missing -> wait, but don't stall forever (P1-4)
+      await this.maybeReviewTimeout('verification did not arrive')
+      return
     }
-    // blocking findings -> developer applies
+    // blocking findings -> signal the developer, THEN move to applying_review (P1-1)
+    await this.sendDeveloperSignal(record.diff_hash)
     await this.dispatch('review_applied')
+  }
+
+  /** Route to human_gate (via the universal review_timeout interrupt) once the wait runs out. */
+  private async maybeReviewTimeout(message: string): Promise<void> {
+    if (this.signalTimedOut(this.deps.config.review_timeout_seconds)) {
+      await this.dispatch('review_timeout', (s) => ({
+        ...s,
+        workflow: { ...s.workflow, error: this.timeoutError(message) },
+      }))
+    }
+  }
+
+  /** Notify the developer that blocking review feedback is ready (P1-1, §9 To Developer). */
+  private async sendDeveloperSignal(hash: string): Promise<void> {
+    const sig = buildSignal(
+      'developer',
+      this.current.workflow.cycle,
+      hash,
+      developerSignalBody(),
+      this.deps.clock.nowIso(),
+    )
+    await this.deps.transport.send(sig)
+    await this.persist(
+      touch(
+        {
+          ...this.current,
+          broker: {
+            ...this.current.broker,
+            last_signal: 'developer_review_available',
+            last_signal_at: this.deps.clock.nowIso(),
+          },
+        },
+        this.deps.clock,
+      ),
+    )
+    await this.emit('signal_sent', { target: 'developer', diff_hash: hash })
+  }
+
+  /**
+   * Abandon an outstanding review when the live worktree diff changed out from under it
+   * (a developer edit during review_requested/reviewing/review_written), so a stale review
+   * can't be approved (P1-3 / I14). Returns true after dispatching the supersede.
+   */
+  private async superseded(): Promise<boolean> {
+    const { hash } = await this.currentDiff()
+    if (hash === null || hash === this.current.diff.hash) return false
+    await this.dispatch('diff_superseded', (s) => ({ ...s, debounce: emptyDebounce() }))
+    return true
   }
 
   private signalTimedOut(timeoutSeconds: number): boolean {
@@ -482,6 +562,16 @@ export class Daemon {
       this.deps.config.same_hash_review_policy === 'skip' &&
       isAlreadyReviewed(this.current, hash)
     ) {
+      return
+    }
+    // review-now must honor the per-goal cycle cap, just like the debounce path (P2-10)
+    if (
+      isCycleCapReached(
+        this.current.workflow.cycles_this_goal,
+        this.deps.config.max_cycles_per_goal,
+      )
+    ) {
+      await this.dispatch('max_cycles_reached', (s) => ({ ...s, debounce: emptyDebounce() }))
       return
     }
     // move into debouncing if needed, then force a cycle immediately

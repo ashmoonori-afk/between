@@ -31,14 +31,17 @@ export const TRANSITIONS: Readonly<Partial<Record<Phase, Partial<Record<EventNam
   },
   review_requested: {
     review_acked: 'reviewing', // gate `reviewing` on a real ack (I7)
+    diff_superseded: 'developing', // live diff changed -> abandon this review (TOCTOU)
   },
   reviewing: {
     review_written: 'review_written',
+    diff_superseded: 'developing',
   },
   review_written: {
     review_applied: 'applying_review', // blocking findings -> developer applies
     verify_passed: 'human_gate', // no blocking findings + verification ok -> gate
     verify_failed: 'developing',
+    diff_superseded: 'developing',
   },
   applying_review: {
     diff_detected: 'debouncing', // applying produced a new diff -> next cycle

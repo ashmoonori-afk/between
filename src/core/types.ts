@@ -45,6 +45,7 @@ export const EVENTS = [
   'diff_changed', // hash changed again during debounce -> restart timer
   'diff_stable', // hash stable through debounce window
   'diff_reverted', // debounced hash equals last_reviewed -> abort cycle
+  'diff_superseded', // live worktree diff changed while a review was outstanding (TOCTOU)
   'signal_sent', // review signal emitted to reviewer
   'review_acked', // reviewer acknowledged the signal (I7)
   'review_written', // structured review record appeared for current cycle+hash (I8)

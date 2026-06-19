@@ -6,11 +6,14 @@ import type { Clock, ProjectRef } from '../core/types'
 import { defaultConfigYaml } from '../core/config-schema'
 import { initialState } from '../core/state'
 import { StateRepository } from './state-repository'
-import { betweenPaths, betweenSubdirs, agentScriptPath } from './paths'
+import { betweenPaths, betweenSubdirs } from './paths'
 import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
+import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE, type AgentPreset } from '../agents/real-agents'
 
 export interface InitOptions {
   vaultPath?: string
+  /** which agent wraps the developer/reviewer roles: fake (default), claude, or codex */
+  agent?: AgentPreset
 }
 
 export interface InitResult {
@@ -57,11 +60,31 @@ export async function initProject(
       : null,
   }
 
+  const preset: AgentPreset = opts.agent ?? 'fake'
+  const presetScript =
+    preset === 'claude'
+      ? 'claude-agent.mjs'
+      : preset === 'codex'
+        ? 'codex-agent.mjs'
+        : 'fake-agent.mjs'
+
   if (!existsSync(p.config)) {
     let body = defaultConfigYaml()
     if (vaultPath) {
       // serialize via the YAML library so a path with quotes/backslashes/newlines is safe (H1)
       body = body.replace("vault_path: ''", `vault_path: ${yamlStringify(vaultPath).trim()}`)
+    }
+    if (preset !== 'fake') {
+      body = body
+        .replace('agent_mode: file', 'agent_mode: oneshot')
+        .replace(
+          "developer_command: 'node .between/agents/fake-agent.mjs developer'",
+          `developer_command: 'node .between/agents/${presetScript} developer'`,
+        )
+        .replace(
+          "reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'",
+          `reviewer_command: 'node .between/agents/${presetScript} reviewer'`,
+        )
     }
     await writeFile(p.config, body, 'utf8')
     created.push(p.config)
@@ -73,11 +96,16 @@ export async function initProject(
     created.push(p.state)
   }
 
-  // bundled demo agent so `between start --embed` (oneshot/pty) is self-contained
-  const agentFile = agentScriptPath(p)
-  if (!existsSync(agentFile)) {
-    await writeFile(agentFile, FAKE_AGENT_SOURCE, 'utf8')
-    created.push(agentFile)
+  // always ship the fake-agent (file-mode default); add the chosen real wrapper too
+  const scripts: Array<[string, string]> = [['fake-agent.mjs', FAKE_AGENT_SOURCE]]
+  if (preset === 'claude') scripts.push(['claude-agent.mjs', CLAUDE_AGENT_SOURCE])
+  if (preset === 'codex') scripts.push(['codex-agent.mjs', CODEX_AGENT_SOURCE])
+  for (const [name, source] of scripts) {
+    const file = join(p.agents, name)
+    if (!existsSync(file)) {
+      await writeFile(file, source, 'utf8')
+      created.push(file)
+    }
   }
 
   await ensureGitignore(absRoot)

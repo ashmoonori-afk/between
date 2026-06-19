@@ -1,5 +1,6 @@
-import { writeFile, readFile, mkdir } from 'node:fs/promises'
+import { readFile, mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
+import writeFileAtomic from 'write-file-atomic'
 import type { Ack, Signal, SignalTarget, SignalTransport } from '../core/types'
 import { betweenPaths, signalPath, ackPath, type BetweenPaths } from './paths'
 import { parseAck } from './ack-store'
@@ -42,7 +43,8 @@ export class FileTransport implements SignalTransport {
   async send(signal: Signal): Promise<void> {
     const file = signalPath(this.p, signal.target)
     await mkdir(dirname(file), { recursive: true })
-    await writeFile(file, JSON.stringify(signal, null, 2), 'utf8')
+    // atomic so a reader never sees a half-written signal pointer (P2-6)
+    await writeFileAtomic(file, JSON.stringify(signal, null, 2))
   }
 
   async pollAck(signalId: string): Promise<Ack | null> {

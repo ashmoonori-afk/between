@@ -9,12 +9,17 @@ import { AckStore } from './adapters/ack-store'
 import { GitAdapter } from './adapters/git'
 import { buildSignal } from './adapters/signal-transport'
 import type { Ack, ApprovalScope } from './core/types'
+import type { AgentPreset } from './agents/real-agents'
 import { loadConfig, runStart } from './runtime'
 import { print, printErr, printJson } from './cli/output'
 import { parseInterval } from './cli/args'
 
 const VERSION = '0.1.0'
 const APPROVAL_SCOPES: ApprovalScope[] = ['merge', 'deploy', 'promote_rule']
+const AGENT_PRESETS: AgentPreset[] = ['fake', 'claude', 'codex']
+/** Use ASCII markers when output isn't an interactive terminal (avoids Windows mojibake, P3-14). */
+const ASCII =
+  !process.stdout.isTTY || Boolean(process.env.NO_COLOR) || Boolean(process.env.BETWEEN_ASCII)
 
 function root(): string {
   return process.cwd()
@@ -36,9 +41,14 @@ program
   .command('init')
   .description('Create .between/ scaffolding, config, and initial state in the current repo')
   .option('--vault <path>', 'Obsidian vault root for human-readable project memory')
-  .action(async (opts: { vault?: string }) => {
+  .option('--agent <preset>', 'agent wrappers: fake (default), claude, or codex')
+  .action(async (opts: { vault?: string; agent?: string }) => {
     try {
-      const res = await initProject(root(), { vaultPath: opts.vault }, new SystemClock())
+      const agent = opts.agent as AgentPreset | undefined
+      if (agent && !AGENT_PRESETS.includes(agent)) {
+        throw new Error(`--agent must be one of: ${AGENT_PRESETS.join(', ')}`)
+      }
+      const res = await initProject(root(), { vaultPath: opts.vault, agent }, new SystemClock())
       print(
         res.alreadyExisted
           ? 'between: already initialized (refreshed missing files)'
@@ -241,7 +251,17 @@ program
     })
 
     for (const c of checks) {
-      const mark = c.ok === true ? '✓' : c.ok === 'warn' ? '⚠' : '✗'
+      const mark = ASCII
+        ? c.ok === true
+          ? '[ok]'
+          : c.ok === 'warn'
+            ? '[!]'
+            : '[x]'
+        : c.ok === true
+          ? '✓'
+          : c.ok === 'warn'
+            ? '⚠'
+            : '✗'
       print(`  ${mark} ${c.label}`)
     }
     if (checks.some((c) => c.ok === false)) process.exitCode = 1

@@ -2,188 +2,246 @@
 
 Date: 2026-06-19
 Mode: Ultrawork / HEAVY review
-Scope: current local repository at `C:\Users\lg\marketing for companies\between`, including committed implementation, current dirty package metadata, CLI/TUI behavior, daemon loop, durable state adapters, tests, CI, README, TASKS, and review artifacts.
+Scope: current clean `main` worktree at `C:\Users\lg\marketing for companies\between`, including broker loop, file contracts, embedded agent transports, Ink UI, package metadata, tests, docs, and real CLI smoke behavior.
 
-Verdict: **Not ready to merge or ship.**
+Verdict: **REQUEST CHANGES. Do not merge or ship as a self-governing broker yet.**
 
-The earlier Node/runtime metadata and lint-in-CI blockers are mostly fixed: `package.json` and `package-lock.json` now require Node `>=22.12.0`, `tsup.config.ts` targets `node22`, and CI runs `npm run lint`. The current blockers are deeper: the broker still does not complete the developer feedback handoff, the CI coverage gate is red on this Windows host, and several durable-file boundaries still behave like optimistic local files rather than crash-safe broker contracts.
+This is a fresh review of the current worktree, not the older dirty snapshot. The previous optional PTY probe mismatch is now fixed: `doctor` imports `@lydell/node-pty`, and the local root `doctor` output reports the package available. The README is also more honest about alpha limitations. The remaining blockers are in the broker contract itself: reviewer feedback still does not reach the developer, stale diffs can be approved, verification can stall forever, and `.between/` is still treated as both agent-writable IPC and human-control authority.
 
-## Current Working Tree
+## Working Tree Snapshot
 
-Latest verified working-tree snapshot during this review (`git status --short --untracked-files=all`) reports:
+At review start, `git status --short --untracked-files=all --branch` reported a clean branch:
 
 ```text
- M package-lock.json
- M package.json
- M review.md
- M src/core/config-schema.ts
-?? docs/EMBED-PLAN.md
-?? src/adapters/agent-host.ts
-?? src/adapters/pipe-agent-host.ts
-?? src/adapters/pty-agent-host.ts
-?? src/adapters/pty-transport.ts
+## main...origin/main
 ```
 
-The package diff adds `@lydell/node-pty` as an optional dependency. `review.md` is this review artifact. `src/core/config-schema.ts`, `docs/EMBED-PLAN.md`, `src/adapters/agent-host.ts`, `src/adapters/pipe-agent-host.ts`, `src/adapters/pty-agent-host.ts`, and `src/adapters/pty-transport.ts` changed or appeared during the review window after the main verification pass; they were not edited by this review, so findings below focus on the implementation snapshot and evidence captured before those concurrent edits. This section is a timestamped review snapshot, not a claim that no later concurrent files can appear while another coding agent is still writing.
+This review then created fresh evidence under:
 
-## Findings
+```text
+.omo/evidence/current-deep-review-2026-06-19/
+.omo/notepads/between-current-deep-review-2026-06-19.md
+```
 
-### P1 - Blocking reviewer feedback does not signal the developer
+## Blocking Findings
 
-The core product loop says the broker should notify the developer when the reviewer writes findings. The implementation transitions to `applying_review`, but it never sends a developer signal.
+### P1 - Blocking reviewer feedback still does not signal the developer
 
-Evidence:
-
-- `src/daemon/loop.ts:364-381` handles a blocking review by dispatching `review_applied`.
-- `src/adapters/signal-transport.ts:68-74` defines `developerSignalBody()`, but `rg` found no call site for it.
-- Real CLI smoke wrote a valid blocking `.between/reviews/cycle-0001.json`; `status --json` then showed `phase: "applying_review"` and `waiting_on: "developer"`, while `.between/signals/developer.json` was missing.
-- Log: `.omo/evidence/deep-review-2026-06-19/developer-signal-missing-clean.txt`.
-
-Recommended fix: after accepting a complete blocking review for the current hash, build and send a developer signal, persist `last_signal: "developer_review_available"` (or equivalent), and add an integration test that asserts `.between/signals/developer.json` exists before the daemon waits on the developer.
-
-### P1 - CI coverage gate is currently red
-
-CI runs `npm run test:cov` on both Windows and Ubuntu (`.github/workflows/ci.yml:28-31`). On this host, `npm test` passes when rerun alone, but `npm run test:cov` fails in `test/integration/loop.test.ts` with `beforeEach` timeout and `EBUSY` temp cleanup errors.
+The core product loop requires the broker to notify the developer after the reviewer writes blocking findings. The implementation only changes phase to `applying_review`; it never sends a developer signal.
 
 Evidence:
 
-- PASS: `npm run lint` -> `.omo/evidence/deep-review-2026-06-19/lint.txt`.
-- PASS: `npm run typecheck` -> `.omo/evidence/deep-review-2026-06-19/typecheck.txt`.
-- PASS: `npm test` after agent activity stopped -> 12 files, 61 tests -> `.omo/evidence/deep-review-2026-06-19/test-rerun-after-agents.txt`.
-- FAIL: `npm run test:cov` -> 1 failed file, 2 failed integration tests -> `.omo/evidence/deep-review-2026-06-19/test-cov-rerun.txt`.
+- `src/daemon/loop.ts:364-382` reads the review, detects blocking findings, and dispatches `review_applied`.
+- `src/adapters/signal-transport.ts:68-74` defines `developerSignalBody()`, but there is no production call that builds or sends a `developer` signal.
+- Real CLI smoke reproduced the gap: after a blocking `.between/reviews/cycle-0001.json`, `status --json` showed `phase: "applying_review"` and `waiting_on: "developer"`, while `.between/signals/developer.json` was missing.
+- Log: `.omo/evidence/current-deep-review-2026-06-19/smoke-blocking-developer-signal.txt`.
 
-Recommended fix: make the real-git integration harness reliable under coverage on Windows. Likely fixes are longer hook timeout, serializing the integration file, retrying temp cleanup on `EBUSY`, and ensuring all git child processes are fully awaited before `rm`.
+Recommended fix: after accepting a blocking review for the current hash, build and send a `developer` signal, persist a distinct `last_signal` value such as `developer_review_available`, and add an integration test that asserts `.between/signals/developer.json` exists before waiting on the developer.
+
+### P1 - `review_requested` can be stranded after send failure or restart
+
+`openCycleAndSignal()` persists the new cycle and phase before delivering the reviewer signal. If the process crashes, transport send fails, or the machine restarts between those steps, the persisted state says `review_requested` but no signal may exist. Because `last_signal_at` is written only after send, timeout detection can also be disabled.
+
+Evidence:
+
+- `src/daemon/loop.ts:277-294` persists `diff_stable` and moves into `review_requested`.
+- `src/daemon/loop.ts:296-303` sends the signal after that state write.
+- `src/daemon/loop.ts:304-320` writes `broker.last_signal_at` only after send succeeds.
+- `src/daemon/loop.ts:384-388` cannot time out when `last_signal_at` is missing.
+
+Recommended fix: make cycle opening and signal delivery resumable. On startup or every `review_requested` tick, if the expected signal file is missing or `last_signal_at` is null, resend the idempotent signal and stamp `last_signal_at`. Add crash-window tests around persisted `review_requested` with no signal.
+
+### P1 - A changed live diff can be approved by an old review
+
+While the daemon is in `review_requested`, `reviewing`, or `review_written`, it never re-checks the current worktree diff. A developer can change files after the snapshot is sent; a review and verify for the old stored hash can still advance to `human_gate`.
+
+Evidence:
+
+- `src/daemon/loop.ts:151-170` routes review phases to `awaitAck()`, `awaitReview()`, and `handleReviewWritten()`.
+- `src/daemon/loop.ts:349-382` compares records to `this.current.diff.hash`, not a freshly computed `currentDiff()`.
+- `src/core/findings.ts:53-60` correctly requires review/verify hash agreement, but both can agree with the stale stored hash rather than the live worktree.
+
+Recommended fix: while reviewer work is outstanding, recompute the live diff hash before accepting ack/review/verify completion. If the live hash changes, cancel or supersede the cycle, clear stale review artifacts for that cycle, and open a new debounced review.
 
 ### P1 - Clean review without passing verify can stall forever
 
-For a clean review, `handleReviewWritten()` reads verify once per tick. If verify is missing or `passed: false`, it returns while staying in `review_written`; there is no transition to `verifying`, no `verify_failed` dispatch, and `developer_timeout_seconds` is not wired into this path.
+For a clean review, `handleReviewWritten()` checks verify once per tick. If verify is missing, invalid, mismatched, or `passed: false`, it returns while staying in `review_written`. The FSM has `verify_failed`, but the daemon never emits it here, and no timeout is wired for this phase.
 
 Evidence:
 
 - `src/daemon/loop.ts:168-170` calls `handleReviewWritten()` for `review_written`.
-- `src/daemon/loop.ts:369-378` returns when the review is clean but there is no passing verify.
-- `src/daemon/loop.ts:151-173` has no timeout handling for `review_written` or `verifying`.
-- The happy-path integration test writes review and verify together, masking the missing negative path.
+- `src/daemon/loop.ts:369-378` returns when the review is clean but `cycleShouldEnd()` is false.
+- `src/core/fsm.ts:38-42` defines `verify_failed`, but this path does not dispatch it.
+- The happy-path tests write review and verify together, masking the missing negative path.
 
-Recommended fix: define the owner of verification explicitly. If the developer must verify, send a developer/verify signal and route missing or failed verify to `developing` or `human_gate` with timeout. Add tests for missing verify, `passed:false`, and mismatched verify hash.
+Recommended fix: define the verification owner and timeout. Missing/failed/mismatched verify should either signal the developer to verify, return to `developing`, or route to `human_gate` with an explicit recoverable error. Add tests for missing verify, `passed:false`, invalid verify JSON, and hash mismatch.
 
-### P2 - Current optional PTY dependency does not satisfy the runtime probe
+### P1 - Agent-writable `.between/` files can spoof human approval and review completion
 
-The dirty package diff adds `@lydell/node-pty`, but `doctor` dynamically imports `node-pty`.
-
-Evidence:
-
-- `package.json` currently has `optionalDependencies: { "@lydell/node-pty": "^1.2.0-beta.12" }`.
-- `src/cli.ts:219-223` probes `import('node-pty')`.
-- Local import check: `@lydell/node-pty` imports successfully, while `node-pty` fails with `ERR_MODULE_NOT_FOUND`.
-- `node dist/cli.js doctor` still reports `node-pty unavailable`.
-
-Recommended fix: either depend on the package name that provides the `node-pty` specifier, or change the runtime adapter/probe to use `@lydell/node-pty`. Do not ship the current package diff as a PTY readiness improvement.
-
-### P2 - Command and signal files are not written atomically
-
-The broker treats `.between/commands` and `.between/signals` as durable coordination surfaces, but both write directly to the final JSON path. The command drain also deletes corrupt/unreadable files, so a daemon can observe a partially written command and drop it permanently.
+The current trust boundary is cooperative. Any local agent process with write access to `.between/` can write ack/review/verify files and enqueue an `approve` command. That means the "human gate" is not an enforcement boundary; it is only a convention.
 
 Evidence:
 
-- `src/adapters/command-bus.ts:43-50` writes directly to the final command `.json`.
-- `src/adapters/command-bus.ts:69-76` deletes JSON parse/read failures.
-- `src/adapters/signal-transport.ts:42-45` writes signals directly to the final signal path.
+- `src/adapters/command-bus.ts:17-23` accepts `approve` command files as a valid command shape.
+- `src/daemon/loop.ts:460-473` persists the approval and exits `human_gate`.
+- Acks, reviews, verify records, and commands all live under the same writable `.between/` tree used by spawned agents.
 
-Recommended fix: write to a temp filename and atomically rename into place, or use `write-file-atomic`. For command drains, treat a parse failure on a just-created file as retryable unless the file is oversized or clearly invalid after a stable-age threshold.
+Recommended fix: either document this as a non-adversarial local protocol only, or add a real approval boundary: separate OS permissions, signed approval tokens, an out-of-band secret not exposed to agents, or merge/deploy hooks that cannot be written by agent sessions.
+
+## High Priority Findings
+
+### P2 - Command and signal files are still not atomic
+
+The broker uses `.between/commands` and `.between/signals` as durable coordination surfaces, but both write directly to final JSON paths. The command drain deletes corrupt/unreadable files, so a daemon can observe a partially written command and drop it permanently.
+
+Evidence:
+
+- `src/adapters/command-bus.ts:43-50` writes command JSON directly to the final path.
+- `src/adapters/command-bus.ts:69-76` deletes invalid or unreadable command files.
+- `src/adapters/signal-transport.ts:42-45` writes signal JSON directly to the final path.
+
+Recommended fix: use temp file plus atomic rename, or `write-file-atomic`, for command and signal writes. Treat parse failures on young files as retryable unless size or age proves the file is permanently invalid.
 
 ### P2 - Newer state schema refusal is swallowed
 
-`migrate()` throws for `schema_version > 1`, but `tryRead()` catches every error and returns `null`. That turns a required "upgrade Between" refusal into "no readable state", allowing later code to proceed from an initial in-memory state.
+The migration layer intends to refuse newer state files, but that refusal is caught by the generic read fallback. A newer `state.json` can therefore look like no state or fall back to `.bak`, risking silent downgrade behavior.
 
 Evidence:
 
-- `src/adapters/state-repository.ts:40-48` catches all read/migrate errors and returns `null`.
-- `src/adapters/state-repository.ts:70-75` contains the intended newer-than-binary refusal.
+- `src/adapters/state-repository.ts:40-48` catches all read, parse, and migration errors and returns null.
+- `src/adapters/state-repository.ts:70-75` throws the intended "newer than this build supports" error.
+- `src/runtime.ts:57-61` constructs `initialState()` when no existing state is returned.
 
-Recommended fix: distinguish parse/corruption fallback from explicit migration refusal. Let newer-schema errors propagate to `start`, `status`, and `doctor` so the user cannot silently overwrite newer state.
+Recommended fix: distinguish corrupt JSON from explicit migration refusal. Propagate newer-schema errors through `status`, `start`, and `doctor` so the user must upgrade rather than accidentally overwrite newer state.
 
-### P2 - `.between/` is not excluded from tracked diffs
+### P2 - Tracked `.between/` files can enter review hashes
 
-The plan says `.between/` should be excluded at the git level, but the tracked diff and summary paths do not include an exclude pathspec. `.gitignore` only protects untracked files; if `.between/` is ever tracked by mistake, broker state can enter the review hash and self-trigger cycles.
-
-Evidence:
-
-- `src/adapters/git.ts:83-96` calls `git diff <base>` and `git diff <base> --numstat` without `:(exclude).between/**`.
-- `src/adapters/git.ts:111-119` excludes `.between/` only from untracked files.
-- `TASKS.md:62-66` marks `.between/` git-level exclusion as part of M2.
-
-Recommended fix: apply the same `.between/**` exclusion pathspec to tracked diff, raw diff, and summary, and add a regression test with a deliberately tracked `.between/state.json`.
-
-### P2 - Human approval is a protocol token, not an enforcement boundary
-
-The current command bus validates `approve` shape, but any local process with write access to `.between/commands` can enqueue `{ "kind": "approve", "scope": "merge" }`, and the daemon will persist an approval token.
+`between init` now writes `.between/` to `.gitignore`, which helps untracked state. But tracked `.between/**` files are still included in `git diff`, raw diff, and numstat. If `.between/` is ever accidentally tracked, broker state can leak into snapshots and self-trigger review cycles.
 
 Evidence:
 
-- `src/adapters/command-bus.ts:12-23` defines `approve` as a valid command shape.
-- `src/daemon/loop.ts:449-472` persists the approval token and exits `human_gate`.
-- README correctly marks detective merge/deploy enforcement as planned, but "Human-controlled merge/deploy" can be misread as enforcement rather than cooperative protocol.
+- `src/adapters/git.ts:83-96` calls tracked `git diff`, `--raw`, and `--numstat` without an exclude pathspec.
+- `src/adapters/git.ts:111-119` excludes `.between/` only for untracked files.
 
-Recommended fix: document this as a trust boundary now. If Between should enforce human approval against local agents, add an out-of-band approval secret, OS-level permissions, a signed approval file, or a pre-push hook that cannot be written by agent sessions.
+Recommended fix: add `:(exclude).between/**` to tracked diff, raw diff, and summary commands, and add a regression test with a deliberately tracked `.between/state.json`.
 
-### P3 - Documentation and tracker status are stale
+### P2 - Hosted agent death is UI-only, not daemon state
 
-Some docs now overstate the completed loop and quality gate status.
-
-Evidence:
-
-- `README.md:17-23` says the broker routes reviewer results back to the developer; the current code does not write developer signals.
-- `README.md:217-220` says the headless loop and file-based signal/ack/review flow are implemented; the reviewer side is implemented, but the developer handoff is not.
-- `TASKS.md:8-11` says the loop is implemented/tested/runnable and still cites 54 tests; the current suite has 61 tests and `test:cov` is red.
-- `TASKS.md:8-10` also claims a CLI-proven end-to-end loop, which conflicts with the real CLI smoke showing no developer signal after a blocking review.
-
-Recommended fix: update README/TASKS after the P1 loop defects are fixed, not before. Until then, describe the implementation as reviewer-signal-only plus dashboard and human gate.
-
-### P3 - Large command/daemon files remain review-risk hotspots
-
-The local programming guideline prefers files under 250 pure LOC. `src/daemon/loop.ts` and `src/cli.ts` are above that and now contain most of the behavioral coupling.
+The FSM has an `agent_died` interrupt, but hosted process exits only update pane buffers. A real embedded Claude/Codex process can die while the daemon continues waiting for ack/review/verify files.
 
 Evidence:
 
-- `src/daemon/loop.ts`: about 451 pure-ish LOC.
-- `src/cli.ts`: about 259 pure-ish LOC.
+- `src/core/fsm.ts:77-85` supports `agent_died`.
+- `src/adapters/pty-agent-host.ts:87-90` marks the pane exit but does not notify the daemon.
+- `src/adapters/pty-transport.ts:54-57` marks one-shot exit only in the host buffer.
+- `src/ui/start.tsx:78-97` runs the daemon without a process-death feedback channel.
 
-Recommended fix: after behavioral blockers are fixed, split daemon phase handlers and CLI command registration/handlers into narrower modules with focused tests.
+Recommended fix: add an agent lifecycle event channel from hosts/transports to the daemon. Dispatch `agent_died` with role and exit code when a hosted command exits unexpectedly before the expected ack/review/verify arrives.
 
-### P3 - Supply-chain audit has one low dev-only advisory
+### P2 - `review-now` bypasses the cycle cap
 
-`npm audit --omit=dev` reports zero production vulnerabilities. Full `npm audit` reports one low-severity dev/transitive advisory for `esbuild`.
+The normal debounce path checks `max_cycles_per_goal`, but `review-now` can call `openCycleAndSignal()` directly without the same cap guard.
 
 Evidence:
 
-- `.omo/evidence/deep-review-2026-06-19/audit-prod.txt`
-- `.omo/evidence/deep-review-2026-06-19/audit-full.txt`
+- `src/daemon/loop.ts:250-257` enforces the cap in the normal stable-diff path.
+- `src/daemon/loop.ts:476-498` force-opens a cycle without checking `isCycleCapReached()`.
 
-Recommended fix: update the affected dev toolchain when it does not disturb the build; this is lower priority than the broker loop and CI gate failures.
+Recommended fix: apply the same cap guard in `forceReview()` and test repeated `review-now` submissions at the configured limit.
+
+## Quality And Platform Risks
+
+### P3 - Test gates are green only on rerun
+
+The suite can pass, but it is not stable enough for a broker project yet.
+
+Evidence:
+
+- First local `npm test` failed: `test/integration/loop.test.ts` `beforeEach` hook timed out after 10 seconds.
+- Focused rerun passed: `.omo/evidence/current-deep-review-2026-06-19/test-loop-isolated.txt`.
+- Full rerun passed: `.omo/evidence/current-deep-review-2026-06-19/test-rerun.txt`.
+- First local `npm run test:cov` failed with `ENOENT` for `coverage/.tmp/coverage-15.json`.
+- Coverage rerun passed: `.omo/evidence/current-deep-review-2026-06-19/test-cov-rerun.txt`.
+- QA sub-review reproduced the same pattern: first full test failed, focused and full reruns passed.
+
+Recommended fix: serialize real-git integration tests on Windows, increase hook timeout only where needed, retry temp cleanup on transient Windows handles, and keep a single CI command that is deterministic on both Windows and Ubuntu.
+
+### P3 - Oversized modules concentrate too much behavior
+
+The main loop and CLI command registration are above the local 250 pure LOC guideline and carry most product coupling.
+
+Evidence:
+
+- `src/daemon/loop.ts`: 474 physical lines.
+- `src/cli.ts`: 270 physical lines.
+
+Recommended fix: split phase handlers, signal delivery recovery, and CLI command handlers after the behavioral blockers are fixed. Keep the core FSM pure and move side-effect handlers into narrower modules with focused tests.
+
+### P3 - Config exposes knobs that are not enforced
+
+Several config fields are documented and defaulted before the runtime uses them. That makes the project look more complete than it is.
+
+Evidence:
+
+- `src/core/config-schema.ts:18` defines `developer_timeout_seconds`, but the daemon only checks reviewer timeouts in `src/daemon/loop.ts:341` and `src/daemon/loop.ts:356`.
+- `src/core/config-schema.ts:22-23` defines merge/deploy human gate booleans, but local approval enforcement is still file-protocol only.
+- `src/core/config-schema.ts:40-42` defines rule promotion knobs that are not implemented in the runtime loop.
+
+Recommended fix: either wire the knobs now or mark them as reserved/future in config comments and README. Avoid presenting config fields as active safety controls until tests prove them.
+
+### P3 - Windows terminal output still has portability issues
+
+The source intentionally uses Unicode glyphs in the CLI and Ink UI. In captured Windows logs, these render as mojibake replacement sequences and question marks, reducing trust in a terminal-first product.
+
+Evidence:
+
+- Unicode scan: `.omo/evidence/current-deep-review-2026-06-19/non-ascii-ui-cli.txt` found 50 non-ASCII lines in CLI/UI files.
+- Captured command logs show corrupted markers in `doctor`, test reporter output, and dashboard source views.
+
+Recommended fix: add an ASCII/no-glyph mode for Windows, CI, and redirected output. Use Unicode only when stdout is an interactive terminal known to support it.
+
+### P3 - Dev audit has one low advisory
+
+Production audit is clean, but full audit reports one low-severity dev dependency advisory for `esbuild`.
+
+Evidence:
+
+- `npm audit --omit=dev`: pass, 0 production vulnerabilities.
+- `npm audit`: fail, 1 low dev advisory.
+- Logs: `.omo/evidence/current-deep-review-2026-06-19/audit-prod.txt` and `.omo/evidence/current-deep-review-2026-06-19/audit-full.txt`.
+
+Recommended fix: update the affected dev toolchain when it does not disturb the build. This is lower priority than broker-loop correctness.
+
+## Stale Or Improved Findings Since The Previous Review
+
+- Fixed: optional PTY probe mismatch. `doctor` now checks `@lydell/node-pty`, and local output reports it available.
+- Improved: `between init` now writes `.between/` to `.gitignore`.
+- Improved: README now clearly warns that blocking reviewer feedback does not yet create a verified developer signal.
+- Still current: missing developer signal, verify stall, direct command/signal writes, newer state schema swallow, tracked `.between/` diff inclusion, and test instability.
 
 ## Verification Snapshot
 
 Commands run from `C:\Users\lg\marketing for companies\between`:
 
-| Check | Result | Evidence |
-|---|---:|---|
-| `npm run lint` | PASS | `.omo/evidence/deep-review-2026-06-19/lint.txt` |
-| `npm run typecheck` | PASS | `.omo/evidence/deep-review-2026-06-19/typecheck.txt` |
-| `npm test` | PASS when rerun alone | `.omo/evidence/deep-review-2026-06-19/test-rerun-after-agents.txt` |
-| `npm run test:cov` | FAIL | `.omo/evidence/deep-review-2026-06-19/test-cov-rerun.txt` |
-| `npm run build` | PASS | `.omo/evidence/deep-review-2026-06-19/build.txt` |
-| `npm audit --omit=dev` | PASS, 0 prod vulns | `.omo/evidence/deep-review-2026-06-19/audit-prod.txt` |
-| `npm audit` | FAIL, 1 low dev advisory | `.omo/evidence/deep-review-2026-06-19/audit-full.txt` |
-| CLI temp repo smoke | PARTIAL PASS | `.omo/evidence/deep-review-2026-06-19/cli-smoke.txt` |
-| Blocking review developer signal | FAIL | `.omo/evidence/deep-review-2026-06-19/developer-signal-missing-clean.txt` |
+- `npm run lint`: PASS. Evidence: `.omo/evidence/current-deep-review-2026-06-19/lint.txt`.
+- `npm run typecheck`: PASS. Evidence: `.omo/evidence/current-deep-review-2026-06-19/typecheck.txt`.
+- `npm test`: FAIL first run, PASS rerun. Evidence: `test.txt`, `test-loop-isolated.txt`, `test-rerun.txt`.
+- `npm run test:cov`: FAIL first run, PASS rerun. Evidence: `test-cov.txt`, `test-cov-rerun.txt`.
+- `npm run build`: PASS. Evidence: `.omo/evidence/current-deep-review-2026-06-19/build.txt`.
+- `npm audit --omit=dev`: PASS. Evidence: `.omo/evidence/current-deep-review-2026-06-19/audit-prod.txt`.
+- `npm audit`: FAIL with one low dev advisory. Evidence: `.omo/evidence/current-deep-review-2026-06-19/audit-full.txt`.
+- `node dist/cli.js --help`: PASS. Evidence: `.omo/evidence/current-deep-review-2026-06-19/cli-help.txt`.
+- `node dist/cli.js doctor` at repo root: expected non-zero because this repo root is not initialized as a target repo; it still verified git and PTY availability. Evidence: `.omo/evidence/current-deep-review-2026-06-19/doctor-root.txt`.
+- Real temp-repo blocking-review smoke: FAIL for developer signal handoff. Evidence: `.omo/evidence/current-deep-review-2026-06-19/smoke-blocking-developer-signal.txt`.
 
 ## Sub-Reviewer Summary
 
-- Planner: completed review plan at `.omo/plans/between-deep-review-2026-06-19.md`.
-- Documentation/contract lane: confirmed PTY and Obsidian are mostly documented as deferred, but developer result routing is overclaimed.
-- QA lane: reproduced missing developer signal and reported test/coverage instability under real Windows temp repos.
-- Security/runtime lane: flagged local file-forgery trust boundaries, non-atomic command/signal writes, schema refusal swallow, and `.between/` diff exclusion gaps.
-- Code-quality lane: requested changes for test instability, clean-review verify stall, signal-send persistence hazards, command bus atomicity, and schema refusal handling.
+Five read-only lanes reviewed the current worktree:
 
-Gate status: **REQUEST CHANGES / artifact approval not obtained**. Product blockers are recorded above. The artifact gate repeatedly rejected while the working tree continued to receive concurrent files after each snapshot; treat this review as a blocker list for the verified implementation snapshot, not as merge approval for the actively moving tree.
+- Broker-loop contract lane: REQUEST CHANGES. Confirmed missing developer signal, stale live-diff acceptance, verify stall, and integration gate instability.
+- Runtime/state-machine lane: REQUEST CHANGES. Flagged signal-send crash window, verify stall, developer signal gap, schema-refusal swallow, and non-atomic command writes.
+- QA lane: REQUEST CHANGES. Confirmed lint/typecheck/build pass, reproduced flaky full tests, and ran CLI smokes.
+- Security/runtime lane: REQUEST CHANGES. Flagged file-forged approval/review completion, free-form agent commands, one-shot process lifecycle gaps, partial PTY startup cleanup, and tracked `.between/` leakage.
+- Code-quality/test lane: REQUEST CHANGES. Flagged schema swallow, missing agent-death propagation, oversized modules, dead config knobs, and shallow UI/test coverage.
+
+Gate status: **BLOCK / REQUEST CHANGES**. The project is a solid walking skeleton, but it is not yet the safe broker loop described in the blueprint.

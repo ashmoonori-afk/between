@@ -4,6 +4,9 @@ export default defineConfig({
   test: {
     include: ['test/**/*.test.{ts,tsx}'],
     environment: 'node',
+    // real-git integration setup can exceed the 10s default on a cold Windows runner (P3-11)
+    hookTimeout: 30_000,
+    testTimeout: 30_000,
     coverage: {
       provider: 'v8',
       include: ['src/core/**'],

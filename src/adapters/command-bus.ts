@@ -1,6 +1,7 @@
-import { writeFile, readFile, readdir, rm, mkdir, stat } from 'node:fs/promises'
+import { readFile, readdir, rm, mkdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
 import { randomUUID } from 'node:crypto'
+import writeFileAtomic from 'write-file-atomic'
 import { z } from 'zod'
 import { betweenPaths, type BetweenPaths } from './paths'
 
@@ -47,7 +48,8 @@ export class CommandBus {
     const ms = Date.now().toString().padStart(16, '0')
     const hr = process.hrtime.bigint().toString().padStart(22, '0')
     const name = `${ms}-${hr}-${randomUUID()}.json`
-    await writeFile(join(this.p.commands, name), JSON.stringify(command), 'utf8')
+    // atomic temp+rename so the daemon can never drain a half-written command (P2-6)
+    await writeFileAtomic(join(this.p.commands, name), JSON.stringify(command))
   }
 
   /** Read pending commands in submission order. Caller deletes each after applying. */
