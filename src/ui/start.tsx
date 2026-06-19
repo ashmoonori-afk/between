@@ -4,10 +4,11 @@ import type { Clock, SignalTransport } from '../core/types'
 import { SystemClock } from '../core/clock'
 import { BrokerLock } from '../adapters/lock'
 import { buildDaemon, loadConfig } from '../runtime'
+import type { Daemon } from '../daemon/loop'
 import { OneShotTransport, PtyTransport } from '../adapters/pty-transport'
 import { PipeAgentHost } from '../adapters/pipe-agent-host'
 import { PtyAgentHost, PtyUnavailableError } from '../adapters/pty-agent-host'
-import type { AgentHost } from '../adapters/agent-host'
+import type { AgentHost, AgentRole } from '../adapters/agent-host'
 import { EmbeddedDashboard } from './EmbeddedDashboard'
 import { print } from '../cli/output'
 
@@ -39,6 +40,7 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
   let hosts: Hosts = null
   let transport: SignalTransport | undefined
   let mode = config.agent_mode
+  let stopDeathWiring: Array<() => void> = []
 
   try {
     if (mode === 'pty') {
@@ -77,6 +79,7 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
 
     const daemon = await buildDaemon(absRoot, clock, transport)
     await daemon.load()
+    stopDeathWiring = wirePtyDeaths(hosts, daemon)
 
     const useUi = Boolean(process.stdout.isTTY) && !opts.headless
     if (useUi) {
@@ -96,10 +99,24 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
       await daemon.run(opts.maxTicks ?? Infinity)
     }
   } finally {
+    for (const stop of stopDeathWiring) stop()
     if (hosts) {
       await hosts.developer.stop().catch(() => {})
       await hosts.reviewer.stop().catch(() => {})
     }
     await lock.releaseLock()
   }
+}
+
+function wirePtyDeaths(hosts: Hosts, daemon: Daemon): Array<() => void> {
+  if (!hosts) return []
+  return (['developer', 'reviewer'] as const).flatMap((role: AgentRole) => {
+    const host = hosts[role]
+    if (host.kind !== 'pty') return []
+    return [
+      host.subscribeExit((event) => {
+        void daemon.reportAgentDied(event.role, event.exitCode)
+      }),
+    ]
+  })
 }

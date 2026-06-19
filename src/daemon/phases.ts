@@ -1,20 +1,14 @@
-import { readFile } from 'node:fs/promises'
 import type { BetweenError, DiffInput } from '../core/types'
 import { touch, recordReviewedHash, isAlreadyReviewed } from '../core/state'
 import { openCycle, isCycleCapReached, cycleName } from '../core/cycle'
 import { stepDebounce, emptyDebounce } from '../core/debounce'
 import { hashDiff, isEmptyDiff } from '../core/diff-hash'
 import { redactSecrets } from '../core/redact'
-import {
-  parseReviewRecord,
-  parseVerifyRecord,
-  reviewMatchesCurrent,
-  reviewIsClean,
-  cycleShouldEnd,
-} from '../core/findings'
-import { buildSignal, reviewerSignalBody, developerSignalBody } from '../adapters/signal-transport'
-import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
+import { reviewMatchesCurrent, reviewIsClean, cycleShouldEnd } from '../core/findings'
+import { buildSignal, developerSignalBody } from '../adapters/signal-transport'
 import type { DaemonContext } from './context'
+import { ensureReviewerSignal, expectedSignalId, sendReviewerSignal } from './reviewer-signal'
+import { readReview, readVerify } from './records'
 
 export async function currentDiff(
   ctx: DaemonContext,
@@ -127,44 +121,15 @@ export async function openCycleAndSignal(
     debounce: emptyDebounce(),
   }))
 
-  const sig = buildSignal(
-    'reviewer',
-    counters.cycle,
-    hash,
-    reviewerSignalBody(),
-    ctx.deps.clock.nowIso(),
-  )
-  await ctx.deps.transport.send(sig)
-  await ctx.persist(
-    touch(
-      {
-        ...ctx.current(),
-        // preserve the phase-projected broker.status; only the genuine (non-derived) signal
-        // fields change here (HIGH-1 / I12). last_signal_at is stamped AFTER send, by design.
-        broker: {
-          ...ctx.current().broker,
-          last_signal: 'review_requested',
-          last_signal_at: ctx.deps.clock.nowIso(),
-        },
-      },
-      ctx.deps.clock,
-    ),
-  )
-  await ctx.emit('signal_sent', { target: 'reviewer', diff_hash: hash })
+  await sendReviewerSignal(ctx, counters.cycle, hash)
   if (redacted.redactedCount > 0) {
     await ctx.emit('snapshot_redacted', { detail: { count: redacted.redactedCount } })
   }
 }
 
-export function expectedSignalId(ctx: DaemonContext): string | null {
-  const cur = ctx.current()
-  const hash = cur.diff.hash
-  if (!hash) return null
-  return buildSignal('reviewer', cur.workflow.cycle, hash, '', '').id
-}
-
 export async function awaitAck(ctx: DaemonContext): Promise<void> {
   if (await superseded(ctx)) return // live diff changed -> abandon (P1-3)
+  await ensureReviewerSignal(ctx)
   const id = expectedSignalId(ctx)
   if (id) {
     const ack = await ctx.deps.transport.pollAck(id)
@@ -287,26 +252,4 @@ export function signalTimedOut(ctx: DaemonContext, timeoutSeconds: number): bool
 
 export function timeoutError(ctx: DaemonContext, message: string): BetweenError {
   return { code: 'timeout', message, occurred_at: ctx.deps.clock.nowIso(), recoverable: true }
-}
-
-export async function readReview(ctx: DaemonContext) {
-  return readJson(
-    reviewPath(betweenPaths(ctx.deps.root), ctx.current().workflow.cycle),
-    parseReviewRecord,
-  )
-}
-
-export async function readVerify(ctx: DaemonContext) {
-  return readJson(
-    verifyPath(betweenPaths(ctx.deps.root), ctx.current().workflow.cycle),
-    parseVerifyRecord,
-  )
-}
-
-async function readJson<T>(path: string, parse: (raw: unknown) => T): Promise<T | null> {
-  try {
-    return parse(JSON.parse(await readFile(path, 'utf8')))
-  } catch {
-    return null
-  }
 }

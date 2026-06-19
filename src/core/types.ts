@@ -108,6 +108,7 @@ export interface BetweenError {
   message: string
   occurred_at: string
   recoverable: boolean
+  detail?: Record<string, unknown>
 }
 
 export interface DiffState {

@@ -53,13 +53,22 @@ export function initialState(opts: InitialStateOptions, clock: Clock): BetweenSt
  */
 export function withProjection(state: BetweenState): BetweenState {
   const p = projectPhase(state.workflow.phase)
-  return {
+  const projected = {
     ...state,
     workflow: { ...state.workflow, waiting_on: p.waiting_on },
     developer: { ...state.developer, status: p.developer },
     reviewer: { ...state.reviewer, status: p.reviewer },
     broker: { ...state.broker, status: p.broker },
   }
+  const deadRole =
+    state.workflow.error?.code === 'agent_died' ? state.workflow.error.detail?.role : null
+  if (deadRole === 'developer') {
+    return { ...projected, developer: { ...projected.developer, status: 'dead' } }
+  }
+  if (deadRole === 'reviewer') {
+    return { ...projected, reviewer: { ...projected.reviewer, status: 'dead' } }
+  }
+  return projected
 }
 
 /** Stamp `updated_at`. Pure. */

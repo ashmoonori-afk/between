@@ -27,14 +27,20 @@ export function AgentPane({ host, title, glyph, accent, rows, focusId }: AgentPa
   }, [host])
 
   const lines = buf ? buf.lines.slice(-rows) : []
-  const status = !host
-    ? 'not hosted'
-    : buf?.alive
-      ? 'live'
-      : buf?.exitCode != null
-        ? `exited ${buf.exitCode}`
-        : 'idle'
-  const statusColor = !host ? COLORS.textFaint : buf?.alive ? COLORS.success : COLORS.textMuted
+  const exitCode = buf?.exitCode ?? null
+  const dead =
+    buf?.exited === true &&
+    !buf.alive &&
+    (buf.kind === 'pty' || exitCode === null || exitCode !== 0)
+  const exitText = exitCode === null ? '' : ` (exit ${exitCode})`
+  const status = !host ? 'not hosted' : buf?.alive ? 'live' : dead ? `dead${exitText}` : 'idle'
+  const statusColor = !host
+    ? COLORS.textFaint
+    : dead
+      ? COLORS.error
+      : buf?.alive
+        ? COLORS.success
+        : COLORS.textMuted
 
   return (
     <Box

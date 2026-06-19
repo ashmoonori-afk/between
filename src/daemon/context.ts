@@ -36,6 +36,10 @@ export interface DaemonContext {
   current(): BetweenState
   persist(next: BetweenState): Promise<void>
   emit(event: string, extra?: EmitExtra): Promise<void>
-  dispatch(event: EventName, mutate?: (s: BetweenState) => BetweenState): Promise<boolean>
+  dispatch(
+    event: EventName,
+    mutate?: (s: BetweenState) => BetweenState,
+    extra?: EmitExtra,
+  ): Promise<boolean>
   requestStop(): void
 }

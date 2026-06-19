@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { stripAnsi, makeRing } from '../../src/adapters/agent-host'
+import {
+  BaseAgentHost,
+  stripAnsi,
+  makeRing,
+  type AgentExitEvent,
+} from '../../src/adapters/agent-host'
 
 const ESC = String.fromCharCode(27)
 const BEL = String.fromCharCode(7)
@@ -52,5 +57,42 @@ describe('makeRing', () => {
     r.push('partial')
     r.flush()
     expect(r.get()).toEqual(['partial'])
+  })
+})
+
+class TestAgentHost extends BaseAgentHost {
+  readonly kind = 'pipe'
+
+  async start(): Promise<void> {}
+  async deliver(): Promise<void> {}
+  resize(): void {}
+  async stop(): Promise<void> {}
+}
+
+describe('BaseAgentHost lifecycle', () => {
+  it('notifies exit listeners when a hosted process exits', () => {
+    const host = new TestAgentHost('developer', 10)
+    const exits: AgentExitEvent[] = []
+
+    const unsubscribe = host.subscribeExit((event) => exits.push(event))
+
+    host.markStart()
+    host.markExit(12)
+    unsubscribe()
+    host.markStart()
+    host.markExit(13)
+
+    expect(exits).toEqual([{ role: 'developer', kind: 'pipe', exitCode: 12 }])
+  })
+
+  it('replays an already exited host to late exit subscribers', () => {
+    const host = new TestAgentHost('reviewer', 10)
+    host.markStart()
+    host.markExit(44)
+    const exits: AgentExitEvent[] = []
+
+    host.subscribeExit((event) => exits.push(event))
+
+    expect(exits).toEqual([{ role: 'reviewer', kind: 'pipe', exitCode: 44 }])
   })
 })

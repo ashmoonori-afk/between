@@ -1,3 +1,4 @@
+import type { AgentRole } from '../adapters/agent-host'
 import type { BetweenEvent, BetweenState, EventName } from '../core/types'
 import { transition } from '../core/fsm'
 import { setPhase, touch } from '../core/state'
@@ -74,6 +75,7 @@ export class Daemon {
   private async dispatch(
     event: EventName,
     mutate?: (s: BetweenState) => BetweenState,
+    extra?: EmitExtra,
   ): Promise<boolean> {
     const res = transition(
       { phase: this.current.workflow.phase, previous_phase: this.current.workflow.previous_phase },
@@ -84,8 +86,31 @@ export class Daemon {
     if (mutate) next = mutate(next)
     next = touch(next, this.deps.clock)
     await this.persist(next)
-    await this.emit(event)
+    await this.emit(event, extra)
     return true
+  }
+
+  async reportAgentDied(role: AgentRole, exitCode: number | null): Promise<void> {
+    if (this.stopRequested) return
+    const exitText = exitCode === null ? 'unknown code' : `code ${exitCode}`
+    await this.dispatch(
+      'agent_died',
+      (s) => ({
+        ...s,
+        [role]: { ...s[role], status: 'dead' },
+        workflow: {
+          ...s.workflow,
+          error: {
+            code: 'agent_died',
+            message: `${role} agent exited with ${exitText}`,
+            occurred_at: this.deps.clock.nowIso(),
+            recoverable: true,
+            detail: { role, exit_code: exitCode },
+          },
+        },
+      }),
+      { detail: { role, exit_code: exitCode } },
+    )
   }
 
   // ---- one iteration -------------------------------------------------------
