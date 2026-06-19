@@ -75,7 +75,9 @@ export function planOnboarding(answers: OnboardAnswers): OnboardPlan {
       warnings.push(
         `${envVarNeeded} is not set — export it before \`between gateway\` (the token must NOT go in config.yaml).`,
       )
-      nextSteps.push(`export ${envVarNeeded}=<your ${answers.channel} bot token>`)
+      nextSteps.push(
+        `Set ${envVarNeeded} in your shell environment without putting the token in command text`,
+      )
     }
     nextSteps.push('between gateway   # bridge the chat to the broker')
   } else {

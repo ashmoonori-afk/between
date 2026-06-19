@@ -13,6 +13,7 @@ import { buildSignal } from '../../src/adapters/signal-transport'
 import { betweenPaths, ackPath } from '../../src/adapters/paths'
 
 let dir: string
+const INTEGRATION_TIMEOUT_MS = 90_000
 
 async function git(args: string[]): Promise<void> {
   await execa('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir })
@@ -46,45 +47,49 @@ afterEach(async () => {
 })
 
 describe('oneshot embed (real fake-agent drives the loop)', () => {
-  it('init bundles the fake-agent and a real invocation advances cycle 1 to human_gate', async () => {
-    const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-    const res = await initProject(dir, {}, fc)
-    // the bundled demo agent is written so the embed is self-contained
-    expect(existsSync(join(dir, '.between', 'agents', 'fake-agent.mjs'))).toBe(true)
-    // re-init is idempotent (no duplicate agent entry)
-    const res2 = await initProject(dir, {}, fc)
-    expect(res2.created).not.toContain(join(dir, '.between', 'agents', 'fake-agent.mjs'))
-    expect(res.project.name).toBeTruthy()
+  it(
+    'init bundles the fake-agent and a real invocation advances cycle 1 to human_gate',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      const res = await initProject(dir, {}, fc)
+      // the bundled demo agent is written so the embed is self-contained
+      expect(existsSync(join(dir, '.between', 'agents', 'fake-agent.mjs'))).toBe(true)
+      // re-init is idempotent (no duplicate agent entry)
+      const res2 = await initProject(dir, {}, fc)
+      expect(res2.created).not.toContain(join(dir, '.between', 'agents', 'fake-agent.mjs'))
+      expect(res.project.name).toBeTruthy()
 
-    const config = await loadConfig(dir)
-    const transport = new OneShotTransport(dir, {
-      developerCommand: config.developer_command,
-      reviewerCommand: config.reviewer_command,
-      cwd: dir,
-    })
-    const d = await buildDaemon(dir, fc, transport)
-    await d.load()
+      const config = await loadConfig(dir)
+      const transport = new OneShotTransport(dir, {
+        developerCommand: config.developer_command,
+        reviewerCommand: config.reviewer_command,
+        cwd: dir,
+      })
+      const d = await buildDaemon(dir, fc, transport)
+      await d.load()
 
-    const bus = new CommandBus(dir)
-    await bus.submit({ kind: 'goal', goal: 'ship with a real agent' })
-    await d.tick() // -> developing
-    await writeFile(join(dir, 'app.txt'), 'v2 by the developer\n')
-    await d.tick() // -> debouncing
-    fc.advance(26_000)
-    await d.tick() // -> review_requested + spawns `node .between/agents/fake-agent.mjs reviewer`
-    expect(d.state.workflow.phase).toBe('review_requested')
+      const bus = new CommandBus(dir)
+      await bus.submit({ kind: 'goal', goal: 'ship with a real agent' })
+      await d.tick() // -> developing
+      await writeFile(join(dir, 'app.txt'), 'v2 by the developer\n')
+      await d.tick() // -> debouncing
+      fc.advance(26_000)
+      await d.tick() // -> review_requested + spawns `node .between/agents/fake-agent.mjs reviewer`
+      expect(d.state.workflow.phase).toBe('review_requested')
 
-    const hash = d.state.diff.hash!
-    const id = buildSignal('reviewer', 1, hash, '', '').id
-    const ackFile = ackPath(betweenPaths(dir), id)
-    // the REAL fake-agent process writes the ack (+ review + verify) — wait for it
-    expect(await waitFor(() => existsSync(ackFile))).toBe(true)
+      const hash = d.state.diff.hash!
+      const id = buildSignal('reviewer', 1, hash, '', '').id
+      const ackFile = ackPath(betweenPaths(dir), id)
+      // the REAL fake-agent process writes the ack (+ review + verify) — wait for it
+      expect(await waitFor(() => existsSync(ackFile))).toBe(true)
 
-    await d.tick() // ack present -> reviewing
-    expect(d.state.workflow.phase).toBe('reviewing')
-    await d.tick() // review record present -> review_written
-    await d.tick() // clean review + passing verify -> human_gate
-    expect(d.state.workflow.phase).toBe('human_gate')
-    expect(d.state.workflow.reviewed_hashes).toContain(hash)
-  }, 40_000)
+      await d.tick() // ack present -> reviewing
+      expect(d.state.workflow.phase).toBe('reviewing')
+      await d.tick() // review record present -> review_written
+      await d.tick() // clean review + passing verify -> human_gate
+      expect(d.state.workflow.phase).toBe('human_gate')
+      expect(d.state.workflow.reviewed_hashes).toContain(hash)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
 })

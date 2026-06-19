@@ -57,6 +57,10 @@ export const ConfigSchema = z
     telegram_chat_id: z.string().default(''),
     discord_bot_token: z.string().default(''),
     discord_channel_id: z.string().default(''),
+    // 'gateway' = realtime WebSocket (needs the MESSAGE_CONTENT privileged intent);
+    // 'poll' = REST channel polling (no privileged intent, replays missed messages).
+    discord_mode: z.enum(['gateway', 'poll']).default('gateway'),
+    discord_poll_interval_ms: z.number().int().positive().default(4000),
   })
   .strict()
 
@@ -129,6 +133,8 @@ gateway_channel: echo            # echo | telegram | discord
 telegram_bot_token: ''           # @BotFather token (or set BETWEEN_TELEGRAM_TOKEN)
 telegram_chat_id: ''             # chat to notify (optional; learned from first message)
 discord_bot_token: ''            # Discord bot token (or set BETWEEN_DISCORD_TOKEN)
-discord_channel_id: ''           # channel to notify (optional; learned from first message)
+discord_channel_id: ''           # channel to notify (required for discord_mode: poll)
+discord_mode: gateway            # gateway (realtime WS, needs MESSAGE_CONTENT intent) | poll (REST, no privileged intent)
+discord_poll_interval_ms: 4000   # poll cadence when discord_mode: poll
 `
 }

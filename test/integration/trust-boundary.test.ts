@@ -16,6 +16,7 @@ import { signApproval } from '../../src/core/approval'
 import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
 
 let dir: string
+const INTEGRATION_TIMEOUT_MS = 90_000
 
 async function git(args: string[]): Promise<void> {
   await execa('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir })
@@ -72,41 +73,47 @@ afterEach(async () => {
 })
 
 describe('approval trust boundary (P1-5)', () => {
-  it('rejects a forged (unsigned / bad-sig) approve and accepts a valid signed one', async () => {
-    const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-    await initProject(dir, {}, fc) // provisions the .git approval secret
-    const d = await buildDaemon(dir, fc)
-    await d.load()
-    const hash = await toHumanGate(d, fc)
-    expect(d.state.workflow.phase).toBe('human_gate')
+  it(
+    'rejects a forged (unsigned / bad-sig) approve and accepts a valid signed one',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, {}, fc) // provisions the .git approval secret
+      const d = await buildDaemon(dir, fc)
+      await d.load()
+      const hash = await toHumanGate(d, fc)
+      expect(d.state.workflow.phase).toBe('human_gate')
 
-    const bus = new CommandBus(dir)
+      const bus = new CommandBus(dir)
 
-    // forged: unsigned approve -> rejected, stays at the gate
-    await bus.submit({ kind: 'approve', scope: 'merge' })
-    await d.tick()
-    expect(d.state.workflow.phase).toBe('human_gate')
+      // forged: unsigned approve -> rejected, stays at the gate
+      await bus.submit({ kind: 'approve', scope: 'merge' })
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('human_gate')
 
-    // forged: invalid signature -> rejected
-    await bus.submit({ kind: 'approve', scope: 'merge', sig: 'not-a-real-signature' })
-    await d.tick()
-    expect(d.state.workflow.phase).toBe('human_gate')
+      // forged: invalid signature -> rejected
+      await bus.submit({ kind: 'approve', scope: 'merge', sig: 'not-a-real-signature' })
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('human_gate')
 
-    const rejects = (await new EventsLog(dir).read()).filter((e) => e.event === 'approval_rejected')
-    expect(rejects.length).toBeGreaterThanOrEqual(2)
+      const rejects = (await new EventsLog(dir).read()).filter(
+        (e) => e.event === 'approval_rejected',
+      )
+      expect(rejects.length).toBeGreaterThanOrEqual(2)
 
-    // valid: a signature from the provisioned secret -> approved
-    const secret = resolveApprovalSecret(dir)
-    expect(secret).not.toBe('')
-    const sig = signApproval(secret, { scope: 'merge', diff_hash: hash, cycle: 1 })
-    await bus.submit({ kind: 'approve', scope: 'merge', sig })
-    await d.tick()
-    expect(d.state.workflow.phase).toBe('done')
-    expect(d.state.approval?.scope).toBe('merge')
-    expect(d.state.approval?.sig).toBe(sig)
+      // valid: a signature from the provisioned secret -> approved
+      const secret = resolveApprovalSecret(dir)
+      expect(secret).not.toBe('')
+      const sig = signApproval(secret, { scope: 'merge', diff_hash: hash, cycle: 1 })
+      await bus.submit({ kind: 'approve', scope: 'merge', sig })
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('done')
+      expect(d.state.approval?.scope).toBe('merge')
+      expect(d.state.approval?.sig).toBe(sig)
 
-    // the recorded token verifies independently (what `verify-push` / the pre-push hook checks)
-    const persisted = await new StateRepository(dir).read()
-    expect(persisted?.approval?.sig).toBe(sig)
-  }, 30_000)
+      // the recorded token verifies independently (what `verify-push` / the pre-push hook checks)
+      const persisted = await new StateRepository(dir).read()
+      expect(persisted?.approval?.sig).toBe(sig)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
 })

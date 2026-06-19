@@ -47,7 +47,9 @@ and stops at a **human gate** before anything irreversible.
   embedded window that hosts the two agent panes live.
 - 💬 **Drive it from chat.** `between gateway` bridges **Telegram or Discord** to the
   broker — `status`, `goal`, and **signed** approvals over chat. Bot tokens stay in
-  env, never in `config.yaml`.
+  env, never in `config.yaml`. Both channels can run as a **pull/poll** model
+  (Telegram long-poll; Discord `discord_mode: poll` REST polling — no privileged
+  intent, and it replays messages missed while offline).
 - 🧱 **Idea → ship, builtin.** `between forge` drives a 12-phase app-build lifecycle
   (PWSForge) with phase gates and **CLI-forced execution**: it never codes inline —
   it routes build tasks to the broker's developer/reviewer loop.
