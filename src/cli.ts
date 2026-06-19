@@ -10,6 +10,8 @@ import { GitAdapter } from './adapters/git'
 import { buildSignal } from './adapters/signal-transport'
 import type { Ack, ApprovalScope } from './core/types'
 import type { AgentPreset } from './agents/real-agents'
+import { signApproval, verifyApproval } from './core/approval'
+import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from './adapters/approval-secret'
 import { loadConfig, runStart } from './runtime'
 import { print, printErr, printJson } from './cli/output'
 import { parseInterval } from './cli/args'
@@ -180,8 +182,22 @@ program
         throw new Error(`scope must be one of: ${APPROVAL_SCOPES.join(', ')}`)
       }
       await loadConfig(root())
-      await new CommandBus(root()).submit({ kind: 'approve', scope: scope as ApprovalScope })
-      print(`between: ${scope} approval submitted`)
+      const state = await new StateRepository(root()).read()
+      // sign the approval with the secret the human session holds (P1-5); a forged approve
+      // file written without the secret can't produce a signature the daemon accepts.
+      const secret = resolveApprovalSecret(root())
+      const claim = {
+        scope,
+        diff_hash: state?.diff.hash ?? null,
+        cycle: state?.workflow.cycle ?? 0,
+      }
+      const sig = secret ? signApproval(secret, claim) : undefined
+      await new CommandBus(root()).submit({ kind: 'approve', scope: scope as ApprovalScope, sig })
+      print(
+        secret
+          ? `between: ${scope} approval submitted (signed)`
+          : `between: ${scope} approval submitted (UNSIGNED — set ${APPROVAL_SECRET_ENV} or run \`between init\` to enable the approval boundary)`,
+      )
     } catch (e) {
       await fail(e)
     }
@@ -280,6 +296,40 @@ program
         print(`  ${event}: ${n}`)
       }
       print('(full cycle analytics + Obsidian summary land in M7)')
+    } catch (e) {
+      await fail(e)
+    }
+  })
+
+program
+  .command('verify-push')
+  .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
+  .action(async () => {
+    try {
+      const state = await new StateRepository(root()).read()
+      if (!state) return // not a Between target -> never block
+      const secret = resolveApprovalSecret(root())
+      const ap = state.approval
+      if (ap) {
+        const ok = verifyApproval(secret, ap.sig ?? '', {
+          scope: ap.scope,
+          diff_hash: ap.diff_hash,
+          cycle: ap.cycle,
+        })
+        if (!ok) {
+          printErr('between: recorded approval failed signature verification')
+          process.exitCode = 1
+          return
+        }
+        print('between: approval verified')
+        return
+      }
+      if (state.workflow.phase === 'human_gate') {
+        printErr('between: human approval is pending (run `between approve merge`)')
+        process.exitCode = 1
+        return
+      }
+      print('between: no approval gate pending')
     } catch (e) {
       await fail(e)
     }

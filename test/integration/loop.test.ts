@@ -9,8 +9,11 @@ import { initProject } from '../../src/adapters/init-project'
 import { buildDaemon } from '../../src/runtime'
 import { CommandBus } from '../../src/adapters/command-bus'
 import { AckStore } from '../../src/adapters/ack-store'
+import { StateRepository } from '../../src/adapters/state-repository'
 import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
+import { signApproval } from '../../src/core/approval'
+import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
 import {
   betweenPaths,
   reviewPath,
@@ -36,6 +39,16 @@ async function ackCurrent(cycle: number, hash: string, fc: FakeClock): Promise<v
     acked_at: fc.nowIso(),
   }
   await new AckStore(dir).write(ack)
+}
+
+async function signedApprove(scope: 'merge' | 'deploy' | 'promote_rule'): Promise<void> {
+  const st = await new StateRepository(dir).read()
+  const sig = signApproval(resolveApprovalSecret(dir), {
+    scope,
+    diff_hash: st?.diff.hash ?? null,
+    cycle: st?.workflow.cycle ?? 0,
+  })
+  await new CommandBus(dir).submit({ kind: 'approve', scope, sig })
 }
 
 beforeEach(async () => {
@@ -132,7 +145,7 @@ describe('headless walking skeleton (M3)', () => {
     expect(d2.state.workflow.phase).toBe('human_gate')
 
     // human approves the merge -> done
-    await bus.submit({ kind: 'approve', scope: 'merge' })
+    await signedApprove('merge')
     await d2.tick()
     expect(d2.state.workflow.phase).toBe('done')
     expect(d2.state.approval?.scope).toBe('merge')
@@ -167,7 +180,7 @@ describe('headless walking skeleton (M3)', () => {
     )
     await d.tick() // -> review_written (records reviewed hash)
     await d.tick() // -> human_gate
-    await bus.submit({ kind: 'approve', scope: 'merge' })
+    await signedApprove('merge')
     await d.tick() // -> done
 
     // start another goal with the file UNCHANGED -> same hash -> no new cycle

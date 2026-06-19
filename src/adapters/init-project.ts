@@ -9,6 +9,8 @@ import { StateRepository } from './state-repository'
 import { betweenPaths, betweenSubdirs } from './paths'
 import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
 import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE, type AgentPreset } from '../agents/real-agents'
+import { ensureApprovalSecret } from './approval-secret'
+import { installPrePushHook } from './git-hooks'
 
 export interface InitOptions {
   vaultPath?: string
@@ -109,6 +111,11 @@ export async function initProject(
   }
 
   await ensureGitignore(absRoot)
+
+  // trust boundary (P1-5): provision the approval-signing secret + install the pre-push gate
+  ensureApprovalSecret(absRoot)
+  const hook = installPrePushHook(absRoot)
+  if (hook && !existedBefore) created.push(hook)
 
   return { created, alreadyExisted: existedBefore, project }
 }

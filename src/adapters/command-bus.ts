@@ -20,7 +20,11 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('pause') }),
   z.object({ kind: z.literal('resume') }),
   z.object({ kind: z.literal('review_now') }),
-  z.object({ kind: z.literal('approve'), scope: z.enum(['merge', 'deploy', 'promote_rule']) }),
+  z.object({
+    kind: z.literal('approve'),
+    scope: z.enum(['merge', 'deploy', 'promote_rule']),
+    sig: z.string().optional(), // HMAC over (scope, diff_hash, cycle); verified by the daemon (P1-5)
+  }),
   z.object({ kind: z.literal('stop') }),
 ])
 

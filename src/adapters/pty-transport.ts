@@ -2,6 +2,7 @@ import { execa } from 'execa'
 import type { Ack, Signal, SignalTransport } from '../core/types'
 import { FileTransport } from './signal-transport'
 import { tokenizeCommand, type AgentHost, type AgentRole } from './agent-host'
+import { strippedAgentEnv } from './approval-secret'
 
 export type AgentHostMap = Partial<Record<AgentRole, AgentHost>>
 
@@ -47,7 +48,7 @@ export class OneShotTransport implements SignalTransport {
       cwd: this.opts.cwd,
       input: signal.body,
       reject: false,
-      env: { ...process.env, FORCE_COLOR: '1', BETWEEN_ROOT: this.root },
+      env: strippedAgentEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.root }),
     })
     sub.stdout?.on('data', (d: Buffer) => host?.feed(d.toString()))
     sub.stderr?.on('data', (d: Buffer) => host?.feed(d.toString()))

@@ -2,8 +2,10 @@ import { touch, isAlreadyReviewed } from '../core/state'
 import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
+import { verifyApproval } from '../core/approval'
 import type { ApprovalScope } from '../core/types'
 import type { Command } from '../adapters/command-bus'
+import { resolveApprovalSecret } from '../adapters/approval-secret'
 import type { DaemonContext } from './context'
 import { currentDiff, openCycleAndSignal } from './phases'
 
@@ -44,7 +46,7 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
       await forceReview(ctx)
       break
     case 'approve':
-      await approve(ctx, command.scope)
+      await approve(ctx, command.scope, command.sig)
       break
     case 'stop':
       ctx.requestStop()
@@ -54,14 +56,33 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
   }
 }
 
-export async function approve(ctx: DaemonContext, scope: ApprovalScope): Promise<void> {
+export async function approve(
+  ctx: DaemonContext,
+  scope: ApprovalScope,
+  sig?: string,
+): Promise<void> {
+  const cur = ctx.current()
+  const claim = { scope, diff_hash: cur.diff.hash, cycle: cur.workflow.cycle }
+  const secret = resolveApprovalSecret(ctx.deps.root)
+  if (secret) {
+    // a secret is provisioned -> a valid signature is REQUIRED; a forged/unsigned approve
+    // file (e.g. written by an agent without the secret) cannot pass the human gate (P1-5).
+    if (!verifyApproval(secret, sig ?? '', claim)) {
+      await ctx.emit('approval_rejected', {
+        detail: { scope, reason: sig ? 'invalid signature' : 'unsigned' },
+      })
+      return
+    }
+  }
   const next = {
-    ...ctx.current(),
+    ...cur,
     approval: {
       actor: 'human' as const,
       scope,
-      diff_hash: ctx.current().diff.hash,
+      diff_hash: cur.diff.hash,
+      cycle: cur.workflow.cycle,
       granted_at: ctx.deps.clock.nowIso(),
+      sig: sig ?? null,
     },
   }
   await ctx.persist(touch(next, ctx.deps.clock))

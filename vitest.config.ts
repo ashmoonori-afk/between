@@ -7,6 +7,8 @@ export default defineConfig({
     // real-git integration setup can exceed the 10s default on a cold Windows runner (P3-11)
     hookTimeout: 30_000,
     testTimeout: 30_000,
+    // serialize test FILES so the real-git integration suites don't contend on Windows (P3-11)
+    fileParallelism: false,
     coverage: {
       provider: 'v8',
       include: ['src/core/**'],

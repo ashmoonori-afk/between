@@ -145,7 +145,11 @@ export interface ApprovalToken {
   actor: 'human'
   scope: ApprovalScope
   diff_hash: string | null
+  /** the cycle the approval was signed against (part of the HMAC claim, P1-5) */
+  cycle: number
   granted_at: string
+  /** HMAC over (scope, diff_hash, cycle); lets `verify-push` re-check independently (P1-5) */
+  sig: string | null
 }
 
 export interface ProjectRef {

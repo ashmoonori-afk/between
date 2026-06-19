@@ -1,4 +1,5 @@
 import { BaseAgentHost, tokenizeCommand, type AgentHostKind, type AgentRole } from './agent-host'
+import { strippedAgentEnv } from './approval-secret'
 
 /** Minimal structural type for the (optional) node-pty module — we ship no @types for it. */
 interface IPtyLike {
@@ -81,7 +82,7 @@ export class PtyAgentHost extends BaseAgentHost {
       cols: this.opts.cols ?? 80,
       rows: this.opts.rows ?? 24,
       cwd: this.opts.cwd,
-      env: { ...process.env, FORCE_COLOR: '1' },
+      env: strippedAgentEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.opts.cwd }),
     })
     this.proc.onData((d) => this.feed(d))
     this.proc.onExit(({ exitCode }) => {
