@@ -40,6 +40,16 @@ export const ConfigSchema = z
     auto_propose_rules: z.boolean().default(true),
     auto_promote_rules: z.boolean().default(false),
     promotion_requires_human: z.boolean().default(true),
+
+    // --- agent embedding (`between start --embed`) ---
+    // 'file' keeps the zero-risk headless path as the default; 'oneshot' spawns the agent
+    // per signal (zero native deps); 'pty' hosts a live ConPTY terminal (optional node-pty).
+    agent_mode: z.enum(['file', 'oneshot', 'pty']).default('file'),
+    developer_command: z.string().default('node .between/agents/fake-agent.mjs developer'),
+    reviewer_command: z.string().default('node .between/agents/fake-agent.mjs reviewer'),
+    agent_cwd: z.string().default(''), // '' resolves to the project root
+    agent_pane_scrollback: z.number().int().positive().default(2000),
+    agent_pane_visible_rows: z.number().int().positive().default(10),
   })
   .strict()
 
@@ -97,5 +107,13 @@ vault_path: ''                   # Obsidian vault root (validated on start)
 auto_propose_rules: true
 auto_promote_rules: false        # never auto-harden a rule without a human
 promotion_requires_human: true
+
+# --- agent embedding (between start --embed) ---
+agent_mode: file                 # file | oneshot | pty
+developer_command: 'node .between/agents/fake-agent.mjs developer'
+reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'
+agent_cwd: ''                    # '' = project root
+agent_pane_scrollback: 2000      # lines retained per agent pane
+agent_pane_visible_rows: 10      # visible tail rows per agent pane
 `
 }

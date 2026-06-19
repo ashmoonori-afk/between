@@ -2,7 +2,7 @@ import { readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { basename, resolve, join } from 'node:path'
 import { parse as parseYaml } from 'yaml'
-import type { Clock, ProjectRef } from './core/types'
+import type { Clock, ProjectRef, SignalTransport } from './core/types'
 import { parseConfig, type BetweenConfig } from './core/config-schema'
 import { SystemClock } from './core/clock'
 import { initialState } from './core/state'
@@ -42,8 +42,16 @@ function projectRef(root: string, config: BetweenConfig): ProjectRef {
   }
 }
 
-/** Assemble all adapters + the Daemon for a target repo. */
-export async function buildDaemon(root: string, clock: Clock = new SystemClock()): Promise<Daemon> {
+/**
+ * Assemble all adapters + the Daemon for a target repo. `transport` defaults to
+ * FileTransport so every existing caller and test is unchanged; the embed path injects
+ * a OneShot/Pty transport instead.
+ */
+export async function buildDaemon(
+  root: string,
+  clock: Clock = new SystemClock(),
+  transport?: SignalTransport,
+): Promise<Daemon> {
   const absRoot = resolve(root)
   const config = await loadConfig(absRoot)
   const stateRepo = new StateRepository(absRoot)
@@ -60,7 +68,7 @@ export async function buildDaemon(root: string, clock: Clock = new SystemClock()
       git: new GitAdapter(absRoot),
       state: stateRepo,
       events: new EventsLog(absRoot),
-      transport: new FileTransport(absRoot),
+      transport: transport ?? new FileTransport(absRoot),
       snapshots: new SnapshotStore(absRoot),
       commands: new CommandBus(absRoot),
     },

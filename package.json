@@ -49,5 +49,8 @@
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
     "vitest": "^4.1.9"
+  },
+  "optionalDependencies": {
+    "@lydell/node-pty": "^1.2.0-beta.12"
   }
 }

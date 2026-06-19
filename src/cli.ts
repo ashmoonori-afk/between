@@ -98,14 +98,22 @@ program
 
 program
   .command('start')
-  .description('Start the broker watcher loop (headless file-signal mode)')
-  .option('--headless', 'run without terminal panes (default while PTY is unavailable)')
+  .description('Start the broker watcher loop (headless, or --embed for the live agent window)')
+  .option('--embed', 'open the broker-owned window embedding live developer/reviewer agent panes')
+  .option('--headless', 'run the loop without the Ink UI (no TTY needed)')
   .option('--max-ticks <n>', 'run a bounded number of poll iterations then exit', (v) => Number(v))
-  .action(async (opts: { headless?: boolean; maxTicks?: number }) => {
+  .action(async (opts: { embed?: boolean; headless?: boolean; maxTicks?: number }) => {
     try {
-      print('between: broker started (headless). Ctrl-C to stop.')
-      await runStart(root(), { maxTicks: opts.maxTicks })
-      print('between: broker stopped.')
+      const cfg = await loadConfig(root()).catch(() => null)
+      const embed = Boolean(opts.embed) || (cfg !== null && cfg.agent_mode !== 'file')
+      if (embed) {
+        const { runStartEmbedded } = await import('./ui/start')
+        await runStartEmbedded(root(), { maxTicks: opts.maxTicks, headless: opts.headless })
+      } else {
+        print('between: broker started (headless file mode). Ctrl-C to stop.')
+        await runStart(root(), { maxTicks: opts.maxTicks })
+        print('between: broker stopped.')
+      }
     } catch (e) {
       await fail(e)
     }
@@ -218,8 +226,8 @@ program
     }
     let ptyOk = false
     try {
-      // indirect specifier: node-pty is an OPTIONAL native dep; don't statically resolve it
-      const ptyModule = 'node-pty'
+      // indirect specifier: @lydell/node-pty is an OPTIONAL native dep; don't statically resolve it
+      const ptyModule = '@lydell/node-pty'
       await import(ptyModule)
       ptyOk = true
     } catch {
@@ -228,7 +236,7 @@ program
     checks.push({
       ok: ptyOk ? true : 'warn',
       label: ptyOk
-        ? 'node-pty available (terminal mode ready)'
+        ? '@lydell/node-pty available (terminal mode ready)'
         : 'node-pty unavailable (headless file-signal mode only)',
     })
 

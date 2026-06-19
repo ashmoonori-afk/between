@@ -8,8 +8,8 @@ export default defineConfig({
   clean: true,
   sourcemap: true,
   dts: false,
-  // node-pty / ink are resolved at runtime from node_modules; keep them external.
-  external: ['node-pty'],
+  // optional native pty backends are resolved at runtime from node_modules; keep external.
+  external: ['node-pty', '@lydell/node-pty'],
   banner: { js: '#!/usr/bin/env node' },
   esbuildOptions(options) {
     options.jsx = 'automatic'

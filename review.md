@@ -1,119 +1,189 @@
-# Between Ultrawork Review
+# Between Deep Review
 
 Date: 2026-06-19
-Scope: current working tree in `C:\Users\lg\marketing for companies\between`, including the CLI/TUI surface, package/runtime metadata, CI, daemon loop, adapter changes, tests, and evidence artifacts.
+Mode: Ultrawork / HEAVY review
+Scope: current local repository at `C:\Users\lg\marketing for companies\between`, including committed implementation, current dirty package metadata, CLI/TUI behavior, daemon loop, durable state adapters, tests, CI, README, TASKS, and review artifacts.
 
-Verdict: **Not ready to merge.** The headless broker and one-shot dashboard now have encouraging evidence, but the current tree still has release-contract drift, a failing local lint gate, broad behavior changes outside the originally supplied file list, and rejected gate reviews.
+Verdict: **Not ready to merge or ship.**
+
+The earlier Node/runtime metadata and lint-in-CI blockers are mostly fixed: `package.json` and `package-lock.json` now require Node `>=22.12.0`, `tsup.config.ts` targets `node22`, and CI runs `npm run lint`. The current blockers are deeper: the broker still does not complete the developer feedback handoff, the CI coverage gate is red on this Windows host, and several durable-file boundaries still behave like optimistic local files rather than crash-safe broker contracts.
+
+## Current Working Tree
+
+Latest verified working-tree snapshot during this review (`git status --short --untracked-files=all`) reports:
+
+```text
+ M package-lock.json
+ M package.json
+ M review.md
+ M src/core/config-schema.ts
+?? docs/EMBED-PLAN.md
+?? src/adapters/agent-host.ts
+?? src/adapters/pipe-agent-host.ts
+?? src/adapters/pty-agent-host.ts
+?? src/adapters/pty-transport.ts
+```
+
+The package diff adds `@lydell/node-pty` as an optional dependency. `review.md` is this review artifact. `src/core/config-schema.ts`, `docs/EMBED-PLAN.md`, `src/adapters/agent-host.ts`, `src/adapters/pipe-agent-host.ts`, `src/adapters/pty-agent-host.ts`, and `src/adapters/pty-transport.ts` changed or appeared during the review window after the main verification pass; they were not edited by this review, so findings below focus on the implementation snapshot and evidence captured before those concurrent edits. This section is a timestamped review snapshot, not a claim that no later concurrent files can appear while another coding agent is still writing.
 
 ## Findings
 
-### P1 - Node support metadata is inconsistent across package, lockfile, docs, build target, and CI
+### P1 - Blocking reviewer feedback does not signal the developer
 
-`package.json:10-11` now requires Node `>=22.12.0`, and `.github/workflows/ci.yml:15-16` tests Node `[22, 24]`. That aligns with `commander@15.0.0` requiring Node `>=22.12.0` and `ink@7.1.0` requiring Node `>=22` in `package-lock.json:1776-1782` and `package-lock.json:2126-2159`.
+The core product loop says the broker should notify the developer when the reviewer writes findings. The implementation transitions to `applying_review`, but it never sends a developer signal.
 
-However, the root package metadata inside `package-lock.json:39-40` still says Node `>=20`. `README.md:19` and `DEVELOPMENT-PLAN.md:28` still describe the stack as Node.js 20 LTS, `tsup.config.ts:6` still targets `node20`, and the optional PTY CI probe still uses Node 20 at `.github/workflows/ci.yml:43-47`.
+Evidence:
 
-Evidence: `.omo/evidence/task-3-runtime-compat.txt`, `.omo/evidence/task-3-node20-runtime.txt`, `.omo/evidence/between-security-runtime-gate-review.md`
+- `src/daemon/loop.ts:364-381` handles a blocking review by dispatching `review_applied`.
+- `src/adapters/signal-transport.ts:68-74` defines `developerSignalBody()`, but `rg` found no call site for it.
+- Real CLI smoke wrote a valid blocking `.between/reviews/cycle-0001.json`; `status --json` then showed `phase: "applying_review"` and `waiting_on: "developer"`, while `.between/signals/developer.json` was missing.
+- Log: `.omo/evidence/deep-review-2026-06-19/developer-signal-missing-clean.txt`.
 
-Recommended fix: pick one support floor and update every source of truth together. If the floor is Node `>=22.12.0`, regenerate `package-lock.json`, update README/plan text, move or justify the `tsup` target, and align the optional PTY probe.
+Recommended fix: after accepting a complete blocking review for the current hash, build and send a developer signal, persist `last_signal: "developer_review_available"` (or equivalent), and add an integration test that asserts `.between/signals/developer.json` exists before the daemon waits on the developer.
 
-### P1 - Local lint gate is red, while CI does not run it
+### P1 - CI coverage gate is currently red
 
-`package.json:24` maps `lint` to a Prettier check, and the latest sequential run fails because `src/daemon/loop.ts` is not formatted. CI does not run `npm run lint` at `.github/workflows/ci.yml:23-29`, so this quality gate can fail locally while the configured main CI path remains blind to it.
+CI runs `npm run test:cov` on both Windows and Ubuntu (`.github/workflows/ci.yml:28-31`). On this host, `npm test` passes when rerun alone, but `npm run test:cov` fails in `test/integration/loop.test.ts` with `beforeEach` timeout and `EBUSY` temp cleanup errors.
 
-Evidence: `.omo/evidence/between-ulw-review/lint-latest.txt`, `.omo/evidence/task-5-sequential-summary.txt`, `.omo/evidence/between-qa-evidence-gate-review.md`
+Evidence:
 
-Recommended fix: format `src/daemon/loop.ts`, then decide whether `lint` means Prettier only or semantic linting. If it is a required gate, add it to CI; if it is formatting only, rename it to `format:check` and update docs.
+- PASS: `npm run lint` -> `.omo/evidence/deep-review-2026-06-19/lint.txt`.
+- PASS: `npm run typecheck` -> `.omo/evidence/deep-review-2026-06-19/typecheck.txt`.
+- PASS: `npm test` after agent activity stopped -> 12 files, 61 tests -> `.omo/evidence/deep-review-2026-06-19/test-rerun-after-agents.txt`.
+- FAIL: `npm run test:cov` -> 1 failed file, 2 failed integration tests -> `.omo/evidence/deep-review-2026-06-19/test-cov-rerun.txt`.
 
-### P1 - The active diff is broader than the original review list and includes behavior changes
+Recommended fix: make the real-git integration harness reliable under coverage on Windows. Likely fixes are longer hook timeout, serializing the integration file, retrying temp cleanup on `EBUSY`, and ensuring all git child processes are fully awaited before `rm`.
 
-The original review list named `package-lock.json`, `package.json`, `src/cli.ts`, `vitest.config.ts`, `.gitattributes`, `src/ui/*`, and `test/unit/dashboard.test.tsx`. The current working tree is broader: adapter files, `src/daemon/loop.ts`, and integration tests are also modified.
+### P1 - Clean review without passing verify can stall forever
 
-This is not just formatting. Examples include ack schema validation and atomic ack writes in `src/adapters/ack-store.ts:8-20` and `src/adapters/ack-store.ts:34-38`, command schema validation and bounded drain in `src/adapters/command-bus.ts:17-34` and `src/adapters/command-bus.ts:61-77`, event write error propagation in `src/adapters/events-log.ts:21-28`, state shape validation in `src/adapters/state-repository.ts:52-63`, and review hash lifecycle behavior in `src/daemon/loop.ts:364-375`.
+For a clean review, `handleReviewWritten()` reads verify once per tick. If verify is missing or `passed: false`, it returns while staying in `review_written`; there is no transition to `verifying`, no `verify_failed` dispatch, and `developer_timeout_seconds` is not wired into this path.
 
-Evidence: `.omo/evidence/task-1-scope.txt`, `.omo/evidence/between-gate-review.md`
+Evidence:
 
-Recommended fix: review these behavior changes as first-class scope. Do not describe the adapter/core/daemon/test changes as formatting-only.
+- `src/daemon/loop.ts:168-170` calls `handleReviewWritten()` for `review_written`.
+- `src/daemon/loop.ts:369-378` returns when the review is clean but there is no passing verify.
+- `src/daemon/loop.ts:151-173` has no timeout handling for `review_written` or `verifying`.
+- The happy-path integration test writes review and verify together, masking the missing negative path.
 
-### P2 - `dash --interval` accepts unsafe values and can collapse to a 1ms refresh loop
+Recommended fix: define the owner of verification explicitly. If the developer must verify, send a developer/verify signal and route missing or failed verify to `developing` or `human_gate` with timeout. Add tests for missing verify, `passed:false`, and mismatched verify hash.
 
-`src/cli.ts:263` parses `--interval <ms>` with `Number(v)` and passes it into `runDashboard` at `src/cli.ts:267`. The live dashboard then uses it directly in `setInterval` at `src/ui/dash.tsx:36`. Node turns `NaN` and `0` interval values into a 1ms timer, which can create a tight polling loop against `.between/state.json` and `events.jsonl`.
+### P2 - Current optional PTY dependency does not satisfy the runtime probe
 
-Evidence: `.omo/evidence/task-2-interval-runtime.txt`, `.omo/evidence/between-code-quality-gate-review.md`
+The dirty package diff adds `@lydell/node-pty`, but `doctor` dynamically imports `node-pty`.
 
-Recommended fix: validate this flag at the CLI boundary as a finite positive integer with a sensible lower bound, for example `>=250` or `>=1000`, and add CLI tests for invalid, zero, and negative values.
+Evidence:
 
-### P2 - Edited TypeScript files exceed the local size guideline
+- `package.json` currently has `optionalDependencies: { "@lydell/node-pty": "^1.2.0-beta.12" }`.
+- `src/cli.ts:219-223` probes `import('node-pty')`.
+- Local import check: `@lydell/node-pty` imports successfully, while `node-pty` fails with `ERR_MODULE_NOT_FOUND`.
+- `node dist/cli.js doctor` still reports `node-pty unavailable`.
 
-The current diff edits two files over the local 250 pure-LOC ceiling: `src/cli.ts` is 258 pure LOC and `src/daemon/loop.ts` is 458 pure LOC. This is not a request to refactor them inside this review, but it should be tracked because both files sit on high-risk command/daemon paths.
+Recommended fix: either depend on the package name that provides the `node-pty` specifier, or change the runtime adapter/probe to use `@lydell/node-pty`. Do not ship the current package diff as a PTY readiness improvement.
 
-Evidence: `.omo/evidence/between-code-quality-gate-review.md`
+### P2 - Command and signal files are not written atomically
 
-Recommended fix: after functional blockers are handled, split responsibilities incrementally around command registration/validation and daemon phase handlers.
+The broker treats `.between/commands` and `.between/signals` as durable coordination surfaces, but both write directly to the final JSON path. The command drain also deletes corrupt/unreadable files, so a daemon can observe a partially written command and drop it permanently.
 
-### P2 - Slop / overfit coverage remains incomplete as a primary artifact
+Evidence:
 
-The gate reviewers consulted the local programming and remove-ai-slops criteria and rejected the earlier draft because the primary `review.md` did not show explicit overfit/slop coverage. This updated artifact records that gap instead of claiming the review gate is complete.
+- `src/adapters/command-bus.ts:43-50` writes directly to the final command `.json`.
+- `src/adapters/command-bus.ts:69-76` deletes JSON parse/read failures.
+- `src/adapters/signal-transport.ts:42-45` writes signals directly to the final signal path.
 
-Evidence: `.omo/evidence/between-gate-review.md`, `.omo/evidence/between-code-quality-gate-review.md`, `.omo/evidence/between-review-artifact-gate-review.md`
+Recommended fix: write to a temp filename and atomically rename into place, or use `write-file-atomic`. For command drains, treat a parse failure on a just-created file as retryable unless the file is oversized or clearly invalid after a stable-age threshold.
 
-Recommended fix: run a dedicated slop/overfit pass against the current diff after the tree stops moving, then record concrete findings or an approval with checked artifact paths.
+### P2 - Newer state schema refusal is swallowed
 
-### P3 - Supply-chain audit is mostly clean, with one low dev/transitive advisory
+`migrate()` throws for `schema_version > 1`, but `tryRead()` catches every error and returns `null`. That turns a required "upgrade Between" refusal into "no readable state", allowing later code to proceed from an initial in-memory state.
+
+Evidence:
+
+- `src/adapters/state-repository.ts:40-48` catches all read/migrate errors and returns `null`.
+- `src/adapters/state-repository.ts:70-75` contains the intended newer-than-binary refusal.
+
+Recommended fix: distinguish parse/corruption fallback from explicit migration refusal. Let newer-schema errors propagate to `start`, `status`, and `doctor` so the user cannot silently overwrite newer state.
+
+### P2 - `.between/` is not excluded from tracked diffs
+
+The plan says `.between/` should be excluded at the git level, but the tracked diff and summary paths do not include an exclude pathspec. `.gitignore` only protects untracked files; if `.between/` is ever tracked by mistake, broker state can enter the review hash and self-trigger cycles.
+
+Evidence:
+
+- `src/adapters/git.ts:83-96` calls `git diff <base>` and `git diff <base> --numstat` without `:(exclude).between/**`.
+- `src/adapters/git.ts:111-119` excludes `.between/` only from untracked files.
+- `TASKS.md:62-66` marks `.between/` git-level exclusion as part of M2.
+
+Recommended fix: apply the same `.between/**` exclusion pathspec to tracked diff, raw diff, and summary, and add a regression test with a deliberately tracked `.between/state.json`.
+
+### P2 - Human approval is a protocol token, not an enforcement boundary
+
+The current command bus validates `approve` shape, but any local process with write access to `.between/commands` can enqueue `{ "kind": "approve", "scope": "merge" }`, and the daemon will persist an approval token.
+
+Evidence:
+
+- `src/adapters/command-bus.ts:12-23` defines `approve` as a valid command shape.
+- `src/daemon/loop.ts:449-472` persists the approval token and exits `human_gate`.
+- README correctly marks detective merge/deploy enforcement as planned, but "Human-controlled merge/deploy" can be misread as enforcement rather than cooperative protocol.
+
+Recommended fix: document this as a trust boundary now. If Between should enforce human approval against local agents, add an out-of-band approval secret, OS-level permissions, a signed approval file, or a pre-push hook that cannot be written by agent sessions.
+
+### P3 - Documentation and tracker status are stale
+
+Some docs now overstate the completed loop and quality gate status.
+
+Evidence:
+
+- `README.md:17-23` says the broker routes reviewer results back to the developer; the current code does not write developer signals.
+- `README.md:217-220` says the headless loop and file-based signal/ack/review flow are implemented; the reviewer side is implemented, but the developer handoff is not.
+- `TASKS.md:8-11` says the loop is implemented/tested/runnable and still cites 54 tests; the current suite has 61 tests and `test:cov` is red.
+- `TASKS.md:8-10` also claims a CLI-proven end-to-end loop, which conflicts with the real CLI smoke showing no developer signal after a blocking review.
+
+Recommended fix: update README/TASKS after the P1 loop defects are fixed, not before. Until then, describe the implementation as reviewer-signal-only plus dashboard and human gate.
+
+### P3 - Large command/daemon files remain review-risk hotspots
+
+The local programming guideline prefers files under 250 pure LOC. `src/daemon/loop.ts` and `src/cli.ts` are above that and now contain most of the behavioral coupling.
+
+Evidence:
+
+- `src/daemon/loop.ts`: about 451 pure-ish LOC.
+- `src/cli.ts`: about 259 pure-ish LOC.
+
+Recommended fix: after behavioral blockers are fixed, split daemon phase handlers and CLI command registration/handlers into narrower modules with focused tests.
+
+### P3 - Supply-chain audit has one low dev-only advisory
 
 `npm audit --omit=dev` reports zero production vulnerabilities. Full `npm audit` reports one low-severity dev/transitive advisory for `esbuild`.
 
-Evidence: `.omo/evidence/task-9-audit-prod.txt`, `.omo/evidence/task-9-audit-full.txt`, `.omo/evidence/between-security-runtime-gate-review.md`
+Evidence:
 
-Recommended fix: run `npm audit fix` or update the affected dev toolchain when safe; this is lower priority than the runtime metadata and lint failures.
+- `.omo/evidence/deep-review-2026-06-19/audit-prod.txt`
+- `.omo/evidence/deep-review-2026-06-19/audit-full.txt`
 
-### P3 - Evidence artifacts contain local absolute workspace paths
+Recommended fix: update the affected dev toolchain when it does not disturb the build; this is lower priority than the broker loop and CI gate failures.
 
-Several evidence files contain paths under `C:\Users\lg\marketing for companies\between`. That is fine for local review, but the evidence directory should not be published or pasted externally without redaction.
+## Verification Snapshot
 
-Evidence: `.omo/evidence/between-security-runtime-gate-review.md`
+Commands run from `C:\Users\lg\marketing for companies\between`:
 
-Recommended fix: keep `.omo/evidence` local or generate a redacted evidence bundle before sharing.
+| Check | Result | Evidence |
+|---|---:|---|
+| `npm run lint` | PASS | `.omo/evidence/deep-review-2026-06-19/lint.txt` |
+| `npm run typecheck` | PASS | `.omo/evidence/deep-review-2026-06-19/typecheck.txt` |
+| `npm test` | PASS when rerun alone | `.omo/evidence/deep-review-2026-06-19/test-rerun-after-agents.txt` |
+| `npm run test:cov` | FAIL | `.omo/evidence/deep-review-2026-06-19/test-cov-rerun.txt` |
+| `npm run build` | PASS | `.omo/evidence/deep-review-2026-06-19/build.txt` |
+| `npm audit --omit=dev` | PASS, 0 prod vulns | `.omo/evidence/deep-review-2026-06-19/audit-prod.txt` |
+| `npm audit` | FAIL, 1 low dev advisory | `.omo/evidence/deep-review-2026-06-19/audit-full.txt` |
+| CLI temp repo smoke | PARTIAL PASS | `.omo/evidence/deep-review-2026-06-19/cli-smoke.txt` |
+| Blocking review developer signal | FAIL | `.omo/evidence/deep-review-2026-06-19/developer-signal-missing-clean.txt` |
 
-## Verification
+## Sub-Reviewer Summary
 
-Latest sequential verification snapshot: `.omo/evidence/task-5-sequential-summary.txt`
+- Planner: completed review plan at `.omo/plans/between-deep-review-2026-06-19.md`.
+- Documentation/contract lane: confirmed PTY and Obsidian are mostly documented as deferred, but developer result routing is overclaimed.
+- QA lane: reproduced missing developer signal and reported test/coverage instability under real Windows temp repos.
+- Security/runtime lane: flagged local file-forgery trust boundaries, non-atomic command/signal writes, schema refusal swallow, and `.between/` diff exclusion gaps.
+- Code-quality lane: requested changes for test instability, clean-review verify stall, signal-send persistence hazards, command bus atomicity, and schema refusal handling.
 
-- FAIL: `npm run lint` (`src/daemon/loop.ts` Prettier issue)
-- PASS: `npm run typecheck`
-- PASS: `npm test` (10 files, 54 tests)
-- PASS: `npm run test:cov` (10 files, 54 tests; statements 93.84%, branches 91.46%, functions 90.9%, lines 95.9%)
-- PASS: `npm run build` (`tsup` still reports target `node20`)
-
-Earlier parallel runs produced intermittent integration-test failures (`beforeEach` hook timeout / Windows `EBUSY`). The latest sequential run passed tests, so the reliable current blocker is lint plus the metadata/scope issues above, not a consistently red test suite.
-
-## Real CLI/TUI Evidence
-
-- PASS: fresh temp repo `node dist/cli.js init`
-- PASS: fresh temp repo `node dist/cli.js status`
-- PASS: fresh temp repo `node dist/cli.js dash --once`
-- PASS: 80-column TUI width check, max width 80/80 with no overflow in the captured frame
-- PASS: Node 20 runtime smoke for `--help`, `init`, and `dash --once`
-- PASS: no-state `status` exits 1 with init guidance
-- PASS: no-state `dash --once` prints init guidance and exits 0
-- PASS: invalid `approve ship` exits 1 with allowed scopes
-
-Evidence: `.omo/evidence/task-6-real-cli-tui.txt`, `.omo/evidence/between-ulw-review/visual-qa-tui.txt`, `.omo/evidence/task-7-cli-error-paths.txt`
-
-The PTY/three-terminal product promise is still not complete. Current implementation uses `FileTransport` as the load-bearing transport, with `node-pty` treated as optional/future per `docs/adr/ADR-0001-transport.md`. The real TUI proof verifies the dashboard frame, not live Claude/Codex PTY embedding.
-
-## Scope Notes
-
-Supplied review scope and current dirty-tree scope diverged during the review. The latest dirty tree includes `.github/workflows/ci.yml`, `package.json`, adapter files, `src/cli.ts`, core files, `src/daemon/loop.ts`, UI files, and tests. `package-lock.json`, `vitest.config.ts`, `.gitattributes`, and `src/ui/theme.ts` were in the supplied list but are not currently shown as modified by `git diff --name-only`.
-
-Treat this review as a moving-target snapshot, not a final approval. The source tree continued changing while gates were running, and the gate reviewers correctly rejected the earlier draft for stale line references, incomplete scope reconciliation, and pending gate status.
-
-## Sub-Reviewer Gate
-
-- Goal/scope: **REJECT**. Scope reconciliation was incomplete, and the earlier draft downplayed behavior changes outside the supplied list. See `.omo/evidence/between-gate-review.md`.
-- Code quality: **REJECT**. The earlier draft had stale line references and missed the edited oversized `src/cli.ts`. See `.omo/evidence/between-code-quality-gate-review.md`.
-- QA/evidence: **REJECT**. The earlier draft had stale verification claims; latest sequential evidence now supersedes it. See `.omo/evidence/between-qa-evidence-gate-review.md` and `.omo/evidence/task-5-sequential-summary.txt`.
-- Security/supply-chain/runtime: **REJECT**. Runtime metadata remains split, audit state needed to be recorded, and evidence contains local absolute paths. See `.omo/evidence/between-security-runtime-gate-review.md`.
-- Final artifact gate: **REJECT**. The previous artifact still had stale `src/cli.ts` line references, a stale LOC count, and incomplete slop/overfit coverage. This revision fixes the stale references and leaves slop/overfit coverage as an explicit blocker. See `.omo/evidence/between-review-artifact-gate-review.md`.
-
-This review artifact has been updated to include those gate rejections instead of claiming approval.
+Gate status: **REQUEST CHANGES / artifact approval not obtained**. Product blockers are recorded above. The artifact gate repeatedly rejected while the working tree continued to receive concurrent files after each snapshot; treat this review as a blocker list for the verified implementation snapshot, not as merge approval for the actively moving tree.

@@ -49,7 +49,11 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
-  await rm(dir, { recursive: true, force: true })
+  try {
+    await rm(dir, { recursive: true, force: true })
+  } catch {
+    // Windows can hold a handle briefly after a git child exits — cleanup is best-effort
+  }
 })
 
 describe('headless walking skeleton (M3)', () => {

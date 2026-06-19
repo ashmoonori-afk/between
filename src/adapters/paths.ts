@@ -18,6 +18,7 @@ export interface BetweenPaths {
   verify: string
   commands: string
   cycles: string
+  agents: string
 }
 
 export function betweenPaths(root: string): BetweenPaths {
@@ -38,12 +39,27 @@ export function betweenPaths(root: string): BetweenPaths {
     verify: join(dir, 'verify'),
     commands: join(dir, 'commands'),
     cycles: join(dir, 'cycles'),
+    agents: join(dir, 'agents'),
   }
 }
 
 /** Directories created by `between init`. */
 export function betweenSubdirs(p: BetweenPaths): string[] {
-  return [p.dir, p.snapshots, p.signals, p.acks, p.reviews, p.verify, p.commands, p.cycles]
+  return [
+    p.dir,
+    p.snapshots,
+    p.signals,
+    p.acks,
+    p.reviews,
+    p.verify,
+    p.commands,
+    p.cycles,
+    p.agents,
+  ]
+}
+
+export function agentScriptPath(p: BetweenPaths): string {
+  return join(p.agents, 'fake-agent.mjs')
 }
 
 export function snapshotPath(p: BetweenPaths, cycle: number): string {

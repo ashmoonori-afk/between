@@ -6,7 +6,8 @@ import type { Clock, ProjectRef } from '../core/types'
 import { defaultConfigYaml } from '../core/config-schema'
 import { initialState } from '../core/state'
 import { StateRepository } from './state-repository'
-import { betweenPaths, betweenSubdirs } from './paths'
+import { betweenPaths, betweenSubdirs, agentScriptPath } from './paths'
+import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
 
 export interface InitOptions {
   vaultPath?: string
@@ -70,6 +71,13 @@ export async function initProject(
     const repo = new StateRepository(absRoot)
     await repo.write(initialState({ project }, clock))
     created.push(p.state)
+  }
+
+  // bundled demo agent so `between start --embed` (oneshot/pty) is self-contained
+  const agentFile = agentScriptPath(p)
+  if (!existsSync(agentFile)) {
+    await writeFile(agentFile, FAKE_AGENT_SOURCE, 'utf8')
+    created.push(agentFile)
   }
 
   await ensureGitignore(absRoot)
