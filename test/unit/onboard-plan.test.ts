@@ -24,6 +24,7 @@ describe('planOnboarding', () => {
     expect(plan.envVarNeeded).toBe('BETWEEN_TELEGRAM_TOKEN')
     expect(plan.smoke).toBe('telegram')
     expect(plan.warnings.join(' ')).toMatch(/BETWEEN_TELEGRAM_TOKEN/)
+    expect(plan.nextSteps.join('\n')).not.toMatch(/BETWEEN_TELEGRAM_TOKEN=/)
   })
 
   it('discord with token already in env -> no warning, still smokes', () => {

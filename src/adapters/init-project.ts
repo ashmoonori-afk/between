@@ -1,7 +1,6 @@
 import { mkdir, readFile, writeFile, access, stat } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
-import { stringify as yamlStringify } from 'yaml'
 import type { Clock, ProjectRef } from '../core/types'
 import { defaultConfigYaml } from '../core/config-schema'
 import { initialState } from '../core/state'
@@ -69,8 +68,7 @@ export async function initProject(
   if (!existsSync(p.config)) {
     let body = defaultConfigYaml()
     if (vaultPath) {
-      // serialize via the YAML library so a path with quotes/backslashes/newlines is safe (H1)
-      body = body.replace("vault_path: ''", `vault_path: ${yamlStringify(vaultPath).trim()}`)
+      body = body.replace("vault_path: ''", `vault_path: ${JSON.stringify(vaultPath)}`)
     }
     if (preset !== 'fake') {
       body = body

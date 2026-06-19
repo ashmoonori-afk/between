@@ -6,7 +6,7 @@ interface TelegramUpdate {
   message?: { chat: { id: number }; text?: string; from?: { username?: string } }
 }
 
-/** Telegram caps message text at 4096 chars; ignore anything longer as malformed input (review). */
+/** Telegram caps message text at 4096 chars; ignore anything longer as malformed input. */
 const MAX_TEXT_LEN = 4096
 
 /**
@@ -36,6 +36,9 @@ export class TelegramTransport implements ChatTransport {
   private offset = 0
   private running = false
   private handler: InboundHandler | null = null
+  private pollTask: Promise<void> | null = null
+  private pollAbort: AbortController | null = null
+  private backoffWake: (() => void) | null = null
 
   constructor(private readonly token: string) {}
 
@@ -46,26 +49,44 @@ export class TelegramTransport implements ChatTransport {
   async start(onMessage: InboundHandler): Promise<void> {
     this.handler = onMessage
     this.running = true
-    void this.poll()
+    this.pollTask = this.poll()
   }
 
   private async poll(): Promise<void> {
     while (this.running) {
+      const abort = new AbortController()
+      this.pollAbort = abort
       try {
         // 35s client timeout > the 30s server long-poll, so a stalled socket can't hang forever.
         const res = await fetchWithTimeout(
           `${this.api('getUpdates')}?timeout=30&offset=${this.offset}`,
-          {},
+          { signal: abort.signal },
           35000,
         )
         const { messages, nextOffset } = parseTelegramUpdates(await res.json())
         for (const m of messages) await this.handler?.(m)
-        // advance the offset only AFTER processing — a handler error re-delivers, never drops (review).
         if (nextOffset !== null) this.offset = nextOffset
       } catch {
-        await new Promise((r) => setTimeout(r, 2000)) // back off on transient errors
+        if (!this.running) break
+        await this.backoff(2000)
+      } finally {
+        if (this.pollAbort === abort) this.pollAbort = null
       }
     }
+  }
+
+  private async backoff(ms: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(() => {
+        this.backoffWake = null
+        resolve()
+      }, ms)
+      this.backoffWake = () => {
+        clearTimeout(timer)
+        this.backoffWake = null
+        resolve()
+      }
+    })
   }
 
   async send(chatId: string, text: string): Promise<void> {
@@ -83,5 +104,10 @@ export class TelegramTransport implements ChatTransport {
   async stop(): Promise<void> {
     this.running = false
     this.handler = null
+    this.pollAbort?.abort(new DOMException('telegram transport stopped', 'AbortError'))
+    this.backoffWake?.()
+    const pollTask = this.pollTask
+    this.pollTask = null
+    if (pollTask) await pollTask
   }
 }

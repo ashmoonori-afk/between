@@ -2,7 +2,7 @@ import type { ApprovalScope } from './types'
 
 /**
  * Single source of truth for the small enumerations that were previously duplicated across
- * cli.ts / gateway / onboard / adapters (review: DRY). Types live in core; values here.
+ * cli.ts / gateway / onboard / adapters. Types live in core; values here.
  */
 
 export const APPROVAL_SCOPES: ApprovalScope[] = ['merge', 'deploy', 'promote_rule']

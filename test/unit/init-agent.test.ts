@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, readFile } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -43,5 +43,18 @@ describe('init --agent presets (Task 1)', () => {
     expect(cfg.agent_mode).toBe('oneshot')
     expect(cfg.reviewer_command).toBe('node .between/agents/codex-agent.mjs reviewer')
     expect(existsSync(join(dir, '.between', 'agents', 'codex-agent.mjs'))).toBe(true)
+  })
+
+  it('writes a quoted vault path when the absolute Windows path contains spaces', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'between-init-vault-'))
+    const vault = join(dir, 'vault with spaces')
+    await mkdir(vault)
+
+    await initProject(dir, { vaultPath: vault }, new FakeClock(0))
+    const body = await readFile(join(dir, '.between', 'config.yaml'), 'utf8')
+    const cfg = parseConfig(parseYaml(body))
+
+    expect(cfg.vault_path).toBe(vault)
+    expect(body).toContain(`vault_path: ${JSON.stringify(vault)}`)
   })
 })

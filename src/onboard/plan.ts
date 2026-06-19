@@ -92,7 +92,7 @@ export function planOnboarding(answers: OnboardAnswers): OnboardPlan {
  * comment and indentation. Appends `key: value` if the key is absent. Pure + unit-tested.
  */
 export function setYamlScalar(text: string, key: string, value: string): string {
-  const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') // escape regex metachars (review)
+  const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const re = new RegExp(`^(\\s*${safeKey}:\\s*)(.*?)(\\s*#.*)?$`, 'm')
   if (re.test(text)) {
     return text.replace(re, (_m, prefix: string, _old: string, comment = '') => {

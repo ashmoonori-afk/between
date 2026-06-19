@@ -3,6 +3,9 @@ import { fetchWithTimeout } from './http'
 
 /** Discord Gateway intents: GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT. */
 const INTENTS = (1 << 0) | (1 << 9) | (1 << 15)
+export interface DiscordTransportOptions {
+  readonly reconnectDelayMs?: number
+}
 
 /**
  * Pure: turn a Discord MESSAGE_CREATE dispatch payload (`d`) into a chat message, ignoring
@@ -29,25 +32,54 @@ export class DiscordTransport implements ChatTransport {
   readonly kind = 'discord'
   private ws: WebSocket | null = null
   private heartbeat: ReturnType<typeof setInterval> | null = null
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null
   private seq: number | null = null
   private handler: InboundHandler | null = null
+  private stopped = true
+  private readonly reconnectDelayMs: number
 
-  constructor(private readonly token: string) {}
+  constructor(
+    private readonly token: string,
+    opts: DiscordTransportOptions = {},
+  ) {
+    this.reconnectDelayMs = opts.reconnectDelayMs ?? 1000
+  }
 
   async start(onMessage: InboundHandler): Promise<void> {
     this.handler = onMessage
+    this.stopped = false
+    this.connect()
+  }
+
+  private connect(): void {
     const ws = new WebSocket('wss://gateway.discord.gg/?v=10&encoding=json')
     this.ws = ws
-    ws.addEventListener('message', (ev: MessageEvent) => this.onFrame(String(ev.data)))
-    ws.addEventListener('close', () => this.clearHeartbeat())
-    // without an 'error' listener an auth/network failure is silently swallowed and the
-    // heartbeat would leak — clear it and let close() fire (review).
-    ws.addEventListener('error', () => this.clearHeartbeat())
+    ws.addEventListener('message', (ev: MessageEvent) => {
+      if (this.ws === ws) this.onFrame(String(ev.data))
+    })
+    ws.addEventListener('close', () => {
+      if (this.ws !== ws) return
+      this.clearHeartbeat()
+      this.scheduleReconnect(ws)
+    })
+    ws.addEventListener('error', () => {
+      if (this.ws === ws) this.scheduleReconnect(ws)
+    })
   }
 
   private clearHeartbeat(): void {
     if (this.heartbeat) clearInterval(this.heartbeat)
     this.heartbeat = null
+  }
+
+  private scheduleReconnect(socket: WebSocket): void {
+    if (this.stopped || this.reconnectTimer) return
+    this.clearHeartbeat()
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null
+      if (!this.stopped && this.handler) this.connect()
+    }, this.reconnectDelayMs)
+    socket.close()
   }
 
   private onFrame(data: string): void {
@@ -59,7 +91,6 @@ export class DiscordTransport implements ChatTransport {
     }
     if (typeof payload.s === 'number') this.seq = payload.s
     if (payload.op === 10) {
-      // HELLO — validate the interval (external data) before scheduling the heartbeat (review).
       const d = payload.d as { heartbeat_interval?: unknown } | null
       const interval = d?.heartbeat_interval
       if (typeof interval !== 'number' || interval <= 0) return
@@ -77,9 +108,7 @@ export class DiscordTransport implements ChatTransport {
         }),
       )
     } else if (payload.op === 7 || payload.op === 9) {
-      // RECONNECT / INVALID_SESSION — stop heartbeating and close so cleanup runs (review).
-      this.clearHeartbeat()
-      this.ws?.close()
+      if (this.ws) this.scheduleReconnect(this.ws)
     } else if (payload.op === 0 && payload.t === 'MESSAGE_CREATE') {
       const msg = parseDiscordMessage(payload.d)
       if (msg) void this.handler?.(msg)
@@ -99,8 +128,13 @@ export class DiscordTransport implements ChatTransport {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true
     this.clearHeartbeat()
-    this.ws?.close()
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    const ws = this.ws
+    this.ws = null
+    ws?.close()
     this.handler = null
   }
 }

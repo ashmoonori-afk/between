@@ -6,7 +6,7 @@ export const MIN_DASH_INTERVAL_MS = 250
 /**
  * Validate `--interval <ms>` at the CLI boundary as an integer >= MIN_DASH_INTERVAL_MS.
  * `Number('0')`/`Number('abc')` would otherwise collapse `setInterval` to a 1ms loop
- * that hammers `.between/state.json` and `events.jsonl` (review P2).
+ * that hammers `.between/state.json` and `events.jsonl`.
  */
 export function parseInterval(value: string): number {
   const n = Number(value)

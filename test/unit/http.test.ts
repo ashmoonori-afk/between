@@ -24,4 +24,22 @@ describe('fetchWithTimeout', () => {
     )
     await expect(fetchWithTimeout('https://example.test', {}, 10)).rejects.toThrow(/abort/i)
   })
+
+  it('propagates a caller abort before the timeout fires', async () => {
+    const caller = new AbortController()
+    vi.spyOn(globalThis, 'fetch').mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          const signal = (init as RequestInit)?.signal
+          signal?.addEventListener('abort', () => {
+            reject(signal.reason)
+          })
+        }),
+    )
+
+    const request = fetchWithTimeout('https://example.test', { signal: caller.signal }, 25)
+    caller.abort(new DOMException('caller abort', 'AbortError'))
+
+    await expect(request).rejects.toThrow(/caller abort/)
+  })
 })
