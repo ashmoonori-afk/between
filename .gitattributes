@@ -1,0 +1,5 @@
+# Normalize line endings: the repo stores LF; Between's own diff-hasher pins
+# core.autocrlf=false for the repos it watches, so keep this tree consistent too.
+* text=auto eol=lf
+*.png binary
+*.gz binary

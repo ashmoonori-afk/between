@@ -228,6 +228,20 @@ program
     }
   })
 
+program
+  .command('dash')
+  .description('Live broker dashboard (cmux/Kiro-inspired TUI)')
+  .option('--once', 'render a single frame and exit (non-interactive)')
+  .option('--interval <ms>', 'refresh interval in milliseconds', (v) => Number(v))
+  .action(async (opts: { once?: boolean; interval?: number }) => {
+    try {
+      const { runDashboard } = await import('./ui/dash')
+      await runDashboard(root(), { once: opts.once, intervalMs: opts.interval })
+    } catch (e) {
+      await fail(e)
+    }
+  })
+
 program.parseAsync(process.argv).catch(() => {
   // errors already reported via fail(); ensure non-zero exit
   if (!process.exitCode) process.exitCode = 1
