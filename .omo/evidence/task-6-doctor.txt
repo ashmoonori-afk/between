@@ -1,4 +1,0 @@
-﻿  ✓ git: git version 2.52.0.windows.1
-  ✓ inside a git work tree
-  ✗ between initialized (run `between init`)
-  ⚠ node-pty unavailable (headless file-signal mode only)

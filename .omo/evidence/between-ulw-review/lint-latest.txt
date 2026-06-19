@@ -1,7 +1,0 @@
-﻿
-> between@0.1.0 lint
-> prettier --check "src/**/*.{ts,tsx}" "test/**/*.{ts,tsx}"
-
-Checking formatting...
-[warn] src/daemon/loop.ts
-[warn] Code style issues found in the above file. Run Prettier with --write to fix.

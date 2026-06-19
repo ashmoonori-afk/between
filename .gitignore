@@ -8,3 +8,7 @@ tmp/
 test/.sandbox/
 # .between/ is created by `between init` inside TARGET repos, never committed here
 .between/
+
+# external review agent scratch (omo)
+.omo/
+review.md
