@@ -23,6 +23,8 @@ jobs:
       - run: npm ci
       - name: Typecheck
         run: npm run typecheck
+      - name: Lint (prettier check)
+        run: npm run lint
       - name: Test (with coverage on src/core)
         run: npm run test:cov
       - name: Build
@@ -42,6 +44,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - name: Try to install node-pty
         run: npm install node-pty --no-save

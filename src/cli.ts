@@ -11,6 +11,7 @@ import { buildSignal } from './adapters/signal-transport'
 import type { Ack, ApprovalScope } from './core/types'
 import { loadConfig, runStart } from './runtime'
 import { print, printErr, printJson } from './cli/output'
+import { parseInterval } from './cli/args'
 
 const VERSION = '0.1.0'
 const APPROVAL_SCOPES: ApprovalScope[] = ['merge', 'deploy', 'promote_rule']
@@ -260,7 +261,7 @@ program
   .command('dash')
   .description('Live broker dashboard (cmux/Kiro-inspired TUI)')
   .option('--once', 'render a single frame and exit (non-interactive)')
-  .option('--interval <ms>', 'refresh interval in milliseconds', (v) => Number(v))
+  .option('--interval <ms>', 'refresh interval in milliseconds (integer >= 250)', parseInterval)
   .action(async (opts: { once?: boolean; interval?: number }) => {
     try {
       const { runDashboard } = await import('./ui/dash')

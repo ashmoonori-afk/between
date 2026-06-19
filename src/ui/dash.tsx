@@ -65,6 +65,13 @@ export async function runDashboard(root: string, opts: DashOptions = {}): Promis
     app.unmount()
     return
   }
-  const app = render(<DashApp root={root} intervalMs={opts.intervalMs ?? 1000} />)
+  // defense-in-depth: never let a bad interval collapse setInterval to a tight loop (P2)
+  const intervalMs =
+    typeof opts.intervalMs === 'number' &&
+    Number.isInteger(opts.intervalMs) &&
+    opts.intervalMs >= 250
+      ? opts.intervalMs
+      : 1000
+  const app = render(<DashApp root={root} intervalMs={intervalMs} />)
   await app.waitUntilExit()
 }

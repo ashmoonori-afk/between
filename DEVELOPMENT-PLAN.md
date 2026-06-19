@@ -25,7 +25,7 @@ Architecture is **hexagonal**: a pure, deterministic `core` (FSM, diff-hash, deb
 
 | Concern | Library | Rationale |
 |---|---|---|
-| Runtime / language | **Node.js 20 LTS + TypeScript 5.x (strict)** | Single distributable surface, native to the `claude`/`codex` CLI ecosystem, npm-installable. `strict` enforces the project's fail-fast boundary rules. |
+| Runtime / language | **Node.js ≥ 22.12 LTS + TypeScript (strict)** | Single distributable surface, native to the `claude`/`codex` CLI ecosystem, npm-installable. `strict` enforces the project's fail-fast boundary rules. _(Originally Node 20 LTS; raised to 22.12 because `ink@7`/`commander@15` require Node ≥ 22 and Node 20 is EOL.)_ |
 | CLI framework | **commander** | Mature, declarative subcommand/flag parsing for the §14 verbs (`init`/`start`/`status`/`pause`/`resume`/`review-now`/`summarize`) plus added `stop`/`doctor`/`approve` (`I26`, `I9`). |
 | Config validation | **zod** | One typed schema for `config.yaml`; fail-fast at the system boundary; single source of defaults (`I10`). |
 | YAML | **yaml** (eemeli/yaml) | Round-trips comments so `between init` can write a *documented* `config.yaml`. |

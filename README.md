@@ -16,7 +16,9 @@ Use `BETWEEN-BROKER-BLUEPRINT.md` as the original product concept and baseline. 
 
 ## Chosen stack
 
-Node.js 20 LTS + TypeScript 5.x (strict). Key libs: `commander`, `zod`, `execa`, `node-pty`, `Ink`, `chokidar`, `write-file-atomic`, `proper-lockfile`, `vitest`. Windows 10 1809+ floor (ConPTY); cross-platform PTY path, no WSL/tmux dependency.
+Node.js **>= 22.12 LTS** + TypeScript (strict). Key libs: `commander`, `zod`, `execa`, `node-pty` (optional), `Ink`, `chokidar`, `write-file-atomic`, `proper-lockfile`, `vitest`. Windows 10 1809+ floor (ConPTY); cross-platform PTY path, no WSL/tmux dependency.
+
+> The plan originally targeted Node 20 LTS, but `ink@7` and `commander@15` require Node ≥ 22, and Node 20 reached end-of-life; the floor is therefore Node 22.12 LTS (the strictest locked dependency).
 
 ## The one finding that reshapes everything
 
