@@ -1,14 +1,32 @@
+# dependencies
 node_modules/
+
+# build and coverage output
 dist/
 coverage/
+*.tsbuildinfo
+*.tgz
+
+# logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# environment and local machine state
+.env
+.env.*
+!.env.example
 .DS_Store
+Thumbs.db
 .tmp/
 tmp/
 test/.sandbox/
-# .between/ is created by `between init` inside TARGET repos, never committed here
+
+# Between runtime state: created by `between init` inside target repos
 .between/
 
-# external review agent scratch (omo)
+# external review / automation scratch
 .omo/
 review.md
