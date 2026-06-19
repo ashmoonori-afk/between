@@ -127,8 +127,13 @@ core + `FileTransport` are built with **zero native deps** and are fully runnabl
 
 | ID | Task | Status |
 |---|---|---|
-| Q1 | `tsc --noEmit` clean | ✅ |
-| Q2 | vitest unit suite green | ✅ (50) |
-| Q3 | ≥80% coverage on `src/core` | ⬜ verify |
-| Q4 | code-review + security-review pass (spaghetti, consistency, security, progress) | ⬜ |
-| Q5 | Runnable proof: `between init` + `between start --headless` drives a real tmp git repo | ⬜ |
+| Q1 | `tsc --noEmit` clean + `prettier --check` clean | ✅ |
+| Q2 | vitest suite green | ✅ (59) |
+| Q3 | ≥80% coverage on `src/core` | ✅ (95.8% lines / 91% branch) |
+| Q4 | code-review + security-review pass (spaghetti, consistency, security, progress) | ✅ addressed |
+| Q5 | Runnable proof: CLI drives a real tmp git repo end-to-end + dashboard renders | ✅ |
+
+### Review hardening applied (parallel code + security reviewers, + external omo wave)
+
+Fixed: events-log error surfacing (no silent swallow); **command-bus zod validation + drain cap** (a hand-written `approve` file can no longer bypass the human gate, C1) + flood guard; **ack-store zod validation + atomic write**; **vault path YAML-safe serialization + existence check** (I25/H1); `recordReviewedHash` moved to cycle-commit (verify_passed, I4/HIGH-3); review TOCTOU hash guard (I14/HIGH-2); `openCycleAndSignal` single-projection persist (I12/HIGH-1); snapshot prune keeps file on stat-failure; `isBetweenState` validates `reviewed_hashes`/counters; `git hash-object` chunked (HIGH-9); redact patterns expanded (connection-string/`*_KEY`/Stripe/SendGrid/Google) + replace-all; lock `realpath:true` + owner sanitization; **engine floor `>=22.12.0`** (ink@7/commander@15 require it; Node 20 is EOL); status shows max-cycles; CLI parse errors surfaced.
+Deferred (documented): events.jsonl rotation (M1), full BetweenState zod schema (H3), `npm audit fix` esbuild dev-only advisory (L4), real `node-pty` transport (build-tools host).
