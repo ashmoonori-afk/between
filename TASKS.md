@@ -5,8 +5,10 @@ Granular, living task breakdown derived from `DEVELOPMENT-PLAN.md` (milestones M
 
 **Legend:** ✅ done · 🟡 in progress · ⬜ todo · ⛔ blocked (env)
 
-**Progress snapshot:** pure deterministic core (M1 config, M2 hash, M3 FSM/debounce/cycle/findings/redact)
-is implemented and green (typecheck clean, 50 unit tests passing). Adapters, daemon loop, CLI, UI pending.
+**Progress snapshot (updated):** the headless review loop is IMPLEMENTED, TESTED, and RUNNABLE.
+- **Done:** M0 skeleton+ports, **M1** (config, atomic state, events log, lock, command-bus, migration), **M2** (deterministic hash, pinned git adapter, abnormal-state detection, untracked handling), **M3** (FSM, debounce, cycle, projection, redact, FileTransport+ack, daemon loop, reconcile, full CLI, integration tests), **M5 UI** (cmux/Kiro Ink dashboard + `dash`), snapshot store w/ retention (M4 T4.4), `.gitignore` guard (T4.3), `approve` gate (M7 T7.2), basic `summarize`.
+- **Green:** `tsc --noEmit` clean · **54 tests passing** (52 logic + 2 UI render) · CLI-proven end-to-end (`init→goal→edit→review→ack→human_gate→approve→done`) · dashboard renders both states.
+- **Deferred / blocked:** M0 PTY spike + real `node-pty` transport (⛔ no MSVC compiler on this host — headless path is fully functional without it); chokidar push-watcher (poll loop works); Obsidian vault file scaffolding (T4.1–T4.2); full TOCTOU guard (T6.4); detective merge/deploy gate (T7.3); rule proposal (T7.4); CI yaml; coverage gate verification.
 
 **Environment note:** no MSVC compiler on this host → `node-pty` (native) cannot build here. The headless
 core + `FileTransport` are built with **zero native deps** and are fully runnable now; `node-pty` is an
