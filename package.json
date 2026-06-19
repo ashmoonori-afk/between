@@ -1,0 +1,28 @@
+{
+  "name": "between",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local terminal broker for AI pair development — observe a developer (Claude) and reviewer (Codex) terminal and coordinate a diff-driven review loop.",
+  "type": "module",
+  "bin": {
+    "between": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsx src/cli.ts",
+    "between": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:cov": "vitest run --coverage",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "license": "MIT"
+}
