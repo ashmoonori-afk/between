@@ -58,7 +58,7 @@ between/
 ├─ .github/
 │  └─ workflows/ci.yml          # matrix: {windows-latest, ubuntu-latest}; tsc/lint/test/coverage; node-pty build check
 ├─ docs/
-│  └─ adr/                       # ADRs; ADR-0001 = transport decision (M0)
+│  ├─ adr/                       # ADRs; ADR-0001 = transport decision (M0)
 │  └─ agent-contract.md          # required agent file-write protocol (M0/M3)
 ├─ src/
 │  ├─ cli.ts                     # commander entrypoint; wires verbs
@@ -224,15 +224,17 @@ Each milestone is shippable-internal: it ends green on CI and its acceptance cri
 1. [ ] Spike: spawn `claude` and `codex` via `node-pty`, write a line, observe it consumed by the agent.
 2. [ ] Investigate whether the CLIs support a one-shot / file-fed / stdin mode (Decision 2); record the chosen signal-delivery model.
 3. [ ] Write **ADR-0001**: broker-owned PTY vs one-shot invocation; commit it.
-4. [ ] Scaffold hexagonal project (`src/core|adapters|cli|daemon|ui`), `tsconfig` strict, `tsup` bundle with `between` bin.
-5. [ ] Add eslint + prettier + vitest; define the `SignalTransport` and `Clock` interfaces (injected everywhere; no wall-clock in core).
-6. [ ] Add `ci.yml` matrix (`windows-latest`+`ubuntu-latest`): `tsc --noEmit`, lint, vitest, and a `node-pty` build check with a documented fallback.
+4. [ ] Draft `docs/agent-contract.md`: bootstrap prompt shape, required ack/review/verify file writes, JSON schemas, timeout behavior, idempotency rules, and what the broker does when an agent does not comply.
+5. [ ] Scaffold hexagonal project (`src/core|adapters|cli|daemon|ui`), `tsconfig` strict, `tsup` bundle with `between` bin.
+6. [ ] Add eslint + prettier + vitest; define the `SignalTransport` and `Clock` interfaces (injected everywhere; no wall-clock in core).
+7. [ ] Add `ci.yml` matrix (`windows-latest`+`ubuntu-latest`): `tsc --noEmit`, lint, vitest, and a `node-pty` build check with a documented fallback.
 
 **Dependencies:** none.
 
 **Acceptance criteria:**
 - A spike script writes a line into a running `claude` PTY and the agent acts on it (or a one-shot mode is empirically proven instead) (`I1`).
 - ADR-0001 committed and decides the transport model.
+- `docs/agent-contract.md` exists and states the required `.between/acks/`, `.between/reviews/`, and `.between/verify/` write protocol before the headless loop is built.
 - CI matrix is green on the empty skeleton (typecheck + lint + one trivial test) on **both** Windows and Linux, and the `node-pty` build check passes or records its fallback.
 
 ---
@@ -293,7 +295,9 @@ Each milestone is shippable-internal: it ends green on CI and its acceptance cri
 5. [ ] Derive `waiting_on` + agent statuses from `phase` (single source of truth) with reconcile-on-load + a fail-fast invariant assertion (`I12`).
 6. [ ] **Apply `redact.ts` secret-scrub before the first snapshot write** (denylist + entropy/token redaction; record that a file was redacted) (`I17`, moved earlier).
 7. [ ] Define `SignalTransport`; implement `FileTransport` (writes one-line pointer to `.between/signals/` + full payload file); **implement the ack loop now**: gate the `reviewing` phase on `.between/acks/<signal_id>.json` appearing, not on the send; embed `(cycle, diff_hash)` idempotency key so re-sends are receiver no-ops (`I7`, pulled forward from M6).
-8. [ ] Implement CLI verbs: `between init` (idempotent), `between status` (+ `--json`), `between start --headless`, `between stop`, `between doctor` (git/repo/vault checks only; PTY probe deferred to M5) (`I19`, `I26`).
+8. [ ] Implement fake developer/reviewer agents under `test/fake-agents/` that consume signal payloads and write the required ack, review, and verify records from `docs/agent-contract.md`.
+9. [ ] Add negative contract tests: missing ack, malformed review JSON, stale `diff_hash`, and missing verify record must timeout or route to `human_gate`/`error` exactly as specified.
+10. [ ] Implement CLI verbs: `between init` (idempotent), `between status` (+ `--json`), `between start --headless`, `between stop`, `between doctor` (git/repo/vault checks only; PTY probe deferred to M5) (`I19`, `I26`).
 
 **Dependencies:** M2.
 
@@ -301,6 +305,7 @@ Each milestone is shippable-internal: it ends green on CI and its acceptance cri
 - FSM unit tests cover every edge incl. debounce-revert→`developing` (no cycle), pause→`paused`→resume→`previous_phase`, `max_cycles`→`human_gate` (`I6`).
 - Same diff hash does not trigger repeated reviews; diff reviewed only after the debounce window (§15.5, §15.6, `I4`).
 - The `reviewing` phase is entered only after an ack file appears; a lost signal does not silently advance the loop (`I7`).
+- Fake agents can drive one complete headless cycle by writing schema-valid ack, review, and verify files; malformed or stale contract files are rejected deterministically.
 - `events.jsonl` records every phase transition; `status --json` reflects phase/cycle/hash/waiting actor (§15.8, §15.3).
 - `between init` creates all state files idempotently and is re-run-safe (§15.1); **`between start --headless` runs the loop, `between stop` cleanly terminates the daemon, and resume restores `previous_phase`** — all asserted by integration tests (critique: "start/stop/resume unaccepted").
 - A crash mid-debounce recovers deterministically on reload (`I11`); a snapshot containing a `.env`/key file is redacted, never written verbatim (`I17`).
@@ -348,7 +353,7 @@ Each milestone is shippable-internal: it ends green on CI and its acceptance cri
 
 ### M6 — Close the review loop: structured records + developer signal · Effort: **L**
 
-**Goal:** Make the review feed machine-detectable and the loop advance correctly under concurrency (§6 `review_written`, §15.7, `I8`, `I13`, `I14`). (Ack protocol already built in M3.)
+**Goal:** Make the review feed machine-detectable and the loop advance correctly under concurrency (§6 `review_written`, §15.7, `I8`, `I13`, `I14`). (Ack protocol and agent contract already built in M3.)
 
 **Tasks (ordered):**
 1. [ ] Structured review record `.between/reviews/cycle-NNNN.json` `{cycle, diff_hash, findings:[{id,severity:'blocking'|'non-blocking',summary,target_hash}], complete:true}`; treat `02-review-feed.md` as the human-readable mirror (`I8`, `I13`).
@@ -357,7 +362,7 @@ Each milestone is shippable-internal: it ends green on CI and its acceptance cri
 4. [ ] TOCTOU guard (`I14`): the reviewer reviews the immutable `.between/snapshots/cycle-NNNN.diff` (already in state), not live `git diff`; re-verify the live hash immediately before send (abort + re-debounce on mismatch); the `diff_detected`→new-cycle transition cancels the outstanding reviewer signal for the superseded hash; tag every review with `target_hash` and discard reviews whose `target_hash != current reviewed hash`; surface `reviewed_hash` vs `current_hash` drift on the dashboard.
 5. [ ] Persist per-signal lifecycle `{target,cycle,diff_hash,sent_at,acked_at,completed_at}` for restart reconciliation (`I7`).
 
-**Dependencies:** M5.
+**Dependencies:** M4 + M5.
 
 **Acceptance criteria:**
 - A structured review record for the current cycle+hash triggers a developer signal; unrelated/stale human edits to `02-review-feed.md` do NOT (§15.7, `I8`).

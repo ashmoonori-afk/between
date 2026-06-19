@@ -24,5 +24,26 @@
     "lint": "eslint .",
     "format": "prettier --write ."
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "commander": "^15.0.0",
+    "execa": "^9.6.1",
+    "pino": "^10.3.1",
+    "proper-lockfile": "^4.1.2",
+    "write-file-atomic": "^7.0.1",
+    "yaml": "^2.9.0",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@sinonjs/fake-timers": "^15.4.0",
+    "@types/node": "^25.9.3",
+    "@types/proper-lockfile": "^4.1.4",
+    "@vitest/coverage-v8": "^4.1.9",
+    "prettier": "^3.8.4",
+    "tsup": "^8.5.1",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
 }
