@@ -18,9 +18,9 @@
     "dev": "tsx src/cli.ts",
     "between": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --no-file-parallelism",
+    "test": "vitest run --no-file-parallelism --reporter=verbose",
     "test:watch": "vitest",
-    "test:cov": "vitest run --coverage --no-file-parallelism",
+    "test:cov": "vitest run --coverage --no-file-parallelism --reporter=verbose",
     "lint": "prettier --check \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\"",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"test/**/*.{ts,tsx}\""
   },
