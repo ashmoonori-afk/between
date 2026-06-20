@@ -285,7 +285,10 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   .between/verify-report.json), review-hardened (per-check throw isolation, no vacuous pass).
   Remaining: `dependency_audit` gate (`npm audit`) + fold the verify report into the evidence
   manifest. ✅ **B4** evidence manifest/exporters.
-- ⬜ **B5** EventStore · **B6** cockpit TUI · **B7** VS Code MVP.
+- 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
+  EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop. Remaining:
+  pin the chain head in state.json to also detect tail-truncation (SQLite option deferred).
+- ⬜ **B6** cockpit TUI · **B7** VS Code MVP.
   (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
