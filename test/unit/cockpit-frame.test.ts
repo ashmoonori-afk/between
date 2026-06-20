@@ -92,7 +92,15 @@ describe('renderCockpit (B6)', () => {
         findings: [],
         replayCycles: [
           { cycle: 3, phase: 'review_requested', diffHash: 'h0' },
-          { cycle: 3, phase: 'human_gate', diffHash: 'h1' },
+          {
+            cycle: 3,
+            phase: 'human_gate',
+            diffHash: 'h1',
+            changedFiles: 2,
+            insertions: 10,
+            deletions: 1,
+            bundleId: 'b'.repeat(64),
+          },
         ],
       }),
       3,
@@ -103,6 +111,7 @@ describe('renderCockpit (B6)', () => {
     const frame = renderCockpitModel(selected.model)
 
     expect(frame).toMatch(/focus: cycle 3 human_gate h1/)
+    expect(frame).toMatch(/diff: 2 files \+10 -1 bundle bbbbbbbb/)
     expect(frame).toMatch(/  cycle 3: review_requested h0/)
     expect(frame).toMatch(/\* cycle 3: human_gate h1/)
     expect(frame).toMatch(/^[\x00-\x7F]*$/)

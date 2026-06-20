@@ -13,6 +13,10 @@ export interface ReplayCycleSnapshot {
   cycle: number
   phase: string
   diffHash: string | null
+  changedFiles?: number
+  insertions?: number
+  deletions?: number
+  bundleId?: string | null
 }
 
 export interface CockpitFindingModel {

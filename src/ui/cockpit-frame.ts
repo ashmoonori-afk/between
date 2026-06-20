@@ -84,6 +84,11 @@ export function renderCockpitModel(model: CockpitModel): string {
     out.push(
       `  focus: cycle ${selected.cycle} ${ascii(selected.phase)} ${selected.diffHash ? selected.diffHash.slice(0, 8) : '-'}`,
     )
+    if (selected.changedFiles !== undefined) {
+      out.push(
+        `  diff: ${selected.changedFiles} files +${selected.insertions ?? 0} -${selected.deletions ?? 0} bundle ${selected.bundleId ? selected.bundleId.slice(0, 8) : '-'}`,
+      )
+    }
   }
   if (model.replayCycles.length === 0) {
     out.push('  no replay snapshots')

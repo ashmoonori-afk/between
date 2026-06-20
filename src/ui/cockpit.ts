@@ -94,6 +94,10 @@ export async function collectCockpitModel(
               cycle: entry.replay_state.workflow.cycle,
               phase: entry.replay_state.workflow.phase,
               diffHash: entry.replay_state.diff.hash,
+              changedFiles: entry.replay_state.diff.changed_files,
+              insertions: entry.replay_state.diff.insertions,
+              deletions: entry.replay_state.diff.deletions,
+              bundleId: entry.replay_state.diff.bundle_id,
             },
           ]
         : [],
