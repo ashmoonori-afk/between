@@ -137,11 +137,11 @@ describe('renderCockpit (B6)', () => {
           ],
           replayCycles: [],
         }),
-        { file: 'missing.ts', severity: 'non-blocking' },
+        { file: 'missing.ts', severity: 'non-blocking', agent: 'security' },
       ),
     )
 
-    expect(frame).toMatch(/filters: file=missing\.ts severity=non-blocking/)
+    expect(frame).toMatch(/filters: file=missing\.ts severity=non-blocking agent=security/)
     expect(frame).toMatch(/none \(filtered\)/)
     expect(frame).toMatch(/^[\x00-\x7F]*$/)
   })

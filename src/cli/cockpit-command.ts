@@ -18,6 +18,7 @@ export function registerCockpitCommand(program: Command): void {
     .option('--replay-cycle <cycle>', 'focus replay history on a specific cycle number')
     .option('--file <path>', 'filter linked findings by file path')
     .option('--severity <severity>', 'filter findings by severity: blocking | non-blocking')
+    .option('--agent <agent>', 'filter findings by agent attribution')
     .option('--rerun-checks', 'run configured verification checks before rendering the cockpit')
     .action(
       async (opts: {
@@ -27,6 +28,7 @@ export function registerCockpitCommand(program: Command): void {
         replayCycle?: string
         file?: string
         severity?: string
+        agent?: string
         rerunChecks?: boolean
       }) => {
         try {
@@ -38,7 +40,7 @@ export function registerCockpitCommand(program: Command): void {
             process.exitCode = 1
             return
           }
-          const filters = parseFilters(opts.file, opts.severity)
+          const filters = parseFilters(opts.file, opts.severity, opts.agent)
           if (!filters.ok) {
             printErr('between: --severity must be blocking or non-blocking')
             process.exitCode = 1
@@ -77,7 +79,7 @@ export function registerCockpitCommand(program: Command): void {
             await submitFindingAction(action, opts.finding, opts.reason, model)
             return
           }
-          if (filters.value.file || filters.value.severity) {
+          if (filters.value.file || filters.value.severity || filters.value.agent) {
             const { filterCockpitModel } = await import('../ui/cockpit-model')
             model = filterCockpitModel(model, filters.value)
           }
@@ -96,9 +98,11 @@ export function registerCockpitCommand(program: Command): void {
 function parseFilters(
   file: string | undefined,
   severity: string | undefined,
+  agent: string | undefined,
 ): { ok: true; value: CockpitFilters } | { ok: false } {
   const out: CockpitFilters = {}
   if (file) out.file = file
+  if (agent) out.agent = agent
   if (severity) {
     if (severity !== 'blocking' && severity !== 'non-blocking') return { ok: false }
     out.severity = severity as FindingSeverity

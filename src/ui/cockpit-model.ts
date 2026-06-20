@@ -22,6 +22,7 @@ export interface ReplayCycleSnapshot {
 export interface CockpitFindingModel {
   finding: Finding
   location: { file: string; line: number } | null
+  agent: string
   stale: boolean
   linked: boolean
   hunkIndex: number | null
@@ -30,6 +31,7 @@ export interface CockpitFindingModel {
 export interface CockpitFilters {
   file?: string
   severity?: FindingSeverity
+  agent?: string
 }
 
 export interface CockpitModel {
@@ -102,8 +104,11 @@ export function filterCockpitModel(model: CockpitModel, filters: CockpitFilters)
   const activeFilters: CockpitFilters = {
     ...(filters.file ? { file: filters.file } : {}),
     ...(filters.severity ? { severity: filters.severity } : {}),
+    ...(filters.agent ? { agent: filters.agent } : {}),
   }
-  if (!activeFilters.file && !activeFilters.severity) return { ...model, filters: {} }
+  if (!activeFilters.file && !activeFilters.severity && !activeFilters.agent) {
+    return { ...model, filters: {} }
+  }
   return {
     ...model,
     filters: activeFilters,
@@ -183,6 +188,7 @@ export function parseDiffHunks(diff: string): DiffHunk[] {
 function matchesFindingFilters(item: CockpitFindingModel, filters: CockpitFilters): boolean {
   if (filters.severity && item.finding.severity !== filters.severity) return false
   if (filters.file && item.location?.file !== filters.file) return false
+  if (filters.agent && item.agent !== filters.agent) return false
   return true
 }
 
@@ -205,6 +211,7 @@ function linkFinding(
   return {
     finding,
     location,
+    agent: finding.agent ?? 'reviewer',
     stale,
     linked: hunkIndex >= 0,
     hunkIndex: hunkIndex >= 0 ? hunkIndex : null,

@@ -190,4 +190,30 @@ describe('buildCockpitModel', () => {
     expect(filtered.filters).toEqual({ file: 'app.ts', severity: 'blocking' })
     expect(model.findings.map((finding) => finding.finding.id)).toEqual(['F1', 'F2'])
   })
+
+  it('filters findings by agent, defaulting legacy findings to reviewer', () => {
+    const model = buildCockpitModel({
+      data,
+      diffHash: 'h1',
+      trackedDiff: diff,
+      findings: [
+        { id: 'F1', severity: 'blocking', summary: '[app.ts:2] legacy', target_hash: 'h1' },
+        {
+          id: 'F2',
+          severity: 'non-blocking',
+          summary: '[app.ts:3] security note',
+          target_hash: 'h1',
+          agent: 'security',
+        },
+      ],
+      replayCycles: [],
+    })
+
+    expect(filterCockpitModel(model, { agent: 'reviewer' }).findings.map((f) => f.agent)).toEqual([
+      'reviewer',
+    ])
+    expect(filterCockpitModel(model, { agent: 'security' }).findings.map((f) => f.agent)).toEqual([
+      'security',
+    ])
+  })
 })

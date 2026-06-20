@@ -13,6 +13,7 @@ export const FindingSchema = z.object({
   id: z.string().min(1),
   severity: z.enum(['blocking', 'non-blocking']),
   summary: z.string(),
+  agent: z.string().min(1).optional(),
   target_hash: z.string().min(1),
 })
 

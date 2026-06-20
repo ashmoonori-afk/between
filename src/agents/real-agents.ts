@@ -22,7 +22,7 @@ const CONTRACT_PROMPT = [
   'Compute id = role + "-" + String(cycle).padStart(4,"0") + "-" + diff_hash.slice(0,12).',
   'Write .between/acks/<id>.json = {signal_id:id, target:role, cycle, diff_hash, acked_at:ISO}.',
   'If role is reviewer: also write .between/reviews/cycle-<cycle4>.json =',
-  '  {cycle, diff_hash, findings:[{id,severity:"blocking"|"non-blocking",summary,target_hash:diff_hash}], complete:true}',
+  '  {cycle, diff_hash, findings:[{id,severity:"blocking"|"non-blocking",summary,agent:"reviewer",target_hash:diff_hash}], complete:true}',
   '  and .between/verify/cycle-<cycle4>.json = {diff_hash, passed:boolean, summary}.',
 ].join(' ')
 

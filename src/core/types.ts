@@ -234,6 +234,7 @@ export interface Finding {
   id: string
   severity: FindingSeverity
   summary: string
+  agent?: string
   /** the diff hash this finding was written against (I14) */
   target_hash: string
 }

@@ -82,7 +82,9 @@ export function renderCockpitModel(model: CockpitModel): string {
     for (const item of model.findings.slice(0, 8)) {
       const loc = item.location ? ascii(`${item.location.file}:${item.location.line}`) : '-'
       const state = item.stale ? 'stale' : item.linked ? 'linked' : 'unlinked'
-      out.push(`  ${item.finding.id} [${item.finding.severity}] ${state} ${loc}`)
+      out.push(
+        `  ${item.finding.id} [${item.finding.severity}] ${state} ${loc} agent ${ascii(item.agent)}`,
+      )
       out.push(`    ${ascii(oneLine(item.finding.summary))}`)
     }
   }
@@ -120,6 +122,7 @@ function renderFilters(model: CockpitModel): string {
   const out: string[] = []
   if (model.filters.file) out.push(`file=${ascii(model.filters.file)}`)
   if (model.filters.severity) out.push(`severity=${model.filters.severity}`)
+  if (model.filters.agent) out.push(`agent=${ascii(model.filters.agent)}`)
   return out.join(' ')
 }
 
