@@ -4,6 +4,8 @@
  * string out) and ASCII-only so it is unit-testable without a TTY and never mojibakes on Windows.
  * A thin Ink/print renderer (cli) just prints what this returns.
  */
+import type { CockpitModel } from './cockpit-model'
+
 export interface CockpitGate {
   name: string
   status: string
@@ -61,4 +63,40 @@ export function renderCockpit(d: CockpitData): string {
   out.push(`  journal:   ${d.journalValid ? 'VERIFIED' : 'BROKEN'} (${d.journalEntries} entries)`)
   out.push('-'.repeat(60))
   return out.join('\n') + '\n'
+}
+
+export function renderCockpitModel(model: CockpitModel): string {
+  const out = [renderCockpit(model.summary).trimEnd()]
+  out.push(bar('Linked findings'))
+  if (model.findings.length === 0) {
+    out.push('  none')
+  } else {
+    for (const item of model.findings.slice(0, 8)) {
+      const loc = item.location ? ascii(`${item.location.file}:${item.location.line}`) : '-'
+      const state = item.stale ? 'stale' : item.linked ? 'linked' : 'unlinked'
+      out.push(`  ${item.finding.id} [${item.finding.severity}] ${state} ${loc}`)
+      out.push(`    ${ascii(oneLine(item.finding.summary))}`)
+    }
+  }
+  out.push(bar('Replay'))
+  if (model.replayCycles.length === 0) {
+    out.push('  no replay snapshots')
+  } else {
+    for (const item of model.replayCycles.slice(-5)) {
+      const phase = ascii(item.phase)
+      out.push(`  cycle ${item.cycle}: ${phase} ${item.diffHash ? item.diffHash.slice(0, 8) : '-'}`)
+    }
+  }
+  out.push(bar('Actions'))
+  out.push('  between cockpit --action accept|dispute|waive --finding <id> [--reason "..."]')
+  out.push('-'.repeat(60))
+  return out.join('\n') + '\n'
+}
+
+function oneLine(value: string): string {
+  return value.replace(/\s+/g, ' ').slice(0, 140)
+}
+
+function ascii(value: string): string {
+  return value.replace(/[^\x00-\x7F]/g, '-')
 }

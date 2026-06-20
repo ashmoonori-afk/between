@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { buildCockpitModel, validateCockpitAction } from '../../src/ui/cockpit-model'
+import {
+  buildCockpitActionCommand,
+  buildCockpitModel,
+  validateCockpitAction,
+} from '../../src/ui/cockpit-model'
 import type { CockpitData } from '../../src/ui/cockpit-frame'
 import type { Finding } from '../../src/core/types'
 
@@ -96,9 +100,43 @@ describe('buildCockpitModel', () => {
       ok: true,
       intent: { kind: 'accept', findingId: 'F1' },
     })
+    expect(
+      buildCockpitActionCommand(model, { kind: 'waive', findingId: 'F1' }, 'accepted risk'),
+    ).toEqual({
+      ok: true,
+      command: {
+        kind: 'finding_action',
+        action: 'waive',
+        finding_id: 'F1',
+        cycle: 2,
+        diff_hash: 'h1',
+        reason: 'accepted risk',
+      },
+    })
     expect(validateCockpitAction(model, { kind: 'dispute', findingId: 'missing' })).toEqual({
       ok: false,
       reason: 'finding_not_found',
+    })
+  })
+
+  it('does not build an action command without a current diff hash', () => {
+    const finding: Finding = {
+      id: 'F1',
+      severity: 'blocking',
+      summary: '[app.ts:2] current',
+      target_hash: 'h1',
+    }
+    const model = buildCockpitModel({
+      data,
+      diffHash: null,
+      trackedDiff: diff,
+      findings: [finding],
+      replayCycles: [],
+    })
+
+    expect(buildCockpitActionCommand(model, { kind: 'accept', findingId: 'F1' })).toEqual({
+      ok: false,
+      reason: 'missing_diff_hash',
     })
   })
 })

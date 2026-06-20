@@ -9,6 +9,7 @@ import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
 import type { DaemonContext } from './context'
 import { currentDiff, openCycleAndSignal } from './phases'
+import { readReview } from './records'
 
 export async function drainCommands(ctx: DaemonContext): Promise<void> {
   const pending = await ctx.deps.commands.drain()
@@ -50,12 +51,72 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
     case 'approve':
       await approve(ctx, command.scope, command.sig, command.bundle_id ?? null, command.expires_at)
       break
+    case 'finding_action':
+      await recordFindingAction(ctx, command)
+      break
     case 'stop':
       ctx.requestStop()
       break
     default:
       break
   }
+}
+
+async function recordFindingAction(
+  ctx: DaemonContext,
+  command: Extract<Command, { kind: 'finding_action' }>,
+): Promise<void> {
+  const cur = ctx.current()
+  if (command.cycle !== cur.workflow.cycle || command.diff_hash !== cur.diff.hash) {
+    await ctx.emit('finding_action_rejected', {
+      detail: {
+        action: command.action,
+        finding_id: command.finding_id,
+        reason: 'stale_cycle_or_diff',
+      },
+    })
+    return
+  }
+  const review = await readReview(ctx)
+  if (review && review.diff_hash !== cur.diff.hash) {
+    await ctx.emit('finding_action_rejected', {
+      detail: {
+        action: command.action,
+        finding_id: command.finding_id,
+        reason: 'stale_review',
+      },
+    })
+    return
+  }
+  const finding = review?.findings.find((item) => item.id === command.finding_id)
+  if (!finding) {
+    await ctx.emit('finding_action_rejected', {
+      detail: {
+        action: command.action,
+        finding_id: command.finding_id,
+        reason: 'finding_not_found',
+      },
+    })
+    return
+  }
+  if (finding.target_hash !== cur.diff.hash) {
+    await ctx.emit('finding_action_rejected', {
+      detail: {
+        action: command.action,
+        finding_id: command.finding_id,
+        reason: 'stale_finding',
+      },
+    })
+    return
+  }
+  await ctx.emit('finding_action_recorded', {
+    detail: {
+      action: command.action,
+      finding_id: command.finding_id,
+      severity: finding.severity,
+      reason: command.reason ? redactSecrets(command.reason).text : '',
+    },
+  })
 }
 
 export async function approve(

@@ -21,6 +21,16 @@ describe('command-bus validation (C1/M5)', () => {
       join(cmds, '0000000000000001-x.json'),
       JSON.stringify({ kind: 'approve', scope: 'merge' }),
     )
+    await writeFile(
+      join(cmds, '0000000000000001-y.json'),
+      JSON.stringify({
+        kind: 'finding_action',
+        action: 'accept',
+        finding_id: 'F1',
+        cycle: 1,
+        diff_hash: 'd'.repeat(64),
+      }),
+    )
     // invalid scope (would bypass the human gate if trusted)
     await writeFile(
       join(cmds, '0000000000000002-x.json'),
@@ -32,11 +42,12 @@ describe('command-bus validation (C1/M5)', () => {
     await writeFile(join(cmds, '0000000000000004-x.json'), 'not json')
 
     const drained = await new CommandBus(dir).drain()
-    expect(drained).toHaveLength(1)
+    expect(drained).toHaveLength(2)
     expect(drained[0]?.command).toEqual({ kind: 'approve', scope: 'merge' })
+    expect(drained[1]?.command).toMatchObject({ kind: 'finding_action', action: 'accept' })
     // invalid files were removed
     const remaining = (await readdir(cmds)).filter((f) => f.endsWith('.json'))
-    expect(remaining).toEqual(['0000000000000001-x.json'])
+    expect(remaining).toEqual(['0000000000000001-x.json', '0000000000000001-y.json'])
   })
 })
 

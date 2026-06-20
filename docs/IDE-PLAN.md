@@ -303,9 +303,12 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
     pinned bundle fails closed; dep-audit is timeout-bounded.
   - B5 exact replay evidence: `task-1-b5-exact-replay-green.txt`,
     `task-1-b5-exact-replay-manual.txt`, and `task-1-b5-exact-replay-error.txt`.
-- 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
-  state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
-  cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).
+- 🔶 **B6** cockpit TUI — slices done: pure `renderCockpit` frame + `between cockpit`
+  (state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable); cockpit model links
+  current findings to diff hunks and replay snapshots; `between cockpit --action
+  accept|dispute|waive --finding <id>` validates current/non-stale findings and queues an exact
+  cycle+diff-bound daemon command, which the daemon records/rejects as durable events. Remaining:
+  live Ink interaction loop, command palette UX, richer replay navigation, and test re-run controls.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,

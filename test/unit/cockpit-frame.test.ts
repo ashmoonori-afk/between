@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { renderCockpit, type CockpitData } from '../../src/ui/cockpit-frame'
+import { renderCockpit, renderCockpitModel, type CockpitData } from '../../src/ui/cockpit-frame'
+import { buildCockpitModel } from '../../src/ui/cockpit-model'
 
 const data: CockpitData = {
   project: 'demo',
@@ -54,5 +55,30 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/bundle -/)
     expect(frame).toMatch(/risk:\s+-\s+policy -/)
     expect(frame).toMatch(/verify:\s+not run/)
+  })
+
+  it('renders linked findings, replay snapshots, and action hints', () => {
+    const frame = renderCockpitModel(
+      buildCockpitModel({
+        data,
+        diffHash: 'h1',
+        trackedDiff: 'diff --git a/app.ts b/app.ts\n@@ -1,1 +1,2 @@\n const a = 1\n+const b = 2\n',
+        findings: [
+          {
+            id: 'F1',
+            severity: 'blocking',
+            summary: '[app.ts:2] add a regression test - 한글',
+            target_hash: 'h1',
+          },
+        ],
+        replayCycles: [{ cycle: 2, phase: 'reviewing', diffHash: 'h0' }],
+      }),
+    )
+
+    expect(frame).toMatch(/Linked findings/)
+    expect(frame).toMatch(/F1 \[blocking\] linked app\.ts:2/)
+    expect(frame).toMatch(/cycle 2: reviewing h0/)
+    expect(frame).toMatch(/between cockpit --action accept\|dispute\|waive/)
+    expect(frame).toMatch(/^[\x00-\x7F]*$/)
   })
 })

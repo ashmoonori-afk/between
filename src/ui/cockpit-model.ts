@@ -25,6 +25,7 @@ export interface CockpitFindingModel {
 
 export interface CockpitModel {
   summary: CockpitData
+  diffHash: string | null
   diffHunks: DiffHunk[]
   findings: CockpitFindingModel[]
   replayCycles: ReplayCycleSnapshot[]
@@ -37,9 +38,23 @@ export type CockpitActionIntent =
   | { kind: 'dispute'; findingId: string }
   | { kind: 'waive'; findingId: string }
 
+export type CockpitActionValidationReason =
+  | 'finding_not_found'
+  | 'stale_finding'
+  | 'missing_diff_hash'
+
 export type CockpitActionValidation =
   | { ok: true; intent: CockpitActionIntent }
-  | { ok: false; reason: 'finding_not_found' | 'stale_finding' }
+  | { ok: false; reason: CockpitActionValidationReason }
+
+export interface CockpitFindingActionCommand {
+  kind: 'finding_action'
+  action: CockpitActionIntent['kind']
+  finding_id: string
+  cycle: number
+  diff_hash: string
+  reason?: string
+}
 
 export interface BuildCockpitModelInput {
   data: CockpitData
@@ -53,6 +68,7 @@ export function buildCockpitModel(input: BuildCockpitModelInput): CockpitModel {
   const diffHunks = parseDiffHunks(input.trackedDiff)
   return {
     summary: input.data,
+    diffHash: input.diffHash,
     diffHunks,
     findings: input.findings.map((finding) => linkFinding(finding, input.diffHash, diffHunks)),
     replayCycles: [...input.replayCycles],
@@ -73,6 +89,29 @@ export function validateCockpitAction(
   if (!finding) return { ok: false, reason: 'finding_not_found' }
   if (finding.stale) return { ok: false, reason: 'stale_finding' }
   return { ok: true, intent }
+}
+
+export function buildCockpitActionCommand(
+  model: CockpitModel,
+  intent: CockpitActionIntent,
+  reason?: string,
+):
+  | { ok: true; command: CockpitFindingActionCommand }
+  | { ok: false; reason: CockpitActionValidationReason } {
+  const validation = validateCockpitAction(model, intent)
+  if (!validation.ok) return validation
+  if (!model.diffHash) return { ok: false, reason: 'missing_diff_hash' }
+  return {
+    ok: true,
+    command: {
+      kind: 'finding_action',
+      action: intent.kind,
+      finding_id: intent.findingId,
+      cycle: model.summary.cycle,
+      diff_hash: model.diffHash,
+      ...(reason ? { reason } : {}),
+    },
+  }
 }
 
 export function parseDiffHunks(diff: string): DiffHunk[] {

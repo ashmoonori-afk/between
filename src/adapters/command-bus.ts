@@ -29,6 +29,14 @@ const CommandSchema = z.discriminatedUnion('kind', [
     bundle_id: z.string().nullable().optional(),
     expires_at: z.string().optional(),
   }),
+  z.object({
+    kind: z.literal('finding_action'),
+    action: z.enum(['accept', 'dispute', 'waive']),
+    finding_id: z.string().min(1).max(128),
+    cycle: z.number().int().nonnegative(),
+    diff_hash: z.string().min(1).max(128),
+    reason: z.string().max(2048).optional(),
+  }),
   z.object({ kind: z.literal('stop') }),
 ])
 
