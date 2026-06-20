@@ -16,6 +16,7 @@ export interface BetweenPaths {
   acks: string
   reviews: string
   verify: string
+  verifyReport: string
   commands: string
   cycles: string
   agents: string
@@ -37,6 +38,7 @@ export function betweenPaths(root: string): BetweenPaths {
     acks: join(dir, 'acks'),
     reviews: join(dir, 'reviews'),
     verify: join(dir, 'verify'),
+    verifyReport: join(dir, 'verify-report.json'),
     commands: join(dir, 'commands'),
     cycles: join(dir, 'cycles'),
     agents: join(dir, 'agents'),

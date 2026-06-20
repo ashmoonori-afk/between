@@ -3,6 +3,7 @@ import { StateRepository } from '../adapters/state-repository'
 import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
 import { parseReviewRecord, parseVerifyRecord } from '../core/findings'
 import { readBundle } from '../review/store'
+import { readVerifyReport } from '../verify/report'
 import { buildEvidenceManifest, type EvidenceManifest } from './manifest'
 
 async function readJson<T>(path: string, parse: (raw: unknown) => T): Promise<T | null> {
@@ -25,10 +26,11 @@ export async function collectEvidence(
   if (!state) return null
   const p = betweenPaths(root)
   const cycle = state.workflow.cycle
-  const [review, verify, bundle] = await Promise.all([
+  const [review, verify, bundle, verification] = await Promise.all([
     readJson(reviewPath(p, cycle), parseReviewRecord),
     readJson(verifyPath(p, cycle), parseVerifyRecord),
     state.diff.bundle_id ? readBundle(root, state.diff.bundle_id) : Promise.resolve(null),
+    readVerifyReport(root),
   ])
   return buildEvidenceManifest({
     project: state.project,
@@ -41,6 +43,7 @@ export async function collectEvidence(
     bundle,
     review,
     verify,
+    verification,
     approval: state.approval,
   })
 }

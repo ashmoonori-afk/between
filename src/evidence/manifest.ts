@@ -1,5 +1,6 @@
 import type { ApprovalToken, ProjectRef, ReviewRecord, VerifyRecord } from '../core/types'
 import type { ReviewBundle } from '../review/bundle'
+import type { VerificationReport } from '../verify/runner'
 
 /**
  * B4: a portable, exporter-agnostic Evidence Manifest for one review cycle. It binds the immutable
@@ -24,6 +25,8 @@ export interface EvidenceManifestInput {
   bundle: ReviewBundle | null
   review: ReviewRecord | null
   verify: VerifyRecord | null
+  /** structured `between verify` report (B3 runner), or null when none was produced. */
+  verification: VerificationReport | null
   approval: ApprovalToken | null
 }
 
@@ -44,6 +47,13 @@ export interface EvidenceManifest {
   } | null
   findings: { blocking: number; non_blocking: number; items: ReviewRecord['findings'] }
   verify: { passed: boolean; summary: string } | null
+  /** structured per-check verification (B3 runner): each gate's pass/fail + an overall verdict. */
+  verification: {
+    all_passed: boolean
+    passed: number
+    total: number
+    checks: Array<{ name: string; status: 'pass' | 'fail'; duration_ms: number }>
+  } | null
   approval: {
     scope: string
     granted_at: string
@@ -87,6 +97,18 @@ export function buildEvidenceManifest(input: EvidenceManifestInput): EvidenceMan
       items: findings,
     },
     verify: input.verify ? { passed: input.verify.passed, summary: input.verify.summary } : null,
+    verification: input.verification
+      ? {
+          all_passed: input.verification.allPassed,
+          passed: input.verification.checks.filter((c) => c.status === 'pass').length,
+          total: input.verification.checks.length,
+          checks: input.verification.checks.map((c) => ({
+            name: c.name,
+            status: c.status,
+            duration_ms: c.durationMs,
+          })),
+        }
+      : null,
     approval: input.approval
       ? {
           scope: input.approval.scope,
@@ -130,6 +152,18 @@ export function toMarkdown(m: EvidenceManifest): string {
   lines.push(
     m.verify ? `- ${m.verify.passed ? 'PASSED' : 'FAILED'} - ${m.verify.summary}` : '- _none_',
   )
+  lines.push('')
+  lines.push('## Verification checks (between verify)')
+  if (m.verification) {
+    lines.push(
+      `- ${m.verification.all_passed ? 'PASS' : 'FAIL'} - ${m.verification.passed}/${m.verification.total} checks passed`,
+    )
+    for (const c of m.verification.checks) {
+      lines.push(`  - [${c.status}] ${c.name} (${c.duration_ms}ms)`)
+    }
+  } else {
+    lines.push('- _not run_')
+  }
   lines.push('')
   lines.push('## Approval')
   if (m.approval) {

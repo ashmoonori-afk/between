@@ -1,6 +1,7 @@
 import type { Command } from 'commander'
-import { join } from 'node:path'
+import { dirname } from 'node:path'
 import { loadConfig } from '../runtime'
+import { betweenPaths } from '../adapters/paths'
 import { print } from './output'
 import { fail, root } from './shared'
 
@@ -15,15 +16,12 @@ export function registerVerifyCommand(program: Command): void {
         const { runChecks, shellRunner } = await import('../verify/runner')
         const report = await runChecks(config.verification_checks, shellRunner(root()))
 
-        // persist (atomically) so the evidence collector / dashboard can fold it in (next slice)
+        // persist (atomically) so the evidence collector + cockpit can fold it in (single path source)
         const { mkdir } = await import('node:fs/promises')
         const writeFileAtomic = (await import('write-file-atomic')).default
-        const dir = join(root(), '.between')
-        await mkdir(dir, { recursive: true })
-        await writeFileAtomic(
-          join(dir, 'verify-report.json'),
-          `${JSON.stringify(report, null, 2)}\n`,
-        )
+        const reportPath = betweenPaths(root()).verifyReport
+        await mkdir(dirname(reportPath), { recursive: true })
+        await writeFileAtomic(reportPath, `${JSON.stringify(report, null, 2)}\n`)
 
         if (opts.json) {
           print(JSON.stringify(report, null, 2))

@@ -1,6 +1,3 @@
-import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { StateRepository } from '../adapters/state-repository'
 import { EventsLog } from '../adapters/events-log'
 import { collectEvidence } from '../evidence/collect'
@@ -37,24 +34,15 @@ export async function collectCockpitData(
     policySatisfied = ev.satisfied
   }
 
-  let verification: CockpitData['verification'] = null
-  const vrPath = join(root, '.between', 'verify-report.json')
-  if (existsSync(vrPath)) {
-    try {
-      const vr = JSON.parse(await readFile(vrPath, 'utf8')) as {
-        checks?: Array<{ status?: string }>
-        allPassed?: boolean
+  // forward the manifest's already-validated verification (review: avoid a second read of the
+  // report -> no redundant I/O and no TOCTOU window between two independent reads).
+  const verification: CockpitData['verification'] = manifest?.verification
+    ? {
+        passed: manifest.verification.passed,
+        total: manifest.verification.total,
+        allPassed: manifest.verification.all_passed,
       }
-      const checks = Array.isArray(vr.checks) ? vr.checks : []
-      verification = {
-        passed: checks.filter((c) => c.status === 'pass').length,
-        total: checks.length,
-        allPassed: Boolean(vr.allPassed),
-      }
-    } catch {
-      /* malformed report -> show as not run */
-    }
-  }
+    : null
 
   const log = new EventsLog(root)
   const entries = await log.read()

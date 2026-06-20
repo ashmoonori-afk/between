@@ -25,6 +25,13 @@ const base: EvidenceManifestInput = {
   bundle,
   review: { cycle: 2, diff_hash: 'd'.repeat(64), findings: [], complete: true },
   verify: { diff_hash: 'd'.repeat(64), passed: true, summary: 'ok' },
+  verification: {
+    allPassed: false,
+    checks: [
+      { name: 'typecheck', status: 'pass', exitCode: 0, summary: 'ok', durationMs: 12 },
+      { name: 'tests', status: 'fail', exitCode: 1, summary: '1 failed', durationMs: 340 },
+    ],
+  },
   approval: {
     actor: 'human',
     scope: 'merge',
@@ -68,6 +75,23 @@ describe('buildEvidenceManifest', () => {
   it('verdict is pending when clean but unapproved', () => {
     expect(buildEvidenceManifest({ ...base, approval: null }).verdict).toBe('pending')
   })
+
+  it('folds the structured verify report: per-check pass/fail + passed/total counts', () => {
+    const m = buildEvidenceManifest(base)
+    expect(m.verification).toEqual({
+      all_passed: false,
+      passed: 1,
+      total: 2,
+      checks: [
+        { name: 'typecheck', status: 'pass', duration_ms: 12 },
+        { name: 'tests', status: 'fail', duration_ms: 340 },
+      ],
+    })
+  })
+
+  it('verification is null when no report was produced', () => {
+    expect(buildEvidenceManifest({ ...base, verification: null }).verification).toBeNull()
+  })
 })
 
 describe('toMarkdown', () => {
@@ -78,5 +102,20 @@ describe('toMarkdown', () => {
     expect(md).toMatch(/Review object \(immutable bundle\)/)
     expect(md).toMatch(/bundle_id: `b{64}`/)
     expect(md).toMatch(/## Approval/)
+  })
+
+  it('renders the structured verification section with per-check lines (ASCII only)', () => {
+    const md = toMarkdown(buildEvidenceManifest(base))
+    expect(md).toMatch(/## Verification checks \(between verify\)/)
+    expect(md).toMatch(/- FAIL - 1\/2 checks passed/)
+    expect(md).toMatch(/\[pass\] typecheck \(12ms\)/)
+    expect(md).toMatch(/\[fail\] tests \(340ms\)/)
+    // eslint-disable-next-line no-control-regex
+    expect(md).not.toMatch(/[^\x00-\x7f]/) // no mojibake / non-ASCII
+  })
+
+  it('shows "not run" when no verify report exists', () => {
+    const md = toMarkdown(buildEvidenceManifest({ ...base, verification: null }))
+    expect(md).toMatch(/## Verification checks \(between verify\)\n- _not run_/)
   })
 })
