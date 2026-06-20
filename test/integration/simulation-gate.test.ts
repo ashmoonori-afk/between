@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../src/core/clock'
@@ -38,5 +38,18 @@ describe('A5 — fake-mode safety', () => {
     })
     expect(res.exitCode).toBe(1)
     expect(res.stderr).toMatch(/SIMULATION/)
+  })
+
+  it('A7: distinct developer/reviewer presets wire each role independently + mark real', async () => {
+    await initProject(dir, { developer: 'claude', reviewer: 'codex' }, new FakeClock(0))
+    const cfg = await readFile(join(dir, '.between', 'config.yaml'), 'utf8')
+    expect(cfg).toMatch(/developer_command:.*claude-agent\.mjs/)
+    expect(cfg).toMatch(/reviewer_command:.*codex-agent\.mjs/)
+    expect(cfg).toMatch(/agent_mode: oneshot/)
+
+    const st = await new StateRepository(dir).read()
+    expect(st?.evidence_trust).toBe('real') // both roles real
+    expect(st?.developer.name).toBe('claude')
+    expect(st?.reviewer.name).toBe('codex')
   })
 })

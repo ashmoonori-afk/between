@@ -14,28 +14,41 @@ export function registerSetupCommands(program: Command): void {
     .command('init')
     .description('Create .between/ scaffolding, config, and initial state in the current repo')
     .option('--vault <path>', 'Obsidian vault root for human-readable project memory')
-    .option('--agent <preset>', 'agent wrappers: fake | claude | codex (default fake)')
-    .action(async (opts: { vault?: string; agent?: string }) => {
-      try {
-        const agent = opts.agent as AgentPreset | undefined
-        if (agent && !AGENT_PRESETS.includes(agent)) {
-          throw new Error(`--agent must be one of: ${AGENT_PRESETS.join(', ')}`)
+    .option('--agent <preset>', 'shorthand: wrap both roles — fake | claude | codex (default fake)')
+    .option('--developer <preset>', 'developer-role wrapper: fake | claude | codex')
+    .option('--reviewer <preset>', 'reviewer-role wrapper: fake | claude | codex')
+    .action(
+      async (opts: { vault?: string; agent?: string; developer?: string; reviewer?: string }) => {
+        try {
+          const validate = (v: string | undefined, flag: string): AgentPreset | undefined => {
+            if (v && !AGENT_PRESETS.includes(v as AgentPreset)) {
+              throw new Error(`${flag} must be one of: ${AGENT_PRESETS.join(', ')}`)
+            }
+            return v as AgentPreset | undefined
+          }
+          const agent = validate(opts.agent, '--agent')
+          const developer = validate(opts.developer, '--developer')
+          const reviewer = validate(opts.reviewer, '--reviewer')
+          const res = await initProject(
+            root(),
+            { vaultPath: opts.vault, agent, developer, reviewer },
+            new SystemClock(),
+          )
+          print(
+            res.alreadyExisted
+              ? 'between: already initialized (refreshed missing files)'
+              : 'between: initialized',
+          )
+          for (const c of res.created) print(`  + ${c}`)
+          print(`  project: ${res.project.name}`)
+          if (res.project.obsidian_project_path)
+            print(`  vault:   ${res.project.obsidian_project_path}`)
+          if (!res.alreadyExisted) print('  next:    run `between onboard` to wire a chat gateway')
+        } catch (e) {
+          await fail(e)
         }
-        const res = await initProject(root(), { vaultPath: opts.vault, agent }, new SystemClock())
-        print(
-          res.alreadyExisted
-            ? 'between: already initialized (refreshed missing files)'
-            : 'between: initialized',
-        )
-        for (const c of res.created) print(`  + ${c}`)
-        print(`  project: ${res.project.name}`)
-        if (res.project.obsidian_project_path)
-          print(`  vault:   ${res.project.obsidian_project_path}`)
-        if (!res.alreadyExisted) print('  next:    run `between onboard` to wire a chat gateway')
-      } catch (e) {
-        await fail(e)
-      }
-    })
+      },
+    )
 
   program
     .command('onboard')

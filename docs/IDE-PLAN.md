@@ -251,11 +251,20 @@ Goal
 - Constraint that shapes Phase A/B now: keep all core logic UI-agnostic and IPC-friendly (no
   console/TUI assumptions in `core`/`daemon`) so the desktop shell needs zero core changes.
 
-## 11. Immediate next actions
+## 11. Progress
 
-1. ✅ §8 decisions locked (single-local now; pluggable claude+codex; npm publish + future local app).
-2. **A1 (immutable bundle)** — IN PROGRESS. The single biggest gap between "good alpha" and
-   "verifiable change control"; unblocks A2/A4/B3/B4. Reviewer reads the bundle, not live worktree.
-3. Then **A2 + A3** (approval freshness + scope separation) — highest-leverage safety fix that does
-   not touch the gateway.
-4. Platform/Release + docs-CI workstream (§9) runs in parallel so test counts/badges stop drifting.
+**Phase A — Trust Core: COMPLETE ✅** (all committed, dogfooded, CI green)
+
+- ✅ **A1** immutable, content-addressed review bundle; daemon seals one per cycle; reviewer reads
+  the bundle, not the live worktree (`src/review/`, `.between/bundles/`).
+- ✅ **A2** approval freshness + invalidation; the pre-push gate (.mjs + CLI) rejects a stale/expired
+  approval; daemon clears approval on new goal/cycle/supersede. Dogfooded against the installed hook.
+- ✅ **A3** scope-separated gate — only a `merge` approval completes the dev cycle.
+- ✅ **A4** fail-closed git — a git failure becomes `error`, never an empty "no change" diff.
+- ✅ **A5** fake-mode is a SIMULATION (`evidence_trust`), refused at the push gate; `status` marks it.
+- ✅ **A6** `doctor --strict` flags bot tokens left in config.yaml (env-only policy).
+- ✅ **A7** distinct `--developer` / `--reviewer` presets (claude dev + codex reviewer), swappable.
+
+**Next — Phase B (Product Core):** B1 worktree isolation · B2 PolicyEngine · B3 VerificationRunner ·
+B4 evidence manifest + exporters (Obsidian demoted) · B5 EventStore · B6 cockpit TUI · B7 VS Code MVP.
+Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).

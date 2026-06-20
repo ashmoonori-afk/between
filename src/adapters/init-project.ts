@@ -14,8 +14,12 @@ import { installPrePushHook } from './git-hooks'
 
 export interface InitOptions {
   vaultPath?: string
-  /** which agent wraps the developer/reviewer roles: fake (default), claude, or codex */
+  /** shorthand: wrap BOTH roles with this preset (fake default). Overridden per-role below. */
   agent?: AgentPreset
+  /** developer-role wrapper preset (defaults to `agent`); providers are swappable (A7). */
+  developer?: AgentPreset
+  /** reviewer-role wrapper preset (defaults to `agent`); e.g. claude dev + codex reviewer. */
+  reviewer?: AgentPreset
 }
 
 export interface InitResult {
@@ -62,42 +66,49 @@ export async function initProject(
       : null,
   }
 
-  const preset: AgentPreset = opts.agent ?? 'fake'
-  const presetScript = PRESET_SCRIPT[preset]
+  // A7: each role names its own provider (defaulting to the `--agent` shorthand, else fake).
+  const developer: AgentPreset = opts.developer ?? opts.agent ?? 'fake'
+  const reviewer: AgentPreset = opts.reviewer ?? opts.agent ?? 'fake'
+  const anyReal = developer !== 'fake' || reviewer !== 'fake'
 
   if (!existsSync(p.config)) {
     let body = defaultConfigYaml()
     if (vaultPath) {
       body = body.replace("vault_path: ''", `vault_path: ${JSON.stringify(vaultPath)}`)
     }
-    if (preset !== 'fake') {
-      body = body
-        .replace('agent_mode: file', 'agent_mode: oneshot')
-        .replace(
-          "developer_command: 'node .between/agents/fake-agent.mjs developer'",
-          `developer_command: 'node .between/agents/${presetScript} developer'`,
-        )
-        .replace(
-          "reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'",
-          `reviewer_command: 'node .between/agents/${presetScript} reviewer'`,
-        )
-    }
+    if (anyReal) body = body.replace('agent_mode: file', 'agent_mode: oneshot')
+    // per-role replace (a no-op for fake since PRESET_SCRIPT.fake === fake-agent.mjs)
+    body = body
+      .replace(
+        "developer_command: 'node .between/agents/fake-agent.mjs developer'",
+        `developer_command: 'node .between/agents/${PRESET_SCRIPT[developer]} developer'`,
+      )
+      .replace(
+        "reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'",
+        `reviewer_command: 'node .between/agents/${PRESET_SCRIPT[reviewer]} reviewer'`,
+      )
     await writeFile(p.config, body, 'utf8')
     created.push(p.config)
   }
 
   if (!existsSync(p.state)) {
     const repo = new StateRepository(absRoot)
-    // A5: the bundled fake agent is a SIMULATION; real wrappers (claude/codex) are 'real'.
-    const evidenceTrust = preset === 'fake' ? 'simulated' : 'real'
-    await repo.write(initialState({ project, evidenceTrust }, clock))
+    // A5: a fake wrapper in EITHER role makes the project a SIMULATION (not real verification).
+    const evidenceTrust = developer === 'fake' || reviewer === 'fake' ? 'simulated' : 'real'
+    await repo.write(
+      initialState(
+        { project, developerName: developer, reviewerName: reviewer, evidenceTrust },
+        clock,
+      ),
+    )
     created.push(p.state)
   }
 
-  // always ship the fake-agent (file-mode default); add the chosen real wrapper too
+  // always ship the fake-agent (file-mode default); add whichever real wrappers a role needs
   const scripts: Array<[string, string]> = [['fake-agent.mjs', FAKE_AGENT_SOURCE]]
-  if (preset === 'claude') scripts.push(['claude-agent.mjs', CLAUDE_AGENT_SOURCE])
-  if (preset === 'codex') scripts.push(['codex-agent.mjs', CODEX_AGENT_SOURCE])
+  const needed = new Set<AgentPreset>([developer, reviewer])
+  if (needed.has('claude')) scripts.push(['claude-agent.mjs', CLAUDE_AGENT_SOURCE])
+  if (needed.has('codex')) scripts.push(['codex-agent.mjs', CODEX_AGENT_SOURCE])
   for (const [name, source] of scripts) {
     const file = join(p.agents, name)
     if (!existsSync(file)) {
