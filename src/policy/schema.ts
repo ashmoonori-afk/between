@@ -3,9 +3,9 @@ import { z } from 'zod'
 /**
  * B2: policy-as-code. A change is classified by the files it touches (`high_risk_paths`); each
  * risk level requires a set of `gates` and an `approvals` rule. Gate VIOLATIONS are explicit
- * results (see engine.ts), not warnings. Known gates: `verification`, `no_blocking_findings`
- * (evaluable now); `secret_scan`, `dependency_audit` are declared but enforced once the
- * VerificationRunner (B3) wires them — until then they are advisory.
+ * results (see engine.ts), not warnings. All four gates are now wired (B3): `verification`,
+ * `no_blocking_findings`, `secret_scan`, and `dependency_audit` (npm audit) each evaluate to
+ * pass/fail when their input is supplied, and stay advisory (not_enforced) when it isn't.
  */
 /** Known gate names — restricting to an enum makes a typo in policy.yaml fail fast (review). */
 const GateName = z.enum(['verification', 'no_blocking_findings', 'secret_scan', 'dependency_audit'])
@@ -27,7 +27,7 @@ export const PolicySchema = z
         normal: z.array(GateName),
       })
       .default({
-        high: ['verification', 'no_blocking_findings', 'secret_scan'],
+        high: ['verification', 'no_blocking_findings', 'secret_scan', 'dependency_audit'],
         normal: ['verification', 'no_blocking_findings'],
       }),
     approvals: z
@@ -71,10 +71,11 @@ high_risk_paths:
   - '**/*.key'
   - '**/secrets/**'
 
-# required gates per risk level (verification + no_blocking_findings enforced now;
-# secret_scan / dependency_audit are advisory until the VerificationRunner wires them)
+# required gates per risk level. All four are wired (B3): each evaluates pass/fail when its
+# input is supplied and stays advisory (not_enforced) otherwise. dependency_audit runs
+# 'npm audit' only for high-risk changes (and is advisory if the audit can't run).
 gates:
-  high: [verification, no_blocking_findings, secret_scan]
+  high: [verification, no_blocking_findings, secret_scan, dependency_audit]
   normal: [verification, no_blocking_findings]
 
 # human approval requirements per risk level

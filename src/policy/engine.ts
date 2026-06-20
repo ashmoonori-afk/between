@@ -16,6 +16,8 @@ export interface PolicyInput {
   verifyPassed: boolean | null
   /** secret-shaped hits in the added diff lines (B3); null/undefined = scan not run. */
   secretScanHits?: number | null
+  /** total npm-audit vulnerabilities (B3); null/undefined = audit not run. */
+  depAuditVulns?: number | null
 }
 
 export interface PolicyEvaluation {
@@ -119,10 +121,20 @@ function evaluateGate(name: string, input: PolicyInput): GateResult {
         detail: `${hits} secret-shaped hit(s) in the added diff`,
       }
     }
+    case 'dependency_audit': {
+      const vulns = input.depAuditVulns
+      if (vulns === null || vulns === undefined) {
+        return { name, status: 'not_enforced', detail: 'dependency audit not run' }
+      }
+      return {
+        name,
+        status: vulns === 0 ? 'pass' : 'fail',
+        detail: `${vulns} dependency vulnerabilit${vulns === 1 ? 'y' : 'ies'}`,
+      }
+    }
     default:
-      // dependency_audit — declared but not yet wired (later B3 slice). Advisory, not blocking.
-      // (schema restricts gate names to a known enum, so this is never a silent typo.)
-      return { name, status: 'not_enforced', detail: 'gate not yet enforced (wired in B3)' }
+      // unknown gate (the schema enum prevents this in practice) -> advisory, never blocking.
+      return { name, status: 'not_enforced', detail: 'gate not yet enforced' }
   }
 }
 

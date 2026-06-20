@@ -89,6 +89,29 @@ describe('evaluatePolicy', () => {
     expect(failEval.gates.find((g) => g.name === 'secret_scan')?.status).toBe('fail')
     expect(failEval.satisfied).toBe(false)
   })
+
+  it('dependency_audit is advisory when not run, pass at 0 vulns, fail above (B3)', () => {
+    const high = ['src/auth/x.ts'] // high risk -> default gate set includes dependency_audit
+    const gate = (input: PolicyInput) =>
+      evaluatePolicy(DEFAULT_POLICY, input).gates.find((g) => g.name === 'dependency_audit')
+    // not run -> advisory, does not block
+    const naEval = evaluatePolicy(DEFAULT_POLICY, { ...ok, changedPaths: high })
+    expect(naEval.gates.find((g) => g.name === 'dependency_audit')?.status).toBe('not_enforced')
+    expect(naEval.satisfied).toBe(true)
+    // audited, 0 vulns -> pass
+    expect(gate({ ...ok, changedPaths: high, depAuditVulns: 0 })?.status).toBe('pass')
+    // audited, vulns present -> fail -> BLOCKED
+    const failEval = evaluatePolicy(DEFAULT_POLICY, { ...ok, changedPaths: high, depAuditVulns: 4 })
+    expect(failEval.gates.find((g) => g.name === 'dependency_audit')?.status).toBe('fail')
+    expect(failEval.satisfied).toBe(false)
+  })
+
+  it('dependency_audit is not in the normal-risk gate set (no audit on routine changes)', () => {
+    const e = evaluatePolicy(DEFAULT_POLICY, { ...ok, depAuditVulns: 9 })
+    expect(e.risk).toBe('normal')
+    expect(e.gates.find((g) => g.name === 'dependency_audit')).toBeUndefined()
+    expect(e.satisfied).toBe(true)
+  })
 })
 
 describe('changedPathsFromRaw + parsePolicy', () => {

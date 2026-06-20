@@ -33,7 +33,8 @@ export function registerPolicyCommand(program: Command): void {
           process.exitCode = 1
           return
         }
-        const { evaluatePolicy, changedPathsFromRaw } = await import('../policy/engine')
+        const { evaluatePolicy, changedPathsFromRaw, classifyRisk } =
+          await import('../policy/engine')
         const { collectEvidence } = await import('../evidence/collect')
         const { readBundle } = await import('../review/store')
         const { scanDiffForSecrets } = await import('../verify/secret-scan')
@@ -41,11 +42,26 @@ export function registerPolicyCommand(program: Command): void {
         const policy = await loadPolicy(root())
         const manifest = await collectEvidence(root(), new SystemClock().nowIso())
         const bundle = state.diff.bundle_id ? await readBundle(root(), state.diff.bundle_id) : null
+        const changedPaths = bundle ? changedPathsFromRaw(bundle.diff.trackedRaw) : []
+
+        // run npm audit lazily — only when the active (risk-based) gate set actually needs it.
+        // classifyRisk runs again inside evaluatePolicy below; both are pure + deterministic on the
+        // same (policy, changedPaths), so the duplicate call is intentional and free of skew.
+        const activeGates =
+          classifyRisk(policy, changedPaths) === 'high' ? policy.gates.high : policy.gates.normal
+        let depAuditVulns: number | null = null
+        if (activeGates.includes('dependency_audit')) {
+          const { runDepAudit } = await import('../verify/dep-audit')
+          const { shellRunner } = await import('../verify/runner')
+          depAuditVulns = await runDepAudit(shellRunner(root()))
+        }
+
         const evaluation = evaluatePolicy(policy, {
-          changedPaths: bundle ? changedPathsFromRaw(bundle.diff.trackedRaw) : [],
+          changedPaths,
           blockingFindings: manifest?.findings.blocking ?? 0,
           verifyPassed: manifest?.verify ? manifest.verify.passed : null,
           secretScanHits: bundle ? scanDiffForSecrets(bundle.diff.tracked).hits : null,
+          depAuditVulns,
         })
 
         print(`Policy - ${state.project.name} | cycle ${state.workflow.cycle}`)
