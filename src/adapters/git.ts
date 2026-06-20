@@ -23,6 +23,21 @@ export interface RepoState {
   reason: string | null
 }
 
+/**
+ * A git command that feeds the review object failed (A4). The daemon must treat this as an
+ * error, NOT as an empty diff — a git failure silently becoming "no change" would let a broken
+ * repo state slip past review.
+ */
+export class GitError extends Error {
+  constructor(
+    message: string,
+    readonly stderr = '',
+  ) {
+    super(message)
+    this.name = 'GitError'
+  }
+}
+
 export interface DiffInputOptions {
   reviewUntracked: boolean
   /** untracked paths matching none of these are dropped when the list is non-empty */
@@ -84,9 +99,10 @@ export class GitAdapter {
     return { busy: false, reason: null }
   }
 
-  /** `git diff <base>` (tracked, staging-invariant) with pinned flags. */
+  /** `git diff <base>` (tracked, staging-invariant) with pinned flags. Fail-closed (A4). */
   private async trackedDiff(): Promise<string> {
     const r = await this.run(['diff', await this.base(), ...DIFF_FLAGS, ...TRACKED_EXCLUDE])
+    if (r.exitCode !== 0) throw new GitError('git diff failed', r.stderr)
     return r.stdout
   }
 
@@ -98,6 +114,7 @@ export class GitAdapter {
       '--abbrev=40',
       ...TRACKED_EXCLUDE,
     ])
+    if (r.exitCode !== 0) throw new GitError('git diff --raw failed', r.stderr)
     return r.stdout
   }
 

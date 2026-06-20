@@ -3,6 +3,7 @@ import type { BetweenEvent, BetweenState, EventName } from '../core/types'
 import { transition } from '../core/fsm'
 import { setPhase, touch } from '../core/state'
 import { reconcile } from './reconcile'
+import { GitError } from '../adapters/git'
 import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
 import { watchForNewDiff, runDebounce, awaitAck, awaitReview, handleReviewWritten } from './phases'
 import { drainCommands } from './commands'
@@ -144,28 +145,45 @@ export class Daemon {
       }))
     }
 
-    switch (this.current.workflow.phase) {
-      case 'goal_locked':
-        await this.dispatch('dev_started')
-        break
-      case 'developing':
-      case 'applying_review':
-        await watchForNewDiff(this.ctx)
-        break
-      case 'debouncing':
-        await runDebounce(this.ctx)
-        break
-      case 'review_requested':
-        await awaitAck(this.ctx)
-        break
-      case 'reviewing':
-        await awaitReview(this.ctx)
-        break
-      case 'review_written':
-        await handleReviewWritten(this.ctx)
-        break
-      default:
-        break // idle, human_gate, error, verifying: driven by commands / external records
+    try {
+      switch (this.current.workflow.phase) {
+        case 'goal_locked':
+          await this.dispatch('dev_started')
+          break
+        case 'developing':
+        case 'applying_review':
+          await watchForNewDiff(this.ctx)
+          break
+        case 'debouncing':
+          await runDebounce(this.ctx)
+          break
+        case 'review_requested':
+          await awaitAck(this.ctx)
+          break
+        case 'reviewing':
+          await awaitReview(this.ctx)
+          break
+        case 'review_written':
+          await handleReviewWritten(this.ctx)
+          break
+        default:
+          break // idle, human_gate, error, verifying: driven by commands / external records
+      }
+    } catch (err) {
+      // A4: a git/IO failure while producing the review object must FAIL CLOSED into `error`,
+      // never be swallowed into an empty diff ("no change"). Recoverable -> resume restores it.
+      await this.dispatch('fail', (s) => ({
+        ...s,
+        workflow: {
+          ...s.workflow,
+          error: {
+            code: err instanceof GitError ? 'git_error' : 'internal_error',
+            message: err instanceof Error ? err.message : String(err),
+            occurred_at: this.deps.clock.nowIso(),
+            recoverable: true,
+          },
+        },
+      }))
     }
   }
 
