@@ -288,7 +288,10 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 - 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
   EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop. Remaining:
   pin the chain head in state.json to also detect tail-truncation (SQLite option deferred).
-- ⬜ **B6** cockpit TUI · **B7** VS Code MVP.
+- 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
+  state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
+  cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).
+- ⬜ **B7** VS Code MVP.
   (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
