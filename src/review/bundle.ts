@@ -74,6 +74,42 @@ export function buildBundle(input: ReviewBundleInput): ReviewBundle {
   return { schema_version: BUNDLE_SCHEMA_VERSION, bundle_id, diff_hash, ...input }
 }
 
+export interface BundleIntegrity {
+  ok: boolean
+  reason?: string
+}
+
+/**
+ * Pure (finding #4): recompute the content address from the bundle's OWN parts and confirm the
+ * stored `diff_hash` + `bundle_id` match. Detects any edit to the diff, repository, or environment
+ * made after the bundle was sealed — readBundle uses this to REFUSE a tampered review object so
+ * materialize / policy / evidence never consume one. Malformed input is reported as not-ok, never
+ * thrown, so the caller decides the fail-closed action.
+ */
+export function verifyBundleIntegrity(bundle: ReviewBundle): BundleIntegrity {
+  try {
+    if (bundle.schema_version !== BUNDLE_SCHEMA_VERSION) {
+      // schema_version is NOT part of the canonical hash, so an in-place downgrade with otherwise
+      // consistent hashes would slip past the address check — reject it explicitly (review).
+      return { ok: false, reason: `unexpected schema_version ${bundle.schema_version}` }
+    }
+    const recomputed = buildBundle({
+      diff: bundle.diff,
+      repository: bundle.repository,
+      environment: bundle.environment,
+    })
+    if (recomputed.diff_hash !== bundle.diff_hash) {
+      return { ok: false, reason: 'diff_hash does not match the diff content' }
+    }
+    if (recomputed.bundle_id !== bundle.bundle_id) {
+      return { ok: false, reason: 'bundle_id does not match repository/environment content' }
+    }
+    return { ok: true }
+  } catch (e) {
+    return { ok: false, reason: `malformed bundle: ${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
 /** sha256 of arbitrary text (used for the .gitattributes fingerprint). */
 export function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')

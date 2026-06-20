@@ -4,7 +4,15 @@ import { join, resolve } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 import type { GitAdapter, DiffInputOptions } from '../adapters/git'
 import type { DiffInput } from '../core/types'
-import { buildBundle, sha256, type ReviewBundle } from './bundle'
+import { buildBundle, sha256, verifyBundleIntegrity, type ReviewBundle } from './bundle'
+
+/** Thrown when a stored bundle fails its content-address check (tamper / wrong filename). */
+export class BundleIntegrityError extends Error {
+  constructor(bundleId: string, reason: string) {
+    super(`bundle ${bundleId.slice(0, 12)}... failed integrity check: ${reason}`)
+    this.name = 'BundleIntegrityError'
+  }
+}
 
 /** Immutable bundles live under .between/bundles/<bundle_id>.json (content-addressed). */
 export function bundlesDir(root: string): string {
@@ -59,8 +67,20 @@ export async function writeBundle(root: string, bundle: ReviewBundle): Promise<s
   return path
 }
 
+/**
+ * Read a bundle, REFUSING a tampered one (finding #4). A stored bundle is immutable + content-
+ * addressed, so we recompute its address and throw if the diff/repository/environment was edited
+ * after sealing or if the content doesn't match the filename it was requested under. Absent -> null
+ * (not an error); tampered -> BundleIntegrityError (fail-closed, never silently consumed).
+ */
 export async function readBundle(root: string, bundleId: string): Promise<ReviewBundle | null> {
   const path = bundlePath(root, bundleId)
   if (!existsSync(path)) return null
-  return JSON.parse(await readFile(path, 'utf8')) as ReviewBundle
+  const bundle = JSON.parse(await readFile(path, 'utf8')) as ReviewBundle
+  const integrity = verifyBundleIntegrity(bundle)
+  if (!integrity.ok) throw new BundleIntegrityError(bundleId, integrity.reason ?? 'tampered')
+  if (bundle.bundle_id !== bundleId) {
+    throw new BundleIntegrityError(bundleId, 'content bundle_id does not match its filename')
+  }
+  return bundle
 }

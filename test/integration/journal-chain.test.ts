@@ -57,4 +57,56 @@ describe('EventsLog hash chain (B5)', () => {
 
     expect((await new EventsLog(dir).verify()).valid).toBe(false)
   })
+
+  it('a failed write does NOT advance the chain head (append fail-safe, finding #2)', async () => {
+    // a subclass that fails the next physical write exactly once
+    class FlakyLog extends EventsLog {
+      failNext = false
+      protected override async writeLine(line: string): Promise<void> {
+        if (this.failNext) {
+          this.failNext = false
+          throw new Error('disk full')
+        }
+        return super.writeLine(line)
+      }
+    }
+    const log = new FlakyLog(dir)
+    await log.append({ ts: 't0', cycle: 0, phase: 'idle', event: 'e0' }) // ok
+    log.failNext = true
+    await expect(log.append({ ts: 't1', cycle: 0, phase: 'idle', event: 'e1' })).rejects.toThrow(
+      /disk full/,
+    )
+    // the failed append must not have advanced lastHash -> the next entry chains off e0, not e1
+    await log.append({ ts: 't2', cycle: 0, phase: 'idle', event: 'e2' })
+
+    const fresh = new EventsLog(dir)
+    expect((await fresh.read()).length).toBe(2) // only e0 + e2 hit disk
+    expect((await fresh.verify()).valid).toBe(true) // chain intact: no dangling prev_hash
+  })
+
+  it('head() is null before the first append (nothing to pin yet)', () => {
+    expect(new EventsLog(dir).head()).toBeNull()
+  })
+
+  it('head() exposes the pinnable chain head; verifyAll catches tail-truncation', async () => {
+    const log = new EventsLog(dir)
+    await append(log, 4)
+    const pin = log.head() // what the daemon would pin into state.json
+    expect(pin).toEqual({ hash: expect.stringMatching(/^[a-f0-9]{64}$/), count: 4 })
+
+    // chain alone still verifies (no pin) and even after dropping the tail
+    expect((await log.verifyAll(null)).valid).toBe(true)
+
+    const path = betweenPaths(dir).events
+    const lines = (await readFile(path, 'utf8')).trim().split('\n')
+    await writeFile(path, lines.slice(0, 2).join('\n') + '\n') // drop the newest 2 (tail)
+
+    const fresh = new EventsLog(dir)
+    expect((await fresh.verify()).valid).toBe(true) // verifyChain is fooled by a shorter chain
+    const all = await fresh.verifyAll(pin) // the pin is NOT fooled
+    expect(all.chain.valid).toBe(true)
+    expect(all.head.ok).toBe(false)
+    expect(all.valid).toBe(false)
+    expect(all.head.reason).toMatch(/truncation/)
+  })
 })

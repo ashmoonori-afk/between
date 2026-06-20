@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { buildBundle, BUNDLE_SCHEMA_VERSION, type ReviewBundleInput } from '../../src/review/bundle'
+import {
+  buildBundle,
+  verifyBundleIntegrity,
+  BUNDLE_SCHEMA_VERSION,
+  type ReviewBundleInput,
+} from '../../src/review/bundle'
 import { hashDiff } from '../../src/core/diff-hash'
 
 const base: ReviewBundleInput = {
@@ -43,5 +48,46 @@ describe('buildBundle', () => {
     const a = buildBundle(base)
     expect(a.diff.tracked).toContain('+hi')
     expect(a.diff.trackedRaw).toContain('M\tx')
+  })
+})
+
+describe('verifyBundleIntegrity (finding #4)', () => {
+  it('accepts a freshly built bundle', () => {
+    expect(verifyBundleIntegrity(buildBundle(base)).ok).toBe(true)
+  })
+
+  it('rejects a bundle whose diff was edited after sealing (diff_hash mismatch)', () => {
+    const b = buildBundle(base)
+    const tampered = { ...b, diff: { ...b.diff, tracked: 'EVIL injected diff' } }
+    const r = verifyBundleIntegrity(tampered)
+    expect(r.ok).toBe(false)
+    expect(r.reason).toMatch(/diff_hash/)
+  })
+
+  it('rejects a bundle whose provenance was edited but diff_hash left intact (bundle_id mismatch)', () => {
+    const b = buildBundle(base)
+    const tampered = { ...b, repository: { ...b.repository, head_sha: 'attacker-sha' } }
+    const r = verifyBundleIntegrity(tampered)
+    expect(r.ok).toBe(false)
+    expect(r.reason).toMatch(/bundle_id/)
+  })
+
+  it('rejects a bundle with a forged-consistent diff_hash but stale bundle_id', () => {
+    const b = buildBundle(base)
+    // attacker swaps the diff AND recomputes diff_hash to match, but cannot silently keep bundle_id
+    const evilDiff = { ...b.diff, tracked: 'EVIL' }
+    const tampered = { ...b, diff: evilDiff, diff_hash: hashDiff(evilDiff) }
+    expect(verifyBundleIntegrity(tampered).ok).toBe(false) // bundle_id no longer matches
+  })
+
+  it('reports malformed input as not-ok instead of throwing', () => {
+    expect(verifyBundleIntegrity({} as never).ok).toBe(false)
+  })
+
+  it('rejects an in-place schema_version downgrade (review)', () => {
+    const b = buildBundle(base)
+    const r = verifyBundleIntegrity({ ...b, schema_version: 1 })
+    expect(r.ok).toBe(false)
+    expect(r.reason).toMatch(/schema_version/)
   })
 })

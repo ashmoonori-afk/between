@@ -76,5 +76,7 @@ export function migrate(state: BetweenState): BetweenState {
       `state.json schema_version ${state.schema_version} is newer than this Between build supports (1). Upgrade Between.`,
     )
   }
-  return state
+  // B5: a pre-pin state.json has no `journal` key. Normalize to null so the field is always present
+  // (the type says ChainHead | null, not undefined) and tail-truncation checks start clean.
+  return state.journal === undefined ? { ...state, journal: null } : state
 }

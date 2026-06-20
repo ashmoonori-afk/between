@@ -46,7 +46,8 @@ export async function collectCockpitData(
 
   const log = new EventsLog(root)
   const entries = await log.read()
-  const journal = await log.verify()
+  // B5: include the chain-head pin so the cockpit also flags tail-truncation, not just edits.
+  const journal = await log.verifyAll(state.journal ?? null)
 
   return {
     project: state.project.name,

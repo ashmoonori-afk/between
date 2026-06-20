@@ -7,6 +7,8 @@
  * (§6, I6), and the port interfaces (hexagonal architecture) that adapters implement.
  */
 
+import type { ChainHead } from './journal'
+
 // ---------------------------------------------------------------------------
 // Phases (§6) + repo_busy holding substate (I21)
 // ---------------------------------------------------------------------------
@@ -184,6 +186,12 @@ export interface BetweenState {
    * review must never be mistaken for real verification.
    */
   evidence_trust: 'simulated' | 'real'
+  /**
+   * B5: pinned journal head (tail hash + entry count) committed OUTSIDE the event log so
+   * tail-truncation — dropping the newest entries to leave a shorter still-valid chain — is
+   * detectable (verifyChain alone can't catch it). null until the first event is logged.
+   */
+  journal: ChainHead | null
 }
 
 // ---------------------------------------------------------------------------

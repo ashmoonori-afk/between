@@ -6,8 +6,11 @@ import { betweenPaths } from './paths'
 import {
   sealEntry,
   verifyChain,
+  verifyChainHead,
   GENESIS_HASH,
+  type ChainHead,
   type ChainVerification,
+  type HeadVerification,
   type JournalPayload,
 } from '../core/journal'
 
@@ -35,11 +38,15 @@ export class EventsLog {
     // Serialize onto the queue so the chain head (lastHash/lastSeq) advances atomically per write.
     const write = this.queue.then(async () => {
       if (this.lastHash === undefined) await this.initChain()
-      const seq = ++this.lastSeq
+      const seq = this.lastSeq + 1
       const payload = { v: EVENT_SCHEMA_VERSION, ...event, seq } as unknown as JournalPayload
       const sealed = sealEntry(payload, this.lastHash!)
-      this.lastHash = sealed.hash
+      // Advance the in-memory chain head ONLY after the line is durably written (finding #2):
+      // if writeLine throws, lastHash/lastSeq stay put, so the NEXT append re-links off the last
+      // entry that actually hit disk instead of a phantom one (which broke the chain at brokenAt:0).
       await this.writeLine(JSON.stringify(sealed) + '\n')
+      this.lastHash = sealed.hash
+      this.lastSeq = seq
     })
     // queue advances with a swallowed copy so one failed write doesn't poison future appends
     this.queue = write.catch(() => {})
@@ -54,12 +61,37 @@ export class EventsLog {
     this.lastSeq = typeof last?.seq === 'number' ? last.seq : entries.length - 1
   }
 
+  /**
+   * The current chain head to pin in state.json (B5), from the in-memory cursor advanced by
+   * `append`. null before anything is appended this process. count = seq + 1 (seq is 0-based).
+   * The head is only returned when lastHash is a real 64-hex sha256 (review): a malformed/empty
+   * tail hash (already a broken chain that verifyChain catches) must not be pinned as a valid head.
+   */
+  head(): ChainHead | null {
+    if (this.lastSeq < 0 || !/^[a-f0-9]{64}$/.test(this.lastHash ?? '')) return null
+    return { hash: this.lastHash!, count: this.lastSeq + 1 }
+  }
+
   /** Walk the hash chain; reports the first tampered/broken entry, or valid (B5). */
   async verify(): Promise<ChainVerification> {
     return verifyChain((await this.read()) as unknown as JournalPayload[])
   }
 
-  private async writeLine(line: string): Promise<void> {
+  /**
+   * Combined integrity check (single read): the hash chain AND the pinned head from state.json.
+   * `valid` is true only when both hold — so tail-truncation (caught only by the pin) fails too.
+   */
+  async verifyAll(
+    pin: ChainHead | null,
+  ): Promise<{ chain: ChainVerification; head: HeadVerification; valid: boolean }> {
+    const entries = (await this.read()) as unknown as JournalPayload[]
+    const chain = verifyChain(entries)
+    const head = verifyChainHead(entries, pin)
+    return { chain, head, valid: chain.valid && head.ok }
+  }
+
+  /** protected so tests can inject a write failure to exercise the append fail-safe (finding #2). */
+  protected async writeLine(line: string): Promise<void> {
     const fh = await open(this.path, 'a')
     try {
       await fh.write(line)

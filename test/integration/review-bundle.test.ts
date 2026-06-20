@@ -3,9 +3,16 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { execa } from 'execa'
+import { readFile } from 'node:fs/promises'
 import { GitAdapter } from '../../src/adapters/git'
 import { hashDiff } from '../../src/core/diff-hash'
-import { captureBundle, writeBundle, readBundle } from '../../src/review/store'
+import {
+  captureBundle,
+  writeBundle,
+  readBundle,
+  bundlePath,
+  BundleIntegrityError,
+} from '../../src/review/store'
 
 let dir: string
 const OPTS = { reviewUntracked: false, untrackedGlobs: [] as string[] }
@@ -67,5 +74,31 @@ describe('review bundle capture + store (A1)', () => {
     expect(hashDiff(fromBundle!.diff)).toBe(bundle.diff_hash)
     // and the live tree has genuinely diverged (proving the bundle is immutable)
     expect(hashDiff(await git.diffInput(OPTS))).not.toBe(bundle.diff_hash)
+  })
+
+  it('readBundle REFUSES a tampered bundle file (finding #4, fail-closed)', async () => {
+    await writeFile(join(dir, 'a.txt'), 'one\ntwo\n')
+    const git = new GitAdapter(dir)
+    const bundle = await captureBundle(git, OPTS, '0.1.0')
+    const path = await writeBundle(dir, bundle)
+
+    // an attacker edits the stored diff content but leaves the hashes in place
+    const onDisk = JSON.parse(await readFile(path, 'utf8'))
+    onDisk.diff.tracked = 'diff --git a/a.txt b/a.txt\n+EVIL backdoor'
+    await writeFile(path, JSON.stringify(onDisk, null, 2) + '\n')
+
+    await expect(readBundle(dir, bundle.bundle_id)).rejects.toBeInstanceOf(BundleIntegrityError)
+  })
+
+  it('readBundle rejects a bundle whose content id does not match its filename', async () => {
+    await writeFile(join(dir, 'a.txt'), 'one\ntwo\n')
+    const git = new GitAdapter(dir)
+    const bundle = await captureBundle(git, OPTS, '0.1.0')
+    await writeBundle(dir, bundle)
+
+    // copy a valid bundle under a DIFFERENT id's filename (content address no longer matches name)
+    const wrongId = 'f'.repeat(64)
+    await writeFile(bundlePath(dir, wrongId), JSON.stringify(bundle, null, 2) + '\n')
+    await expect(readBundle(dir, wrongId)).rejects.toBeInstanceOf(BundleIntegrityError)
   })
 })

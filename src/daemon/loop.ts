@@ -1,7 +1,7 @@
 import type { AgentRole } from '../adapters/agent-host'
 import type { BetweenEvent, BetweenState, EventName } from '../core/types'
 import { transition } from '../core/fsm'
-import { setPhase, touch } from '../core/state'
+import { setPhase, touch, pinJournal } from '../core/state'
 import { reconcile } from './reconcile'
 import { GitError } from '../adapters/git'
 import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
@@ -59,17 +59,27 @@ export class Daemon {
     await this.deps.state.write(next)
   }
 
-  private async emit(event: string, extra?: EmitExtra): Promise<void> {
+  /** Build + append one journal entry from `state` (no persist — the caller pins the head). */
+  private async appendEvent(state: BetweenState, event: string, extra?: EmitExtra): Promise<void> {
     const e: Omit<BetweenEvent, 'v'> = {
       ts: this.deps.clock.nowIso(),
-      cycle: this.current.workflow.cycle,
-      phase: this.current.workflow.phase,
+      cycle: state.workflow.cycle,
+      phase: state.workflow.phase,
       event,
       ...(extra?.target ? { target: extra.target } : {}),
       ...(extra?.diff_hash ? { diff_hash: extra.diff_hash } : {}),
       ...(extra?.detail ? { detail: extra.detail } : {}),
     }
     await this.deps.events.append(e)
+  }
+
+  /**
+   * Log an event NOT tied to a phase change (e.g. a signal), then pin the new chain head so
+   * tail-truncation stays detectable (B5). Pinning AFTER the append covers even the newest entry.
+   */
+  private async emit(event: string, extra?: EmitExtra): Promise<void> {
+    await this.appendEvent(this.current, event, extra)
+    await this.persist(pinJournal(this.current, this.deps.events.head()))
   }
 
   /** Apply an FSM event; persist + log only when it actually changes phase. */
@@ -86,8 +96,11 @@ export class Daemon {
     let next = setPhase(this.current, res.phase, res.previous_phase)
     if (mutate) next = mutate(next)
     next = touch(next, this.deps.clock)
-    await this.persist(next)
-    await this.emit(event, extra)
+    // Append the transition's audit entry BEFORE persisting, then write the new phase + the fresh
+    // journal pin in a SINGLE state write (review): no double-write, and a crash can't leave the
+    // phase advanced on disk without its journal entry.
+    await this.appendEvent(next, event, extra)
+    await this.persist(pinJournal(next, this.deps.events.head()))
     return true
   }
 

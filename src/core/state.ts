@@ -1,5 +1,6 @@
 import type { BetweenState, Clock, Phase, ProjectRef } from './types'
 import { STATE_SCHEMA_VERSION } from './types'
+import type { ChainHead } from './journal'
 import { projectPhase } from './phase-projection'
 import { emptyDebounce } from './debounce'
 
@@ -48,8 +49,14 @@ export function initialState(opts: InitialStateOptions, clock: Clock): BetweenSt
     broker: { status: 'stable', last_signal: null, last_signal_at: null },
     approval: null,
     evidence_trust: opts.evidenceTrust ?? 'real',
+    journal: null,
   }
   return withProjection(base)
+}
+
+/** Pin the journal head into state (B5). Pure: returns a new state. */
+export function pinJournal(state: BetweenState, head: ChainHead | null): BetweenState {
+  return { ...state, journal: head }
 }
 
 /**
