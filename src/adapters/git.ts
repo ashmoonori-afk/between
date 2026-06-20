@@ -1,5 +1,6 @@
 import { execa } from 'execa'
 import { existsSync } from 'node:fs'
+import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { DiffInput, DiffSummary, UntrackedEntry } from '../core/types'
 
@@ -147,6 +148,44 @@ export class GitAdapter {
       this.untracked(opts),
     ])
     return { tracked, trackedRaw, untracked }
+  }
+
+  // --- review-bundle provenance (A1) — read-only metadata for the immutable Review Object ---
+
+  /** HEAD commit sha, or null when the repo has no commit yet. */
+  async headSha(): Promise<string | null> {
+    const r = await this.run(['rev-parse', 'HEAD'])
+    return r.exitCode === 0 ? r.stdout.trim() : null
+  }
+
+  /** Current branch name, or null when detached / unborn. */
+  async branch(): Promise<string | null> {
+    const r = await this.run(['rev-parse', '--abbrev-ref', 'HEAD'])
+    const name = r.stdout.trim()
+    return r.exitCode === 0 && name && name !== 'HEAD' ? name : null
+  }
+
+  /** `git write-tree` OID of the current index (repo-state fingerprint); '' when unavailable. */
+  async indexTree(): Promise<string> {
+    const r = await this.run(['write-tree'])
+    return r.exitCode === 0 ? r.stdout.trim() : ''
+  }
+
+  /** `git --version` string. */
+  async gitVersion(): Promise<string> {
+    const r = await this.run(['--version'])
+    return r.exitCode === 0 ? r.stdout.trim() : ''
+  }
+
+  /** Raw `.gitattributes` content at the repo root (affects diff normalization), or '' if none. */
+  async attributesText(): Promise<string> {
+    const file = join(this.root, '.gitattributes')
+    if (!existsSync(file)) return ''
+    try {
+      return await readFile(file, 'utf8')
+    } catch {
+      return ''
+    }
   }
 }
 
