@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildCockpitActionCommand,
   buildCockpitModel,
+  filterCockpitModel,
   focusReplayCycle,
   validateCockpitAction,
 } from '../../src/ui/cockpit-model'
@@ -164,5 +165,29 @@ describe('buildCockpitModel', () => {
       ok: false,
       reason: 'replay_cycle_not_found',
     })
+  })
+
+  it('filters findings by file and severity without changing the source model', () => {
+    const model = buildCockpitModel({
+      data,
+      diffHash: 'h1',
+      trackedDiff: diff,
+      findings: [
+        { id: 'F1', severity: 'blocking', summary: '[app.ts:2] b needs a test', target_hash: 'h1' },
+        {
+          id: 'F2',
+          severity: 'non-blocking',
+          summary: '[other.ts:9] naming',
+          target_hash: 'h1',
+        },
+      ],
+      replayCycles: [],
+    })
+
+    const filtered = filterCockpitModel(model, { file: 'app.ts', severity: 'blocking' })
+
+    expect(filtered.findings.map((finding) => finding.finding.id)).toEqual(['F1'])
+    expect(filtered.filters).toEqual({ file: 'app.ts', severity: 'blocking' })
+    expect(model.findings.map((finding) => finding.finding.id)).toEqual(['F1', 'F2'])
   })
 })

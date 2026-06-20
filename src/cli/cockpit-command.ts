@@ -1,8 +1,9 @@
 import type { Command } from 'commander'
 import { SystemClock } from '../core/clock'
+import type { FindingSeverity } from '../core/types'
 import { print, printErr } from './output'
 import { fail, root } from './shared'
-import type { CockpitActionIntent, CockpitModel } from '../ui/cockpit-model'
+import type { CockpitActionIntent, CockpitFilters, CockpitModel } from '../ui/cockpit-model'
 
 export function registerCockpitCommand(program: Command): void {
   program
@@ -15,6 +16,8 @@ export function registerCockpitCommand(program: Command): void {
     .option('--finding <id>', 'finding id for --action')
     .option('--reason <text>', 'optional action reason')
     .option('--replay-cycle <cycle>', 'focus replay history on a specific cycle number')
+    .option('--file <path>', 'filter linked findings by file path')
+    .option('--severity <severity>', 'filter findings by severity: blocking | non-blocking')
     .option('--rerun-checks', 'run configured verification checks before rendering the cockpit')
     .action(
       async (opts: {
@@ -22,6 +25,8 @@ export function registerCockpitCommand(program: Command): void {
         finding?: string
         reason?: string
         replayCycle?: string
+        file?: string
+        severity?: string
         rerunChecks?: boolean
       }) => {
         try {
@@ -30,6 +35,12 @@ export function registerCockpitCommand(program: Command): void {
           const replayCycle = opts.replayCycle ? parseReplayCycle(opts.replayCycle) : null
           if (opts.replayCycle && replayCycle === null) {
             printErr('between: --replay-cycle must be a non-negative integer')
+            process.exitCode = 1
+            return
+          }
+          const filters = parseFilters(opts.file, opts.severity)
+          if (!filters.ok) {
+            printErr('between: --severity must be blocking or non-blocking')
             process.exitCode = 1
             return
           }
@@ -66,6 +77,10 @@ export function registerCockpitCommand(program: Command): void {
             await submitFindingAction(action, opts.finding, opts.reason, model)
             return
           }
+          if (filters.value.file || filters.value.severity) {
+            const { filterCockpitModel } = await import('../ui/cockpit-model')
+            model = filterCockpitModel(model, filters.value)
+          }
           if (rerunReport) {
             print(`between: verification re-run ${rerunReport.allPassed ? 'PASS' : 'FAIL'}`)
           }
@@ -76,6 +91,19 @@ export function registerCockpitCommand(program: Command): void {
         }
       },
     )
+}
+
+function parseFilters(
+  file: string | undefined,
+  severity: string | undefined,
+): { ok: true; value: CockpitFilters } | { ok: false } {
+  const out: CockpitFilters = {}
+  if (file) out.file = file
+  if (severity) {
+    if (severity !== 'blocking' && severity !== 'non-blocking') return { ok: false }
+    out.severity = severity as FindingSeverity
+  }
+  return { ok: true, value: out }
 }
 
 function parseReplayCycle(value: string): number | null {

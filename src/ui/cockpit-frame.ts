@@ -68,8 +68,10 @@ export function renderCockpit(d: CockpitData): string {
 export function renderCockpitModel(model: CockpitModel): string {
   const out = [renderCockpit(model.summary).trimEnd()]
   out.push(bar('Linked findings'))
+  const filterLine = renderFilters(model)
+  if (filterLine) out.push(`  filters: ${filterLine}`)
   if (model.findings.length === 0) {
-    out.push('  none')
+    out.push(filterLine ? '  none (filtered)' : '  none')
   } else {
     for (const item of model.findings.slice(0, 8)) {
       const loc = item.location ? ascii(`${item.location.file}:${item.location.line}`) : '-'
@@ -106,6 +108,13 @@ export function renderCockpitModel(model: CockpitModel): string {
   out.push('  between cockpit --rerun-checks [--replay-cycle <n>]')
   out.push('-'.repeat(60))
   return out.join('\n') + '\n'
+}
+
+function renderFilters(model: CockpitModel): string {
+  const out: string[] = []
+  if (model.filters.file) out.push(`file=${ascii(model.filters.file)}`)
+  if (model.filters.severity) out.push(`severity=${model.filters.severity}`)
+  return out.join(' ')
 }
 
 function oneLine(value: string): string {

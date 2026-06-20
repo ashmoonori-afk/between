@@ -1,4 +1,4 @@
-import type { Finding } from '../core/types'
+import type { Finding, FindingSeverity } from '../core/types'
 import type { CockpitData } from './cockpit-frame'
 
 export interface DiffHunk {
@@ -27,6 +27,11 @@ export interface CockpitFindingModel {
   hunkIndex: number | null
 }
 
+export interface CockpitFilters {
+  file?: string
+  severity?: FindingSeverity
+}
+
 export interface CockpitModel {
   summary: CockpitData
   diffHash: string | null
@@ -34,6 +39,7 @@ export interface CockpitModel {
   findings: CockpitFindingModel[]
   replayCycles: ReplayCycleSnapshot[]
   selectedReplayCycle: ReplayCycleSnapshot | null
+  filters: CockpitFilters
   policy: { risk: CockpitData['risk']; satisfied: boolean | null; gates: CockpitData['gates'] }
   verification: CockpitData['verification']
 }
@@ -82,12 +88,26 @@ export function buildCockpitModel(input: BuildCockpitModelInput): CockpitModel {
     findings: input.findings.map((finding) => linkFinding(finding, input.diffHash, diffHunks)),
     replayCycles: [...input.replayCycles],
     selectedReplayCycle: null,
+    filters: {},
     policy: {
       risk: input.data.risk,
       satisfied: input.data.policySatisfied,
       gates: input.data.gates,
     },
     verification: input.data.verification,
+  }
+}
+
+export function filterCockpitModel(model: CockpitModel, filters: CockpitFilters): CockpitModel {
+  const activeFilters: CockpitFilters = {
+    ...(filters.file ? { file: filters.file } : {}),
+    ...(filters.severity ? { severity: filters.severity } : {}),
+  }
+  if (!activeFilters.file && !activeFilters.severity) return { ...model, filters: {} }
+  return {
+    ...model,
+    filters: activeFilters,
+    findings: model.findings.filter((item) => matchesFindingFilters(item, activeFilters)),
   }
 }
 
@@ -158,6 +178,12 @@ export function parseDiffHunks(diff: string): DiffHunk[] {
     current?.lines.push(line)
   }
   return hunks
+}
+
+function matchesFindingFilters(item: CockpitFindingModel, filters: CockpitFilters): boolean {
+  if (filters.severity && item.finding.severity !== filters.severity) return false
+  if (filters.file && item.location?.file !== filters.file) return false
+  return true
 }
 
 function linkFinding(

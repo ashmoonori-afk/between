@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderCockpit, renderCockpitModel, type CockpitData } from '../../src/ui/cockpit-frame'
-import { buildCockpitModel, focusReplayCycle } from '../../src/ui/cockpit-model'
+import { buildCockpitModel, filterCockpitModel, focusReplayCycle } from '../../src/ui/cockpit-model'
 
 const data: CockpitData = {
   project: 'demo',
@@ -114,6 +114,33 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/diff: 2 files \+10 -1 bundle bbbbbbbb/)
     expect(frame).toMatch(/  cycle 3: review_requested h0/)
     expect(frame).toMatch(/\* cycle 3: human_gate h1/)
+    expect(frame).toMatch(/^[\x00-\x7F]*$/)
+  })
+
+  it('renders active finding filters and a filtered-empty state', () => {
+    const frame = renderCockpitModel(
+      filterCockpitModel(
+        buildCockpitModel({
+          data,
+          diffHash: 'h1',
+          trackedDiff:
+            'diff --git a/app.ts b/app.ts\n@@ -1,1 +1,2 @@\n const a = 1\n+const b = 2\n',
+          findings: [
+            {
+              id: 'F1',
+              severity: 'blocking',
+              summary: '[app.ts:2] add a regression test',
+              target_hash: 'h1',
+            },
+          ],
+          replayCycles: [],
+        }),
+        { file: 'missing.ts', severity: 'non-blocking' },
+      ),
+    )
+
+    expect(frame).toMatch(/filters: file=missing\.ts severity=non-blocking/)
+    expect(frame).toMatch(/none \(filtered\)/)
     expect(frame).toMatch(/^[\x00-\x7F]*$/)
   })
 })
