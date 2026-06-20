@@ -26,7 +26,7 @@ export function registerReviewCommand(program: Command): void {
         }
         const path = await materializeBundle(bundle, new WorktreeProvider(root()))
         print(`between: reviewer worktree at ${path}`)
-        print('  reads the sealed bundle state (read-only by convention), not the live work tree')
+        print('  reads the sealed bundle state (best-effort OS read-only), not the live work tree')
       } catch (e) {
         await fail(e)
       }

@@ -2,6 +2,7 @@ import { execa } from 'execa'
 import { existsSync } from 'node:fs'
 import { rm } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+import { makeTreeWritable } from './sandbox'
 
 const PINNED_ENV = { GIT_PAGER: 'cat', LC_ALL: 'C', TZ: 'UTC' } as const
 /** Pin git config so the isolated checkout is deterministic across machines (matches GitAdapter). */
@@ -15,6 +16,10 @@ const PIN = ['-c', 'core.autocrlf=false', '-c', 'core.quotepath=false', '-c', 'c
  */
 export class WorktreeProvider {
   constructor(private readonly root: string) {}
+
+  rootDir(): string {
+    return this.root
+  }
 
   private dir(name: string): string {
     return join(resolve(this.root), '.between', 'worktrees', name)
@@ -36,6 +41,7 @@ export class WorktreeProvider {
   /** Remove the worktree + prune git's bookkeeping (best-effort, idempotent). */
   async remove(name: string): Promise<void> {
     const path = this.dir(name)
+    await makeTreeWritable(path)
     await this.run(['worktree', 'remove', '--force', path])
     if (existsSync(path)) await rm(path, { recursive: true, force: true }).catch(() => {})
     await this.run(['worktree', 'prune'])

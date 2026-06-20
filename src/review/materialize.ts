@@ -4,6 +4,7 @@ import { dirname } from 'node:path'
 import { verifyBundleIntegrity, type ReviewBundle } from './bundle'
 import { resolveRepoPayloadPath } from './payloads'
 import type { WorktreeProvider } from '../adapters/worktree'
+import { sealSandboxedWorktree, type SandboxRole } from '../adapters/sandbox'
 
 const PIN = ['-c', 'core.autocrlf=false']
 
@@ -26,12 +27,20 @@ export async function materializeBundle(
   try {
     await applyTrackedPatch(path, bundle.diff.tracked)
     await materializePayloads(bundle, path)
+    const role = sandboxRole(name)
+    if (role) await sealSandboxedWorktree(wp.rootDir(), role, path)
     return path
   } catch (e) {
     await wp.remove(name)
     if (e instanceof Error) throw e
     throw new Error(String(e))
   }
+}
+
+function sandboxRole(name: string): SandboxRole | null {
+  if (name === REVIEWER_WORKTREE || name === 'reviewer') return 'reviewer'
+  if (name === 'verifier') return 'verifier'
+  return null
 }
 
 async function applyTrackedPatch(path: string, patch: string): Promise<void> {
