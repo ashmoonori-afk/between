@@ -6,7 +6,7 @@ import { CommandBus } from '../adapters/command-bus'
 import { AckStore } from '../adapters/ack-store'
 import { buildSignal } from '../adapters/signal-transport'
 import type { Ack, ApprovalScope } from '../core/types'
-import { signApproval, verifyApproval } from '../core/approval'
+import { signApproval, verifyApproval, approvalFreshness } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
 import { loadConfig, runStart } from '../runtime'
@@ -212,6 +212,21 @@ export function registerBrokerCommands(program: Command): void {
           })
           if (!ok) {
             printErr('between: recorded approval failed signature verification')
+            process.exitCode = 1
+            return
+          }
+          // A2: a valid signature isn't enough — the approval must still match the current
+          // diff/cycle/bundle and not be expired, or a stale approval could push new content.
+          const stale = approvalFreshness(ap, {
+            diff_hash: state.diff.hash,
+            cycle: state.workflow.cycle,
+            bundle_id: state.diff.bundle_id,
+            nowMs: Date.now(),
+          })
+          if (stale) {
+            printErr(
+              `between: approval is no longer valid — ${stale} (re-approve the current diff)`,
+            )
             process.exitCode = 1
             return
           }

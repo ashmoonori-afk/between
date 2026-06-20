@@ -128,6 +128,7 @@ export async function openCycleAndSignal(
       bundle_id: bundle.bundle_id,
       bundle_path: bundleRel,
     },
+    approval: null, // A2: a new review cycle invalidates any prior approval
     debounce: emptyDebounce(),
   }))
 
@@ -250,7 +251,12 @@ export async function sendDeveloperSignal(ctx: DaemonContext, hash: string): Pro
 export async function superseded(ctx: DaemonContext): Promise<boolean> {
   const { hash } = await currentDiff(ctx)
   if (hash === null || hash === ctx.current().diff.hash) return false
-  await ctx.dispatch('diff_superseded', (s) => ({ ...s, debounce: emptyDebounce() }))
+  // A2: the reviewed diff changed under us -> any approval bound to it is void
+  await ctx.dispatch('diff_superseded', (s) => ({
+    ...s,
+    approval: null,
+    debounce: emptyDebounce(),
+  }))
   return true
 }
 

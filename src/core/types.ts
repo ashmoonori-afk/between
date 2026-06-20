@@ -154,6 +154,10 @@ export interface ApprovalToken {
   granted_at: string
   /** HMAC over (scope, diff_hash, cycle); lets `verify-push` re-check independently (P1-5) */
   sig: string | null
+  /** bundle this approval was granted against; freshness-checked vs current state (A2). */
+  bundle_id: string | null
+  /** ISO expiry; the approval is rejected after this even if still in state (A2). */
+  expires_at: string
 }
 
 export interface ProjectRef {

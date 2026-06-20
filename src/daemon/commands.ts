@@ -2,7 +2,7 @@ import { touch, isAlreadyReviewed } from '../core/state'
 import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
-import { verifyApproval } from '../core/approval'
+import { verifyApproval, APPROVAL_TTL_SECONDS } from '../core/approval'
 import type { ApprovalScope } from '../core/types'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
@@ -30,6 +30,7 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
             started_at: ctx.deps.clock.nowIso(),
             error: null,
           },
+          approval: null, // A2: a new goal invalidates any prior approval
         }))
         // redact before the goal text reaches the durable event log (C2)
         await ctx.emit('goal_set', { detail: { goal: redactSecrets(command.goal).text } })
@@ -83,6 +84,9 @@ export async function approve(
       cycle: cur.workflow.cycle,
       granted_at: ctx.deps.clock.nowIso(),
       sig: sig ?? null,
+      // A2: bind the approval to the exact bundle + an expiry so it can't outlive its change.
+      bundle_id: cur.diff.bundle_id,
+      expires_at: new Date(ctx.deps.clock.now() + APPROVAL_TTL_SECONDS * 1000).toISOString(),
     },
   }
   await ctx.persist(touch(next, ctx.deps.clock))

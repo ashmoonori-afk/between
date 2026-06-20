@@ -37,6 +37,21 @@ if (ap && !valid(ap)) {
   process.stderr.write('between: refusing push — recorded approval failed signature verification.\\n')
   process.exit(1)
 }
+// A2: a valid signature is necessary but not sufficient — the approval must still match the
+// current diff/cycle/bundle and not be expired, or a stale approval could push new content.
+if (ap && valid(ap)) {
+  const d = state.diff || {}
+  const wf = state.workflow || {}
+  let stale = null
+  if (ap.diff_hash !== (d.hash ?? null)) stale = 'diff hash changed'
+  else if (ap.cycle !== wf.cycle) stale = 'cycle changed'
+  else if (ap.bundle_id !== (d.bundle_id ?? null)) stale = 'review bundle changed'
+  else if (!(Date.parse(ap.expires_at) > Date.now())) stale = 'approval expired'
+  if (stale) {
+    process.stderr.write('between: refusing push — approval no longer valid (' + stale + '). Re-approve the current diff.\\n')
+    process.exit(1)
+  }
+}
 if (!ap && phase === 'human_gate') {
   process.stderr.write('between: refusing push — human approval is pending (run: between approve merge).\\n')
   process.exit(1)

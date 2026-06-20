@@ -159,6 +159,14 @@ describe('headless walking skeleton (M3)', () => {
       await d2.tick()
       expect(d2.state.workflow.phase).toBe('done')
       expect(d2.state.approval?.scope).toBe('merge')
+
+      // A2: the approval is bound to the exact bundle + carries an expiry
+      expect(d2.state.approval?.bundle_id).toBe(d2.state.diff.bundle_id)
+      expect(d2.state.approval?.expires_at).toBeTruthy()
+      // A2: a new goal invalidates the prior approval (can't be reused for new work)
+      await bus.submit({ kind: 'goal', goal: 'a different goal' })
+      await d2.tick()
+      expect(d2.state.approval).toBeNull()
     },
     INTEGRATION_TIMEOUT_MS,
   )
