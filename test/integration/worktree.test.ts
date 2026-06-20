@@ -28,11 +28,14 @@ describe('WorktreeProvider (B1)', () => {
     expect(existsSync(path)).toBe(true)
     // the committed content is checked out in the isolated worktree
     expect(await readFile(join(path, 'a.txt'), 'utf8')).toBe('committed\n')
-    expect(await wp.list()).toContain(path.replace(/\\/g, '/'))
+    // git reports the worktree (path normalization varies on Windows -> match the name, not the
+    // exact absolute path which can differ by 8.3 short names / casing).
+    const named = (l: string[]) => l.some((w) => w.toLowerCase().endsWith('/reviewer'))
+    expect(named(await wp.list())).toBe(true)
 
     await wp.remove('reviewer')
     expect(existsSync(path)).toBe(false)
-    expect(await wp.list()).not.toContain(path.replace(/\\/g, '/'))
+    expect(named(await wp.list())).toBe(false)
   })
 
   it('the reviewer worktree is isolated from edits to the main working tree', async () => {
