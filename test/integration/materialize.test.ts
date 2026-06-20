@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
-import { mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, writeFile, rm, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { GitAdapter } from '../../src/adapters/git'
@@ -55,5 +55,67 @@ describe('materializeBundle (B1)', () => {
     } finally {
       await wp.remove(REVIEWER_WORKTREE)
     }
+  })
+
+  it('materializes configured untracked and binary payloads', async () => {
+    await writeFile(join(dir, 'bin.dat'), Buffer.from([0, 1, 2, 3]))
+    await execa('git', ['add', '-A'], { cwd: dir })
+    await execa('git', ['-c', 'commit.gpgsign=false', 'commit', '-m', 'add binary'], {
+      cwd: dir,
+    })
+
+    const sealedBinary = Buffer.from([0, 1, 2, 3, 255])
+    const sealedUntracked = Buffer.from([9, 8, 7, 6])
+    await writeFile(join(dir, 'bin.dat'), sealedBinary)
+    await mkdir(join(dir, 'notes'), { recursive: true })
+    await writeFile(join(dir, 'notes', 'payload.bin'), sealedUntracked)
+
+    const git = new GitAdapter(dir)
+    const bundle = await captureBundle(
+      git,
+      { reviewUntracked: true, untrackedGlobs: ['notes/*'], payloadMaxBytes: 1024 },
+      '0.1.0',
+    )
+
+    await writeFile(join(dir, 'bin.dat'), Buffer.from([0, 1, 2, 3, 4, 5]))
+    await rm(join(dir, 'notes', 'payload.bin'))
+
+    const wp = new WorktreeProvider(dir)
+    const path = await materializeBundle(bundle, wp)
+    try {
+      expect(await readFile(join(path, 'bin.dat'))).toEqual(sealedBinary)
+      expect(await readFile(join(path, 'notes', 'payload.bin'))).toEqual(sealedUntracked)
+    } finally {
+      await wp.remove(REVIEWER_WORKTREE)
+    }
+  })
+
+  it('excludes env-like untracked files even when globbed', async () => {
+    await writeFile(join(dir, '.env'), 'SECRET=do-not-review\n')
+    await writeFile(join(dir, 'visible.txt'), 'review me\n')
+
+    const git = new GitAdapter(dir)
+    const bundle = await captureBundle(
+      git,
+      { reviewUntracked: true, untrackedGlobs: ['*'], payloadMaxBytes: 1024 },
+      '0.1.0',
+    )
+
+    expect(bundle.diff.untracked.map((f) => f.path)).toEqual(['visible.txt'])
+    expect(bundle.payloads.map((f) => f.path)).toEqual(['visible.txt'])
+  })
+
+  it('refuses secret-like untracked payload content', async () => {
+    await mkdir(join(dir, 'notes'), { recursive: true })
+    await writeFile(join(dir, 'notes', 'secret.txt'), 'API_KEY=abcdef1234567890\n')
+
+    const git = new GitAdapter(dir)
+    await expect(
+      captureBundle(
+        git,
+        { reviewUntracked: true, untrackedGlobs: ['notes/*'], payloadMaxBytes: 1024 },
+        '0.1.0',
+      ),
+    ).rejects.toThrow(/secret-like/)
   })
 })

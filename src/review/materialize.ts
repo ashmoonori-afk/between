@@ -1,48 +1,63 @@
 import { execa } from 'execa'
-import type { ReviewBundle } from './bundle'
+import { mkdir, writeFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
+import { verifyBundleIntegrity, type ReviewBundle } from './bundle'
+import { resolveRepoPayloadPath } from './payloads'
 import type { WorktreeProvider } from '../adapters/worktree'
 
-/** Pin autocrlf so the patch applies byte-for-byte (matches the bundle's deterministic capture). */
 const PIN = ['-c', 'core.autocrlf=false']
 
-/** Default name of the isolated, read-only worktree the reviewer reads from. */
 export const REVIEWER_WORKTREE = 'reviewer-readonly'
 
-/**
- * B1: materialize a reviewer worktree that reproduces EXACTLY the state the bundle sealed (A1) —
- * check out the base commit, then apply the bundle's tracked patch. The reviewer reads this
- * isolated tree instead of the live (possibly moved-on) working tree. It is read-only by
- * CONVENTION for now (the reviewer must not write); OS-level read-only + network-deny are later
- * B1 slices. Returns the worktree path.
- *
- * Limitations (a later slice): only the TRACKED text patch is materialized — binary changes and
- * untracked files (the bundle carries them as an OID manifest, not content) are not reconstructed
- * in the worktree; the reviewer still has the full picture in the bundle JSON. A binary diff makes
- * `git apply` fail, so this throws (and cleans up) rather than producing a wrong tree.
- */
 export async function materializeBundle(
   bundle: ReviewBundle,
   wp: WorktreeProvider,
   name: string = REVIEWER_WORKTREE,
 ): Promise<string> {
+  const integrity = verifyBundleIntegrity(bundle)
+  if (!integrity.ok) {
+    throw new Error(`cannot materialize a tampered bundle: ${integrity.reason ?? 'unknown'}`)
+  }
   const base = bundle.repository.head_sha
   if (!base) {
     throw new Error('cannot materialize a bundle with no base commit (unborn HEAD)')
   }
   const path = await wp.create(name, base)
-  const patch = bundle.diff.tracked
-  if (patch.trim().length > 0) {
-    const r = await execa('git', [...PIN, 'apply', '--whitespace=nowarn'], {
-      cwd: path,
-      input: patch,
-      reject: false,
-    })
-    if (r.exitCode !== 0) {
-      await wp.remove(name) // don't leave a half-applied worktree behind
-      throw new Error(
-        `failed to apply the bundle patch to the reviewer worktree: ${r.stderr.trim()}`,
-      )
-    }
+  try {
+    await applyTrackedPatch(path, bundle.diff.tracked)
+    await materializePayloads(bundle, path)
+    return path
+  } catch (e) {
+    await wp.remove(name)
+    if (e instanceof Error) throw e
+    throw new Error(String(e))
   }
-  return path
+}
+
+async function applyTrackedPatch(path: string, patch: string): Promise<void> {
+  if (patch.trim().length === 0) return
+  const r = await execa('git', [...PIN, 'apply', '--whitespace=nowarn'], {
+    cwd: path,
+    input: patch,
+    reject: false,
+  })
+  if (r.exitCode !== 0) {
+    throw new Error(`failed to apply the bundle patch to the reviewer worktree: ${r.stderr.trim()}`)
+  }
+}
+
+async function materializePayloads(bundle: ReviewBundle, root: string): Promise<void> {
+  const manifest = new Set(bundle.diff.untracked.map((entry) => `${entry.path}\0${entry.oid}`))
+  for (const payload of bundle.payloads) {
+    if (!manifest.has(`${payload.path}\0${payload.oid}`)) {
+      throw new Error(`payload ${payload.path} is not present in the sealed untracked manifest`)
+    }
+    const content = Buffer.from(payload.content, 'base64')
+    if (content.byteLength !== payload.size) {
+      throw new Error(`payload ${payload.path} size does not match its sealed metadata`)
+    }
+    const target = resolveRepoPayloadPath(root, payload.path)
+    await mkdir(dirname(target), { recursive: true })
+    await writeFile(target, content)
+  }
 }

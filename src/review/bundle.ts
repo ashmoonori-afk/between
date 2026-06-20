@@ -29,25 +29,39 @@ export interface BundleEnvironment {
   attributes_hash: string
 }
 
+export interface BundlePayload {
+  path: string
+  oid: string
+  size: number
+  encoding: 'base64'
+  content: string
+}
+
 export interface ReviewBundleInput {
   diff: DiffInput
   repository: BundleRepository
   environment: BundleEnvironment
+  payloads?: readonly BundlePayload[]
 }
 
-export interface ReviewBundle extends ReviewBundleInput {
+export interface ReviewBundle {
   schema_version: number
   /** content address over (diff_hash + repository + environment). */
   bundle_id: string
   /** sha256 of the diff payload alone — identical to `core/diff-hash.hashDiff(diff)`. */
   diff_hash: string
+  diff: DiffInput
+  repository: BundleRepository
+  environment: BundleEnvironment
+  payloads: BundlePayload[]
 }
 
 /** Canonical, NUL-separated serialization that `bundle_id` is the sha256 of. */
 function canonicalBundlePayload(input: ReviewBundleInput, diffHash: string): string {
   const r = input.repository
   const e = input.environment
-  return [
+  const payloads = normalizePayloads(input.payloads ?? [])
+  const sections = [
     `BETWEEN_BUNDLE_V${BUNDLE_SCHEMA_VERSION}`,
     'DIFF',
     diffHash,
@@ -59,7 +73,19 @@ function canonicalBundlePayload(input: ReviewBundleInput, diffHash: string): str
     e.between_version,
     e.git_version,
     e.attributes_hash,
-  ].join(NUL)
+    'PAYLOADS',
+    String(payloads.length),
+  ]
+  for (const payload of payloads) {
+    sections.push(
+      payload.path,
+      payload.oid,
+      String(payload.size),
+      payload.encoding,
+      payload.content,
+    )
+  }
+  return sections.join(NUL)
 }
 
 /**
@@ -68,10 +94,19 @@ function canonicalBundlePayload(input: ReviewBundleInput, diffHash: string): str
  */
 export function buildBundle(input: ReviewBundleInput): ReviewBundle {
   const diff_hash = hashDiff(input.diff)
+  const payloads = normalizePayloads(input.payloads ?? [])
   const bundle_id = createHash('sha256')
-    .update(canonicalBundlePayload(input, diff_hash), 'utf8')
+    .update(canonicalBundlePayload({ ...input, payloads }, diff_hash), 'utf8')
     .digest('hex')
-  return { schema_version: BUNDLE_SCHEMA_VERSION, bundle_id, diff_hash, ...input }
+  return {
+    schema_version: BUNDLE_SCHEMA_VERSION,
+    bundle_id,
+    diff_hash,
+    diff: input.diff,
+    repository: input.repository,
+    environment: input.environment,
+    payloads,
+  }
 }
 
 export interface BundleIntegrity {
@@ -97,6 +132,7 @@ export function verifyBundleIntegrity(bundle: ReviewBundle): BundleIntegrity {
       diff: bundle.diff,
       repository: bundle.repository,
       environment: bundle.environment,
+      payloads: bundle.payloads ?? [],
     })
     if (recomputed.diff_hash !== bundle.diff_hash) {
       return { ok: false, reason: 'diff_hash does not match the diff content' }
@@ -113,4 +149,10 @@ export function verifyBundleIntegrity(bundle: ReviewBundle): BundleIntegrity {
 /** sha256 of arbitrary text (used for the .gitattributes fingerprint). */
 export function sha256(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+function normalizePayloads(payloads: readonly BundlePayload[]): BundlePayload[] {
+  return [...payloads]
+    .map((payload) => ({ ...payload }))
+    .sort((a, b) => a.path.localeCompare(b.path) || a.oid.localeCompare(b.oid))
 }

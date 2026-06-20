@@ -110,7 +110,12 @@ export async function openCycleAndSignal(
 
   // A1: seal the EXACT hashed diff into an immutable, content-addressed review bundle and bind
   // the cycle's diff state to it (bundle.diff_hash === hash by construction).
-  const bundle = await bundleFromDiff(ctx.deps.git, input, BETWEEN_VERSION)
+  const bundle = await bundleFromDiff(
+    ctx.deps.git,
+    input,
+    BETWEEN_VERSION,
+    ctx.deps.config.binary_hash_max_bytes,
+  )
   await writeBundle(ctx.deps.root, bundle)
   const bundleRel = `.between/bundles/${bundle.bundle_id}.json`
 

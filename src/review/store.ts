@@ -5,6 +5,7 @@ import writeFileAtomic from 'write-file-atomic'
 import type { GitAdapter, DiffInputOptions } from '../adapters/git'
 import type { DiffInput } from '../core/types'
 import { buildBundle, sha256, verifyBundleIntegrity, type ReviewBundle } from './bundle'
+import { captureUntrackedPayloads, DEFAULT_BUNDLE_PAYLOAD_MAX_BYTES } from './payloads'
 
 /** Thrown when a stored bundle fails its content-address check (tamper / wrong filename). */
 export class BundleIntegrityError extends Error {
@@ -31,6 +32,7 @@ export async function bundleFromDiff(
   git: GitAdapter,
   diff: DiffInput,
   betweenVersion: string,
+  payloadMaxBytes: number = DEFAULT_BUNDLE_PAYLOAD_MAX_BYTES,
 ): Promise<ReviewBundle> {
   const [head_sha, branch, index_tree, git_version, attributesText] = await Promise.all([
     git.headSha(),
@@ -39,6 +41,12 @@ export async function bundleFromDiff(
     git.gitVersion(),
     git.attributesText(),
   ])
+  const payloads = await captureUntrackedPayloads(
+    git.rootDir(),
+    diff.untracked,
+    (path) => git.hashObject(path),
+    payloadMaxBytes,
+  )
   return buildBundle({
     diff,
     repository: { head_sha, branch, index_tree },
@@ -47,6 +55,7 @@ export async function bundleFromDiff(
       git_version,
       attributes_hash: attributesText ? sha256(attributesText) : '',
     },
+    payloads,
   })
 }
 
@@ -56,7 +65,7 @@ export async function captureBundle(
   opts: DiffInputOptions,
   betweenVersion: string,
 ): Promise<ReviewBundle> {
-  return bundleFromDiff(git, await git.diffInput(opts), betweenVersion)
+  return bundleFromDiff(git, await git.diffInput(opts), betweenVersion, opts.payloadMaxBytes)
 }
 
 /** Persist a bundle atomically; returns its path. Bundles are immutable — same id, same content. */

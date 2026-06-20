@@ -13,6 +13,7 @@ const bundle = {
   diff: { tracked: '', trackedRaw: '', untracked: [] },
   repository: { head_sha: 'a'.repeat(40), branch: 'main', index_tree: 't' },
   environment: { between_version: '0.1.0', git_version: 'git', attributes_hash: '' },
+  payloads: [],
 }
 const base: EvidenceManifestInput = {
   project,

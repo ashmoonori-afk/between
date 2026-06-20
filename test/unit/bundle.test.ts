@@ -80,6 +80,29 @@ describe('verifyBundleIntegrity (finding #4)', () => {
     expect(verifyBundleIntegrity(tampered).ok).toBe(false) // bundle_id no longer matches
   })
 
+  it('rejects a bundle whose sealed payload was edited after sealing', () => {
+    const b = buildBundle({
+      ...base,
+      diff: { ...base.diff, untracked: [{ path: 'note.bin', oid: 'oid1' }] },
+      payloads: [
+        {
+          path: 'note.bin',
+          oid: 'oid1',
+          size: 3,
+          encoding: 'base64',
+          content: Buffer.from([1, 2, 3]).toString('base64'),
+        },
+      ],
+    })
+    const tampered = {
+      ...b,
+      payloads: [{ ...b.payloads[0]!, content: Buffer.from([1, 2, 4]).toString('base64') }],
+    }
+    const r = verifyBundleIntegrity(tampered)
+    expect(r.ok).toBe(false)
+    expect(r.reason).toMatch(/bundle_id/)
+  })
+
   it('reports malformed input as not-ok instead of throwing', () => {
     expect(verifyBundleIntegrity({} as never).ok).toBe(false)
   })

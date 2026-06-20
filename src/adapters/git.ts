@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { isAbsolute, join } from 'node:path'
 import type { DiffInput, DiffSummary, UntrackedEntry } from '../core/types'
+import { isDeniedUntrackedPath, normalizeRepoRelativePath } from '../core/untracked-policy'
 
 /** The well-known empty-tree object, used as the diff base when HEAD does not exist. */
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
@@ -11,7 +12,7 @@ const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904'
 const PIN = ['-c', 'core.autocrlf=false', '-c', 'core.quotepath=false', '-c', 'core.fileMode=false']
 
 /** Flags pinned so diff output is stable and review-friendly (I15). */
-const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-renames']
+const DIFF_FLAGS = ['--no-color', '--no-ext-diff', '--no-renames', '--binary']
 
 /** Exclude the broker's own tree even if `.between/` was accidentally git-tracked (P2-8 / I22). */
 const TRACKED_EXCLUDE = ['--', ':(exclude).between/**']
@@ -42,10 +43,15 @@ export interface DiffInputOptions {
   reviewUntracked: boolean
   /** untracked paths matching none of these are dropped when the list is non-empty */
   untrackedGlobs: string[]
+  payloadMaxBytes?: number
 }
 
 export class GitAdapter {
   constructor(private readonly root: string) {}
+
+  rootDir(): string {
+    return this.root
+  }
 
   private run(args: string[]) {
     return execa('git', [...PIN, ...args], {
@@ -146,8 +152,8 @@ export class GitAdapter {
     if (list.exitCode !== 0) throw new GitError('git ls-files (untracked) failed', list.stderr)
     const files = list.stdout
       .split('\0')
-      .map((f) => f.trim())
-      .filter((f) => f.length > 0 && !f.startsWith('.between/'))
+      .map((f) => normalizeRepoRelativePath(f.trim()))
+      .filter((f): f is string => f !== null && !isDeniedUntrackedPath(f))
       .filter((f) => matchesGlobs(f, opts.untrackedGlobs))
     if (files.length === 0) return []
     // Chunk hash-object so a long file list can't blow the OS command-line length limit.
@@ -163,6 +169,12 @@ export class GitAdapter {
       throw new GitError('git hash-object returned an unexpected oid count', '')
     }
     return files.map((path, i) => ({ path, oid: oids[i] ?? '' }))
+  }
+
+  async hashObject(path: string): Promise<string> {
+    const r = await this.run(['hash-object', '--', path])
+    if (r.exitCode !== 0) throw new GitError('git hash-object failed', r.stderr)
+    return r.stdout.trim()
   }
 
   async diffInput(opts: DiffInputOptions): Promise<DiffInput> {
