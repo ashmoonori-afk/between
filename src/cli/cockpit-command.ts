@@ -14,26 +14,61 @@ export function registerCockpitCommand(program: Command): void {
     .option('--action <action>', 'submit finding action: accept | dispute | waive')
     .option('--finding <id>', 'finding id for --action')
     .option('--reason <text>', 'optional action reason')
-    .action(async (opts: { action?: string; finding?: string; reason?: string }) => {
-      try {
-        const { collectCockpitModel } = await import('../ui/cockpit')
-        const { renderCockpitModel } = await import('../ui/cockpit-frame')
-        const model = await collectCockpitModel(root(), new SystemClock().nowIso())
-        if (!model) {
-          printErr('between: no state found - run `between init`')
-          process.exitCode = 1
-          return
+    .option('--replay-cycle <cycle>', 'focus replay history on a specific cycle number')
+    .action(
+      async (opts: {
+        action?: string
+        finding?: string
+        reason?: string
+        replayCycle?: string
+      }) => {
+        try {
+          const { collectCockpitModel } = await import('../ui/cockpit')
+          const { renderCockpitModel } = await import('../ui/cockpit-frame')
+          let model = await collectCockpitModel(root(), new SystemClock().nowIso())
+          if (!model) {
+            printErr('between: no state found - run `between init`')
+            process.exitCode = 1
+            return
+          }
+          if (opts.action && opts.replayCycle) {
+            printErr('between: --replay-cycle is display-only and cannot be combined with --action')
+            process.exitCode = 1
+            return
+          }
+          if (opts.replayCycle) {
+            const cycle = parseReplayCycle(opts.replayCycle)
+            if (cycle === null) {
+              printErr('between: --replay-cycle must be a non-negative integer')
+              process.exitCode = 1
+              return
+            }
+            const { focusReplayCycle } = await import('../ui/cockpit-model')
+            const result = focusReplayCycle(model, cycle)
+            if (!result.ok) {
+              printErr(`between: replay cycle ${cycle} was not found in the journal`)
+              process.exitCode = 1
+              return
+            }
+            model = result.model
+          }
+          const action = opts.action
+          if (action) {
+            await submitFindingAction(action, opts.finding, opts.reason, model)
+            return
+          }
+          print(renderCockpitModel(model))
+        } catch (e) {
+          await fail(e)
         }
-        const action = opts.action
-        if (action) {
-          await submitFindingAction(action, opts.finding, opts.reason, model)
-          return
-        }
-        print(renderCockpitModel(model))
-      } catch (e) {
-        await fail(e)
-      }
-    })
+      },
+    )
+}
+
+function parseReplayCycle(value: string): number | null {
+  if (!/^\d+$/.test(value)) return null
+  const cycle = Number(value)
+  return Number.isSafeInteger(cycle) ? cycle : null
 }
 
 async function submitFindingAction(

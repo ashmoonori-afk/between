@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { renderCockpit, renderCockpitModel, type CockpitData } from '../../src/ui/cockpit-frame'
-import { buildCockpitModel } from '../../src/ui/cockpit-model'
+import { buildCockpitModel, focusReplayCycle } from '../../src/ui/cockpit-model'
 
 const data: CockpitData = {
   project: 'demo',
@@ -79,6 +79,31 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/F1 \[blocking\] linked app\.ts:2/)
     expect(frame).toMatch(/cycle 2: reviewing h0/)
     expect(frame).toMatch(/between cockpit --action accept\|dispute\|waive/)
+    expect(frame).toMatch(/^[\x00-\x7F]*$/)
+  })
+
+  it('marks the selected replay cycle', () => {
+    const selected = focusReplayCycle(
+      buildCockpitModel({
+        data,
+        diffHash: 'h1',
+        trackedDiff: '',
+        findings: [],
+        replayCycles: [
+          { cycle: 3, phase: 'review_requested', diffHash: 'h0' },
+          { cycle: 3, phase: 'human_gate', diffHash: 'h1' },
+        ],
+      }),
+      3,
+    )
+
+    expect(selected.ok).toBe(true)
+    if (!selected.ok) return
+    const frame = renderCockpitModel(selected.model)
+
+    expect(frame).toMatch(/focus: cycle 3 human_gate h1/)
+    expect(frame).toMatch(/  cycle 3: review_requested h0/)
+    expect(frame).toMatch(/\* cycle 3: human_gate h1/)
     expect(frame).toMatch(/^[\x00-\x7F]*$/)
   })
 })

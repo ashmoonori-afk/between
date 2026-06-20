@@ -79,12 +79,21 @@ export function renderCockpitModel(model: CockpitModel): string {
     }
   }
   out.push(bar('Replay'))
+  if (model.selectedReplayCycle) {
+    const selected = model.selectedReplayCycle
+    out.push(
+      `  focus: cycle ${selected.cycle} ${ascii(selected.phase)} ${selected.diffHash ? selected.diffHash.slice(0, 8) : '-'}`,
+    )
+  }
   if (model.replayCycles.length === 0) {
     out.push('  no replay snapshots')
   } else {
     for (const item of model.replayCycles.slice(-5)) {
       const phase = ascii(item.phase)
-      out.push(`  cycle ${item.cycle}: ${phase} ${item.diffHash ? item.diffHash.slice(0, 8) : '-'}`)
+      const mark = model.selectedReplayCycle === item ? '*' : ' '
+      out.push(
+        `${mark} cycle ${item.cycle}: ${phase} ${item.diffHash ? item.diffHash.slice(0, 8) : '-'}`,
+      )
     }
   }
   out.push(bar('Actions'))

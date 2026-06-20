@@ -29,6 +29,7 @@ export interface CockpitModel {
   diffHunks: DiffHunk[]
   findings: CockpitFindingModel[]
   replayCycles: ReplayCycleSnapshot[]
+  selectedReplayCycle: ReplayCycleSnapshot | null
   policy: { risk: CockpitData['risk']; satisfied: boolean | null; gates: CockpitData['gates'] }
   verification: CockpitData['verification']
 }
@@ -46,6 +47,10 @@ export type CockpitActionValidationReason =
 export type CockpitActionValidation =
   | { ok: true; intent: CockpitActionIntent }
   | { ok: false; reason: CockpitActionValidationReason }
+
+export type CockpitReplayNavigation =
+  | { ok: true; model: CockpitModel }
+  | { ok: false; reason: 'replay_cycle_not_found' }
 
 export interface CockpitFindingActionCommand {
   kind: 'finding_action'
@@ -72,6 +77,7 @@ export function buildCockpitModel(input: BuildCockpitModelInput): CockpitModel {
     diffHunks,
     findings: input.findings.map((finding) => linkFinding(finding, input.diffHash, diffHunks)),
     replayCycles: [...input.replayCycles],
+    selectedReplayCycle: null,
     policy: {
       risk: input.data.risk,
       satisfied: input.data.policySatisfied,
@@ -79,6 +85,12 @@ export function buildCockpitModel(input: BuildCockpitModelInput): CockpitModel {
     },
     verification: input.data.verification,
   }
+}
+
+export function focusReplayCycle(model: CockpitModel, cycle: number): CockpitReplayNavigation {
+  const selected = model.replayCycles.findLast((item) => item.cycle === cycle)
+  if (!selected) return { ok: false, reason: 'replay_cycle_not_found' }
+  return { ok: true, model: { ...model, selectedReplayCycle: selected } }
 }
 
 export function validateCockpitAction(

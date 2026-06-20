@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   buildCockpitActionCommand,
   buildCockpitModel,
+  focusReplayCycle,
   validateCockpitAction,
 } from '../../src/ui/cockpit-model'
 import type { CockpitData } from '../../src/ui/cockpit-frame'
@@ -137,6 +138,31 @@ describe('buildCockpitModel', () => {
     expect(buildCockpitActionCommand(model, { kind: 'accept', findingId: 'F1' })).toEqual({
       ok: false,
       reason: 'missing_diff_hash',
+    })
+  })
+
+  it('selects a replay cycle for cockpit navigation', () => {
+    const model = buildCockpitModel({
+      data,
+      diffHash: 'h1',
+      trackedDiff: diff,
+      findings: [],
+      replayCycles: [
+        { cycle: 1, phase: 'review_requested', diffHash: 'h0' },
+        { cycle: 2, phase: 'human_gate', diffHash: 'h1' },
+      ],
+    })
+
+    expect(focusReplayCycle(model, 2)).toEqual({
+      ok: true,
+      model: {
+        ...model,
+        selectedReplayCycle: { cycle: 2, phase: 'human_gate', diffHash: 'h1' },
+      },
+    })
+    expect(focusReplayCycle(model, 99)).toEqual({
+      ok: false,
+      reason: 'replay_cycle_not_found',
     })
   })
 })
