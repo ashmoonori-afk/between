@@ -265,6 +265,16 @@ Goal
 - ✅ **A6** `doctor --strict` flags bot tokens left in config.yaml (env-only policy).
 - ✅ **A7** distinct `--developer` / `--reviewer` presets (claude dev + codex reviewer), swappable.
 
-**Next — Phase B (Product Core):** B1 worktree isolation · B2 PolicyEngine · B3 VerificationRunner ·
-B4 evidence manifest + exporters (Obsidian demoted) · B5 EventStore · B6 cockpit TUI · B7 VS Code MVP.
+**Review findings (2026-06-20) — addressed ✅:** F1 approval HMAC now signs bundle_id + expires_at
+(consistent across CLI/gateway/daemon/hook) · F2 push gate refuses non-merge approvals · F3
+summary()/untracked() fail closed · F4 evidence command extracted · F5 evidence output ASCII-only.
+Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
+
+**Phase B — in progress:**
+
+- 🔶 **B1** worktree isolation — first slice done: `WorktreeProvider` (isolated git worktrees).
+  Remaining: reviewer read-only worktree built from the bundle, stripped agent env, network-deny.
+- ⬜ **B2** PolicyEngine · **B3** VerificationRunner · ✅ **B4** evidence manifest/exporters ·
+  ⬜ **B5** EventStore · **B6** cockpit TUI · **B7** VS Code MVP.
+
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
