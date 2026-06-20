@@ -88,7 +88,8 @@ export function registerSetupCommands(program: Command): void {
   program
     .command('doctor')
     .description('Diagnose the environment and repo for Between')
-    .action(async () => {
+    .option('--strict', 'also fail on policy violations (secrets in config, etc.)')
+    .action(async (opts: { strict?: boolean }) => {
       const checks: Array<{ ok: boolean | 'warn'; label: string }> = []
       const git = new GitAdapter(root())
       try {
@@ -107,6 +108,16 @@ export function registerSetupCommands(program: Command): void {
             ? `vault: ${cfg.vault_path}`
             : 'vault: not set (Obsidian memory disabled)',
         })
+        if (opts.strict) {
+          // A6: bot tokens must live in env, never in config.yaml — fail strict if one leaked in.
+          const secretInConfig = Boolean(cfg.telegram_bot_token) || Boolean(cfg.discord_bot_token)
+          checks.push({
+            ok: secretInConfig ? false : true,
+            label: secretInConfig
+              ? 'SECRET in config.yaml — move telegram_bot_token/discord_bot_token to BETWEEN_*_TOKEN env'
+              : 'no literal bot tokens in config.yaml (env-only policy)',
+          })
+        }
       } catch {
         checks.push({ ok: false, label: 'between initialized (run `between init`)' })
       }
