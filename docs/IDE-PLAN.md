@@ -280,12 +280,14 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   approvals, gate violations as explicit results. Hardened per adversarial review (15 confirmed):
   fixed a `**​/` glob bug that let root-level secret files dodge high-risk, backslash/`./` bypass,
   ReDoS guard, gate-name enum (typo fails fast), git trackedRaw `--no-renames`.
-- 🔶 **B3** VerificationRunner — done: `secret_scan` + `dependency_audit` gates wired
+- ✅ **B3** VerificationRunner — `secret_scan` + `dependency_audit` gates wired
   (src/verify/secret-scan.ts, src/verify/dep-audit.ts: `npm audit --json` → vuln count, advisory
   when it can't run) + `between verify` runner (config.verification_checks → structured report,
   atomic .between/verify-report.json), review-hardened (per-check throw isolation, no vacuous pass;
-  dep-audit: runner-reject + npm-error-JSON both degrade to advisory, never fail-open). Remaining:
-  fold the verify report into the evidence manifest. ✅ **B4** evidence manifest/exporters.
+  dep-audit: runner-reject + npm-error-JSON both degrade to advisory, never fail-open). The
+  structured report is now folded into the evidence manifest + its Markdown (src/verify/report.ts:
+  one zod-validated reader shared by manifest collect + cockpit; schema↔runner lockstep guard).
+  ✅ **B4** evidence manifest/exporters.
 - 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
   EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop. Remaining:
   pin the chain head in state.json to also detect tail-truncation (SQLite option deferred).
