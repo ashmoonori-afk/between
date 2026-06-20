@@ -101,4 +101,26 @@ describe('Dashboard', () => {
     expect(frame).not.toContain(String.fromCharCode(0xc9cc))
     expect(frame).not.toContain(String.fromCharCode(0xfffd))
   })
+
+  it('renders the live command palette state', () => {
+    const state = {
+      ...setPhase(base, 'developing', 'goal_locked'),
+      diff: { ...base.diff, hash: 'abc123', changed_files: 1, insertions: 2, deletions: 0 },
+    }
+
+    const frame =
+      render(
+        <Dashboard
+          state={state}
+          events={[]}
+          now="14:08:22"
+          commandPalette={{ open: true, selectedIndex: 1, lastMessage: 'pause queued' }}
+        />,
+      ).lastFrame() ?? ''
+
+    expect(frame).toContain('COMMAND PALETTE')
+    expect(frame).toContain('r review now')
+    expect(frame).toContain('> p pause')
+    expect(frame).toContain('pause queued')
+  })
 })

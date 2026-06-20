@@ -310,8 +310,10 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   cycle+diff-bound daemon command, which the daemon records/rejects as durable events; `between
   cockpit --replay-cycle <n>` now focuses a specific journal replay snapshot in the cockpit frame.
   `between cockpit --rerun-checks` re-runs configured verification and refreshes the cockpit report.
-  The focused replay drilldown shows the selected snapshot's diff stats and bundle hint. Remaining:
-  live Ink interaction loop and command palette UX.
+  The focused replay drilldown shows the selected snapshot's diff stats and bundle hint. The live
+  Ink dashboard and embedded 3-pane TUI now expose a phase-aware command palette for
+  review-now/pause/resume/stop requests through the command bus. Remaining: file/severity/agent
+  filters and cost/token/time analytics.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,

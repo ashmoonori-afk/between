@@ -1,5 +1,8 @@
 import { Box, Text } from 'ink'
 import type { BetweenEvent, BetweenState } from '../core/types'
+import type { DashboardCommandPaletteState } from './command-palette'
+import { buildDashboardCommandItems } from './command-palette'
+import { CommandPalette } from './CommandPalette'
 import {
   AGENT_CARD_WIDTH,
   AgentCard,
@@ -21,9 +24,10 @@ interface DashboardProps {
   state: BetweenState
   events: BetweenEvent[]
   now: string
+  commandPalette?: DashboardCommandPaletteState
 }
 
-export function Dashboard({ state, events, now }: DashboardProps) {
+export function Dashboard({ state, events, now, commandPalette }: DashboardProps) {
   const wf = state.workflow
   const ps = phaseStyle(wf.phase)
   const dev = phaseStyle('developing')
@@ -32,6 +36,8 @@ export function Dashboard({ state, events, now }: DashboardProps) {
   const diff = state.diff
   const bundle = diff.bundle_id ?? diff.bundle_path
   const signal = state.broker.last_signal
+  const commandItems = buildDashboardCommandItems(state)
+  const palette = commandPalette ?? { open: false, selectedIndex: 0, lastMessage: null }
 
   return (
     <Box flexDirection="column" width={DASHBOARD_WIDTH}>
@@ -173,11 +179,15 @@ export function Dashboard({ state, events, now }: DashboardProps) {
             <Text color={COLORS.accentAlt}>{'between goal "<next>"'}</Text>
           </Text>
         </Box>
-      ) : (
-        <Text color={COLORS.textFaint} dimColor>
-          {'commands: goal | pause | resume | review-now | status'}
-        </Text>
-      )}
+      ) : null}
+
+      <CommandPalette
+        open={palette.open}
+        selectedIndex={palette.selectedIndex}
+        lastMessage={palette.lastMessage}
+        items={commandItems}
+        width={DASHBOARD_WIDTH}
+      />
     </Box>
   )
 }

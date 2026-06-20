@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Box, Text, useApp, useInput, useFocusManager } from 'ink'
 import { AgentPane } from './AgentPane'
 import { StateRepository } from '../adapters/state-repository'
@@ -7,6 +7,15 @@ import { SystemClock } from '../core/clock'
 import { COLORS, GLYPH, phaseStyle } from './theme'
 import type { BetweenEvent, BetweenState } from '../core/types'
 import type { AgentHost } from '../adapters/agent-host'
+import { CommandPalette } from './CommandPalette'
+import {
+  buildDashboardCommandItems,
+  clampCommandIndex,
+  commandItemForKey,
+  selectEnabledCommand,
+  submitDashboardCommand,
+  type DashboardCommandItem,
+} from './command-palette'
 
 /** Poll `.between/state.json` + events on an interval (shared broker-state hook). */
 export function useBrokerState(
@@ -57,12 +66,77 @@ export function EmbeddedDashboard({
   paneRows = 10,
 }: EmbeddedDashboardProps) {
   const { state, events, now } = useBrokerState(root, intervalMs)
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
+  const [lastCommandMessage, setLastCommandMessage] = useState<string | null>(null)
   const { exit } = useApp()
   const { focusNext } = useFocusManager()
+  const commandItems = state ? buildDashboardCommandItems(state) : []
+  const commandSignature = commandItems
+    .map((item) => `${item.id}:${item.enabled ? '1' : '0'}`)
+    .join('|')
+
+  useEffect(() => {
+    setSelectedCommandIndex((index) => clampCommandIndex(commandItems, index))
+  }, [commandSignature])
+
+  const queueCommand = useCallback(
+    (item: DashboardCommandItem) => {
+      if (!item.enabled) {
+        setLastCommandMessage(`${item.label} unavailable`)
+        return
+      }
+      setPaletteOpen(false)
+      setLastCommandMessage(`${item.label} queued`)
+      void submitDashboardCommand(root, item).catch((e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e)
+        setLastCommandMessage(`${item.label} failed: ${message}`)
+      })
+    },
+    [root],
+  )
 
   useInput((input, key) => {
-    if (input === 'q') exit()
-    else if (key.tab) focusNext()
+    if (input === 'q') {
+      exit()
+      return
+    }
+    if (!state) return
+
+    if (paletteOpen) {
+      if (key.escape || input === 'c') {
+        setPaletteOpen(false)
+        return
+      }
+      if (key.downArrow || input === 'j') {
+        setSelectedCommandIndex((index) => selectEnabledCommand(commandItems, index, 1))
+        return
+      }
+      if (key.upArrow || input === 'k') {
+        setSelectedCommandIndex((index) => selectEnabledCommand(commandItems, index, -1))
+        return
+      }
+      if (key.return) {
+        const item = commandItems[selectedCommandIndex]
+        if (item) queueCommand(item)
+        return
+      }
+      const item = commandItemForKey(commandItems, input)
+      if (item) queueCommand(item)
+      return
+    }
+
+    if (key.tab) {
+      focusNext()
+      return
+    }
+    if (input === 'c' || input === ':') {
+      setPaletteOpen(true)
+      setSelectedCommandIndex((index) => clampCommandIndex(commandItems, index))
+      return
+    }
+    const item = commandItemForKey(commandItems, input)
+    if (item) queueCommand(item)
   })
 
   if (!state) {
@@ -123,9 +197,14 @@ export function EmbeddedDashboard({
         />
       </Box>
 
-      <Text color={COLORS.textFaint} dimColor>
-        {`${GLYPH.pause} Tab: focus pane | q: quit | broker loop active`}
-      </Text>
+      <CommandPalette
+        open={paletteOpen}
+        selectedIndex={selectedCommandIndex}
+        lastMessage={lastCommandMessage}
+        items={commandItems}
+        width={76}
+        extraKeys="tab focus pane"
+      />
     </Box>
   )
 }
