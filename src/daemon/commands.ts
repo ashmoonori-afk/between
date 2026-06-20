@@ -90,8 +90,15 @@ export async function approve(
     },
   }
   await ctx.persist(touch(next, ctx.deps.clock))
+  // A3 (P0-3): only a MERGE approval completes the dev cycle. deploy / promote_rule are distinct
+  // downstream gates — they are recorded (and verify-push-checkable) but must NOT end the cycle as
+  // `done`. Previously any scope's approval at human_gate transitioned to done.
   if (ctx.current().workflow.phase === 'human_gate') {
-    await ctx.dispatch('human_approved')
+    if (scope === 'merge') {
+      await ctx.dispatch('human_approved')
+    } else {
+      await ctx.emit('approval_recorded', { detail: { scope } })
+    }
   }
 }
 

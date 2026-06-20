@@ -154,6 +154,11 @@ describe('headless walking skeleton (M3)', () => {
       await d2.load()
       expect(d2.state.workflow.phase).toBe('human_gate')
 
+      // A3 (P0-3): a non-merge approval is recorded but does NOT complete the dev cycle
+      await signedApprove('promote_rule')
+      await d2.tick()
+      expect(d2.state.workflow.phase).toBe('human_gate')
+
       // human approves the merge -> done
       await signedApprove('merge')
       await d2.tick()
