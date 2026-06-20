@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { buildAgentSandboxEnv } from './agent-env'
 
 /**
  * Resolves the approval secret used to sign/verify human approvals (P1-5). Order:
@@ -38,9 +39,7 @@ export function resolveApprovalSecret(root: string): string {
 export function strippedAgentEnv(
   extra: Record<string, string>,
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...process.env, ...extra }
-  delete env[APPROVAL_SECRET_ENV]
-  return env
+  return buildAgentSandboxEnv(extra).env
 }
 
 /** Resolve, generating + persisting a `.git/` key when no env/key exists yet (used by init). */

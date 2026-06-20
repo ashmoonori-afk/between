@@ -47,10 +47,12 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
       try {
         const developer = new PtyAgentHost('developer', scrollback, {
           command: config.developer_command,
+          root: absRoot,
           cwd,
         })
         const reviewer = new PtyAgentHost('reviewer', scrollback, {
           command: config.reviewer_command,
+          root: absRoot,
           cwd,
         })
         await developer.start()

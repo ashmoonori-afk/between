@@ -1,5 +1,5 @@
 import { BaseAgentHost, tokenizeCommand, type AgentHostKind, type AgentRole } from './agent-host'
-import { strippedAgentEnv } from './approval-secret'
+import { buildAgentSandboxEnv, writeAgentEnvManifest } from './agent-env'
 
 /** Minimal structural type for the (optional) node-pty module — we ship no @types for it. */
 interface IPtyLike {
@@ -51,6 +51,7 @@ export async function loadPty(): Promise<PtyModule> {
 
 export interface PtyAgentOptions {
   command: string
+  root: string
   cwd: string
   cols?: number
   rows?: number
@@ -76,13 +77,18 @@ export class PtyAgentHost extends BaseAgentHost {
   async start(): Promise<void> {
     const pty = await loadPty()
     const { file, args } = tokenizeCommand(this.opts.command)
+    const sandbox = buildAgentSandboxEnv(
+      { FORCE_COLOR: '1', BETWEEN_ROOT: this.opts.root },
+      { role: this.role },
+    )
+    await writeAgentEnvManifest(this.opts.root, this.role, sandbox.manifest)
     this.markStart()
     this.proc = pty.spawn(file, args, {
       name: 'xterm-color',
       cols: this.opts.cols ?? 80,
       rows: this.opts.rows ?? 24,
       cwd: this.opts.cwd,
-      env: strippedAgentEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.opts.cwd }),
+      env: sandbox.env,
     })
     this.proc.onData((d) => this.feed(d))
     this.proc.onExit(({ exitCode }) => {

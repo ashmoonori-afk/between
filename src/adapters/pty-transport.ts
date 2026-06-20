@@ -2,7 +2,7 @@ import { execa } from 'execa'
 import type { Ack, Signal, SignalTransport } from '../core/types'
 import { FileTransport } from './signal-transport'
 import { tokenizeCommand, type AgentHost, type AgentRole } from './agent-host'
-import { strippedAgentEnv } from './approval-secret'
+import { buildAgentSandboxEnv, writeAgentEnvManifest } from './agent-env'
 
 export type AgentHostMap = Partial<Record<AgentRole, AgentHost>>
 
@@ -44,11 +44,13 @@ export class OneShotTransport implements SignalTransport {
     const host = this.opts.hosts?.[role]
     host?.markStart()
     host?.feed(`$ ${command}\n`)
+    const sandbox = buildAgentSandboxEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.root }, { role })
+    await writeAgentEnvManifest(this.root, role, sandbox.manifest)
     const sub = execa(file, args, {
       cwd: this.opts.cwd,
       input: signal.body,
       reject: false,
-      env: strippedAgentEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.root }),
+      env: sandbox.env,
     })
     sub.stdout?.on('data', (d: Buffer) => host?.feed(d.toString()))
     sub.stderr?.on('data', (d: Buffer) => host?.feed(d.toString()))
