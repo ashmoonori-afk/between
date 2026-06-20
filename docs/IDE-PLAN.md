@@ -272,8 +272,10 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 
 **Phase B — in progress:**
 
-- 🔶 **B1** worktree isolation — first slice done: `WorktreeProvider` (isolated git worktrees).
-  Remaining: reviewer read-only worktree built from the bundle, stripped agent env, network-deny.
+- 🔶 **B1** worktree isolation — slices done: `WorktreeProvider` (isolated git worktrees) +
+  `materializeBundle` (reviewer-readonly worktree reproducing the sealed bundle, `between
+  review-worktree`). Remaining: stripped agent env (no secret/push creds) + network-deny +
+  binary/untracked materialization + OS-level read-only.
 - ⬜ **B2** PolicyEngine · **B3** VerificationRunner · ✅ **B4** evidence manifest/exporters ·
   ⬜ **B5** EventStore · **B6** cockpit TUI · **B7** VS Code MVP.
 
