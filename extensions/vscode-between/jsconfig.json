@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "types": ["node", "vscode"],
+    "strict": false,
+    "skipLibCheck": true,
+    "maxNodeModuleJsDepth": 0,
+    "noEmit": true
+  },
+  "include": ["src/**/*.js"],
+  "exclude": [
+    "node_modules",
+    "../../node_modules",
+    "../../../../node_modules",
+    "test",
+    ".vscode-test"
+  ]
+}

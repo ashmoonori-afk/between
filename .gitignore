@@ -6,6 +6,7 @@ dist/
 coverage/
 *.tsbuildinfo
 *.tgz
+.vscode-test/
 
 # logs
 *.log

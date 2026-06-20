@@ -1,18 +1,8 @@
 import * as vscode from 'vscode'
+import { activateBetween } from './extension-core.js'
 
 export function activate(context) {
-  for (const command of [
-    'between.refresh',
-    'between.openEvidence',
-    'between.requestSecondReview',
-    'between.askDeveloperToFix',
-  ]) {
-    context.subscriptions.push(
-      vscode.commands.registerCommand(command, () => {
-        vscode.window.showInformationMessage(`${command} queued for Between`)
-      }),
-    )
-  }
+  activateBetween(context, vscode)
 }
 
 export function deactivate() {}

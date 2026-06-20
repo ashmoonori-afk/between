@@ -9,15 +9,27 @@
   "engines": {
     "vscode": "^1.90.0"
   },
-  "categories": ["Other"],
+  "categories": [
+    "Other"
+  ],
   "main": "./src/extension.js",
   "activationEvents": [
+    "onView:between.panel",
     "onCommand:between.refresh",
     "onCommand:between.openEvidence",
     "onCommand:between.requestSecondReview",
-    "onCommand:between.askDeveloperToFix"
+    "onCommand:between.askDeveloperToFix",
+    "onCommand:between.approveExactBundle"
   ],
   "contributes": {
+    "views": {
+      "scm": [
+        {
+          "id": "between.panel",
+          "name": "Between"
+        }
+      ]
+    },
     "commands": [
       {
         "command": "between.refresh",
@@ -34,10 +46,22 @@
       {
         "command": "between.askDeveloperToFix",
         "title": "Between: Ask Developer To Fix"
+      },
+      {
+        "command": "between.approveExactBundle",
+        "title": "Between: Approve Exact Bundle"
       }
     ]
   },
   "scripts": {
-    "test": "node ../../node_modules/vitest/vitest.mjs"
+    "typecheck": "node ../../node_modules/typescript/bin/tsc -p jsconfig.json --noEmit",
+    "test": "node ./test/run-vitest.mjs",
+    "test:host": "vscode-test --label task-9-diagnostics && vscode-test --label task-9-stale --grep \"clears stale diagnostics\"",
+    "check": "npm run typecheck && npm test && npm run test:host"
+  },
+  "devDependencies": {
+    "@types/vscode": "1.90.0",
+    "@vscode/test-cli": "0.0.12",
+    "@vscode/test-electron": "3.0.0"
   }
 }

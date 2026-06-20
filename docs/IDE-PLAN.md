@@ -306,7 +306,12 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 - 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
   state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
   cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).
-- ⬜ **B7** VS Code MVP.
+- DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
+  reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
+  the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,
+  and gates `approve-exact-bundle` on real evidence. Verified through `npm run test:vscode`
+  (extension source typecheck, Vitest runtime tests, and VS Code host smoke tests pinned to
+  1.125.1).
   (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
