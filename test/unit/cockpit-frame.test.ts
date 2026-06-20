@@ -22,6 +22,7 @@ const data: CockpitData = {
   verdict: 'blocked',
   verification: { passed: 2, total: 3, allPassed: false, durationMs: 352 },
   time: { goalAgeMs: 150000, updatedAgoMs: 5000 },
+  usage: { totalTokens: 1240, inputTokens: 1000, outputTokens: 240, costUsd: 0.0198 },
   journalValid: true,
   journalEntries: 42,
 }
@@ -37,6 +38,7 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/\[fail\] secret_scan/)
     expect(frame).toMatch(/verify:\s+2\/3 checks FAIL \(352ms\)/)
     expect(frame).toMatch(/time:\s+goal 2m30s\s+updated 5s ago/)
+    expect(frame).toMatch(/usage:\s+tokens 1240 \(in 1000, out 240\) cost \$0\.0198/)
     expect(frame).toMatch(/verdict:\s+blocked/)
     expect(frame).toMatch(/journal:\s+VERIFIED \(42 entries\)/)
   })
@@ -53,10 +55,12 @@ describe('renderCockpit (B6)', () => {
       gates: [],
       policySatisfied: null,
       verification: null,
+      usage: null,
     })
     expect(frame).toMatch(/bundle -/)
     expect(frame).toMatch(/risk:\s+-\s+policy -/)
     expect(frame).toMatch(/verify:\s+not run/)
+    expect(frame).toMatch(/usage:\s+not recorded/)
   })
 
   it('renders linked findings, replay snapshots, and action hints', () => {

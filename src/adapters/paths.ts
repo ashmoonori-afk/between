@@ -16,6 +16,7 @@ export interface BetweenPaths {
   acks: string
   reviews: string
   verify: string
+  usage: string
   verifyReport: string
   commands: string
   cycles: string
@@ -38,6 +39,7 @@ export function betweenPaths(root: string): BetweenPaths {
     acks: join(dir, 'acks'),
     reviews: join(dir, 'reviews'),
     verify: join(dir, 'verify'),
+    usage: join(dir, 'usage'),
     verifyReport: join(dir, 'verify-report.json'),
     commands: join(dir, 'commands'),
     cycles: join(dir, 'cycles'),
@@ -54,6 +56,7 @@ export function betweenSubdirs(p: BetweenPaths): string[] {
     p.acks,
     p.reviews,
     p.verify,
+    p.usage,
     p.commands,
     p.cycles,
     p.agents,
@@ -74,6 +77,10 @@ export function reviewPath(p: BetweenPaths, cycle: number): string {
 
 export function verifyPath(p: BetweenPaths, cycle: number): string {
   return join(p.verify, `${cycleName(cycle)}.json`)
+}
+
+export function usagePath(p: BetweenPaths, cycle: number): string {
+  return join(p.usage, `${cycleName(cycle)}.json`)
 }
 
 export function signalPath(p: BetweenPaths, target: string): string {

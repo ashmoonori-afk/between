@@ -71,6 +71,14 @@ export async function collectCockpitData(
       goalAgeMs: elapsedMs(state.workflow.started_at, nowIso),
       updatedAgoMs: elapsedMs(state.workflow.updated_at, nowIso),
     },
+    usage: manifest?.usage
+      ? {
+          totalTokens: manifest.usage.total_tokens,
+          inputTokens: manifest.usage.input_tokens,
+          outputTokens: manifest.usage.output_tokens,
+          costUsd: manifest.usage.cost_usd,
+        }
+      : null,
     journalValid: journal.valid,
     journalEntries: entries.length,
   }

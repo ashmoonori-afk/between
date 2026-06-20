@@ -272,10 +272,11 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 
 **Phase B — in progress:**
 
-- 🔶 **B1** worktree isolation — slices done: `WorktreeProvider` (isolated git worktrees) +
-  `materializeBundle` (reviewer-readonly worktree reproducing the sealed bundle, `between
-  review-worktree`). Remaining: stripped agent env (no secret/push creds) + network-deny +
-  binary/untracked materialization + OS-level read-only.
+- ✅ **B1** worktree/sandbox isolation — `WorktreeProvider` provides isolated git worktrees,
+  `materializeBundle` reproduces the sealed bundle in `reviewer-readonly`, configured
+  untracked/binary payloads are materialized, sandbox manifests record read-only sealing, push
+  credentials are stripped from agent env, and the network-deny env contract is set. Current
+  boundary is best-effort local OS enforcement, not a hard container/network namespace.
 - ✅ **B2** PolicyEngine — policy-as-code (`between policy`): risk-by-path, per-risk gates +
   approvals, gate violations as explicit results. Hardened per adversarial review (15 confirmed):
   fixed a `**​/` glob bug that let root-level secret files dodge high-risk, backslash/`./` bypass,
@@ -303,7 +304,7 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
     pinned bundle fails closed; dep-audit is timeout-bounded.
   - B5 exact replay evidence: `task-1-b5-exact-replay-green.txt`,
     `task-1-b5-exact-replay-manual.txt`, and `task-1-b5-exact-replay-error.txt`.
-- 🔶 **B6** cockpit TUI — slices done: pure `renderCockpit` frame + `between cockpit`
+- ✅ **B6** cockpit TUI — slices done: pure `renderCockpit` frame + `between cockpit`
   (state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable); cockpit model links
   current findings to diff hunks and replay snapshots; `between cockpit --action
   accept|dispute|waive --finding <id>` validates current/non-stale findings and queues an exact
@@ -316,8 +317,9 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   `--severity` filter the linked findings list without changing action validation. Findings now
   support optional agent attribution, and `between cockpit --agent` filters the same linked list
   while treating legacy findings as reviewer-authored. The cockpit now shows broker time
-  age/update freshness and aggregate verification duration. Remaining: cost/token analytics once
-  those fields exist in the evidence schema.
+  age/update freshness, aggregate verification duration, and usage telemetry from optional
+  `.between/usage/cycle-000N.json` records. If upstream CLIs do not report tokens/cost, cockpit and
+  evidence render `not recorded` instead of estimating.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,

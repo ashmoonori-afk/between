@@ -11,8 +11,8 @@ const PIN = ['-c', 'core.autocrlf=false', '-c', 'core.quotepath=false', '-c', 'c
 /**
  * B1: hands out isolated git worktrees so the developer, reviewer, and verifier operate on
  * separate checkouts of the same repo instead of fighting over one working tree. Worktrees live
- * under `.between/worktrees/<name>` (gitignored). This is the isolation PRIMITIVE; read-only
- * enforcement, stripped agent env, and network-deny are layered on top in later B1 slices.
+ * under `.between/worktrees/<name>` (gitignored). This is the isolation primitive; sandbox
+ * sealing and stripped agent env are layered by `materializeBundle`.
  */
 export class WorktreeProvider {
   constructor(private readonly root: string) {}

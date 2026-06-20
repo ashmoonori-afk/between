@@ -31,6 +31,12 @@ export interface CockpitData {
   /** verification report summary, or null when `between verify` hasn't run. */
   verification: { passed: number; total: number; allPassed: boolean; durationMs?: number } | null
   time?: { goalAgeMs: number | null; updatedAgoMs: number | null }
+  usage?: {
+    totalTokens: number
+    inputTokens: number
+    outputTokens: number
+    costUsd: number | null
+  } | null
   journalValid: boolean
   journalEntries: number
 }
@@ -65,6 +71,9 @@ export function renderCockpit(d: CockpitData): string {
       `  time:      goal ${formatNullableDuration(d.time.goalAgeMs)}   updated ${formatNullableDuration(d.time.updatedAgoMs)} ago`,
     )
   }
+  out.push(
+    `  usage:     ${d.usage ? `tokens ${d.usage.totalTokens} (in ${d.usage.inputTokens}, out ${d.usage.outputTokens}) cost ${formatCost(d.usage.costUsd)}` : 'not recorded'}`,
+  )
   out.push(`  verdict:   ${d.verdict}`)
   out.push(`  journal:   ${d.journalValid ? 'VERIFIED' : 'BROKEN'} (${d.journalEntries} entries)`)
   out.push('-'.repeat(60))
@@ -141,6 +150,10 @@ function formatDuration(value: number): string {
   const hours = Math.floor(minutes / 60)
   const remainder = minutes % 60
   return remainder === 0 ? `${hours}h` : `${hours}h${remainder}m`
+}
+
+function formatCost(value: number | null): string {
+  return value === null ? '-' : `$${value}`
 }
 
 function oneLine(value: string): string {

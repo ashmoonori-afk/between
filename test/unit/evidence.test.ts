@@ -54,6 +54,47 @@ describe('buildEvidenceManifest', () => {
     expect(m.agents).toEqual({ developer: 'claude', reviewer: 'codex' })
   })
 
+  it('folds optional usage telemetry into the manifest without estimating missing data', () => {
+    const m = buildEvidenceManifest({
+      ...base,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 240,
+        total_tokens: 1240,
+        cost_usd: 0.0198,
+        entries: [
+          {
+            role: 'reviewer',
+            provider: 'codex',
+            model: 'gpt-5-codex',
+            input_tokens: 1000,
+            output_tokens: 240,
+            total_tokens: 1240,
+            cost_usd: 0.0198,
+          },
+        ],
+      },
+    })
+
+    expect(m.usage).toEqual({
+      input_tokens: 1000,
+      output_tokens: 240,
+      total_tokens: 1240,
+      cost_usd: 0.0198,
+      entries: [
+        {
+          role: 'reviewer',
+          provider: 'codex',
+          model: 'gpt-5-codex',
+          input_tokens: 1000,
+          output_tokens: 240,
+          total_tokens: 1240,
+          cost_usd: 0.0198,
+        },
+      ],
+    })
+  })
+
   it('verdict is simulated when evidence_trust is simulated, regardless of approval', () => {
     expect(buildEvidenceManifest({ ...base, evidenceTrust: 'simulated' }).verdict).toBe('simulated')
   })
@@ -118,5 +159,36 @@ describe('toMarkdown', () => {
   it('shows "not run" when no verify report exists', () => {
     const md = toMarkdown(buildEvidenceManifest({ ...base, verification: null }))
     expect(md).toMatch(/## Verification checks \(between verify\)\n- _not run_/)
+  })
+
+  it('renders usage telemetry when recorded, and an honest empty state otherwise', () => {
+    const md = toMarkdown(
+      buildEvidenceManifest({
+        ...base,
+        usage: {
+          input_tokens: 1000,
+          output_tokens: 240,
+          total_tokens: 1240,
+          cost_usd: 0.0198,
+          entries: [
+            {
+              role: 'reviewer',
+              provider: 'codex',
+              model: 'gpt-5-codex',
+              input_tokens: 1000,
+              output_tokens: 240,
+              total_tokens: 1240,
+              cost_usd: 0.0198,
+            },
+          ],
+        },
+      }),
+    )
+
+    expect(md).toMatch(/## Usage/)
+    expect(md).toMatch(/- tokens: 1240 \(input 1000, output 240\)/)
+    expect(md).toMatch(/- cost_usd: 0\.0198/)
+    expect(md).toMatch(/- reviewer codex\/gpt-5-codex: 1240 tokens, cost_usd 0\.0198/)
+    expect(toMarkdown(buildEvidenceManifest(base))).toMatch(/## Usage\n- _not recorded_/)
   })
 })

@@ -1,6 +1,7 @@
 import type { ApprovalToken, ProjectRef, ReviewRecord, VerifyRecord } from '../core/types'
 import type { ReviewBundle } from '../review/bundle'
 import type { VerificationReport } from '../verify/runner'
+import type { EvidenceUsageSummary } from './usage'
 
 /**
  * B4: a portable, exporter-agnostic Evidence Manifest for one review cycle. It binds the immutable
@@ -27,6 +28,7 @@ export interface EvidenceManifestInput {
   verify: VerifyRecord | null
   /** structured `between verify` report (B3 runner), or null when none was produced. */
   verification: VerificationReport | null
+  usage?: EvidenceUsageSummary | null
   approval: ApprovalToken | null
 }
 
@@ -54,6 +56,7 @@ export interface EvidenceManifest {
     total: number
     checks: Array<{ name: string; status: 'pass' | 'fail'; duration_ms: number }>
   } | null
+  usage: EvidenceUsageSummary | null
   approval: {
     scope: string
     granted_at: string
@@ -109,6 +112,7 @@ export function buildEvidenceManifest(input: EvidenceManifestInput): EvidenceMan
           })),
         }
       : null,
+    usage: input.usage ?? null,
     approval: input.approval
       ? {
           scope: input.approval.scope,
@@ -163,6 +167,22 @@ export function toMarkdown(m: EvidenceManifest): string {
     }
   } else {
     lines.push('- _not run_')
+  }
+  lines.push('')
+  lines.push('## Usage')
+  if (m.usage) {
+    lines.push(
+      `- tokens: ${m.usage.total_tokens} (input ${m.usage.input_tokens}, output ${m.usage.output_tokens})`,
+    )
+    lines.push(`- cost_usd: ${m.usage.cost_usd ?? '-'}`)
+    for (const entry of m.usage.entries) {
+      const source = [entry.provider, entry.model].filter(Boolean).join('/')
+      lines.push(
+        `- ${entry.role}${source ? ` ${source}` : ''}: ${entry.total_tokens} tokens, cost_usd ${entry.cost_usd ?? '-'}`,
+      )
+    }
+  } else {
+    lines.push('- _not recorded_')
   }
   lines.push('')
   lines.push('## Approval')
