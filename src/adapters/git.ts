@@ -107,11 +107,14 @@ export class GitAdapter {
   }
 
   private async trackedRaw(): Promise<string> {
+    // --no-renames so a rename emits delete+add (one path per line) instead of an R record with
+    // two tab-separated paths, which downstream raw parsers (policy changedPathsFromRaw) misread.
     const r = await this.run([
       'diff',
       await this.base(),
       '--raw',
       '--abbrev=40',
+      '--no-renames',
       ...TRACKED_EXCLUDE,
     ])
     if (r.exitCode !== 0) throw new GitError('git diff --raw failed', r.stderr)
