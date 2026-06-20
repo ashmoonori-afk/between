@@ -309,6 +309,7 @@ export interface BetweenEvent {
   target?: SignalTarget
   diff_hash?: string
   detail?: Record<string, unknown>
+  replay_state?: Omit<BetweenState, 'journal'>
 }
 
 export const EVENT_SCHEMA_VERSION = 1 as const

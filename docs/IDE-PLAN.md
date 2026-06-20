@@ -289,18 +289,20 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   one zod-validated reader shared by manifest collect + cockpit; schema↔runner lockstep guard).
   ✅ **B4** evidence manifest/exporters.
 - 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
-  EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop AND now
+  EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop and
   tail-truncation via the chain-head pin in state.json (BetweenState.journal + verifyChainHead;
   daemon pins on every emit). Append fail-safe: the in-memory head advances only after a durable
-  write. Remaining (NOT complete): **exact replay** (event-log -> state reconstruction) and an
-  optional SQLite store. (A1 hardening landed alongside: readBundle now refuses a tampered
-  content-addressed bundle - verifyBundleIntegrity, fail-closed.)
+  write. Exact replay now reconstructs `BetweenState` from verified event snapshots after
+  `state.json` deletion and refuses tail-truncated journals when a pinned head exists. Optional
+  SQLite remains deferred unless cockpit query/replay needs outgrow the append-only journal.
+  (A1 hardening landed alongside: readBundle now refuses a tampered content-addressed bundle -
+  verifyBundleIntegrity, fail-closed.)
   - Policy is now a LIFECYCLE gate (src/policy/gate.ts evaluateCyclePolicy): a merge approval (the
     push-authorizing scope) is refused fail-closed when a required gate fails, so the daemon cycle
     can no longer reach a push without policy; verify-push re-checks as defense in depth. A missing
     pinned bundle fails closed; dep-audit is timeout-bounded.
-  - Open blocking item (next iteration): B5 exact replay (event-log -> state reconstruction) so the
-    EventStore satisfies tamper-evidence AND exact replay.
+  - B5 exact replay evidence: `task-1-b5-exact-replay-green.txt`,
+    `task-1-b5-exact-replay-manual.txt`, and `task-1-b5-exact-replay-error.txt`.
 - 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
   state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
   cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).

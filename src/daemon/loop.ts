@@ -1,12 +1,14 @@
 import type { AgentRole } from '../adapters/agent-host'
 import type { BetweenEvent, BetweenState, EventName } from '../core/types'
 import { transition } from '../core/fsm'
+import { replaySnapshot } from '../core/replay'
 import { setPhase, touch, pinJournal } from '../core/state'
 import { reconcile } from './reconcile'
 import { GitError } from '../adapters/git'
 import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
 import { watchForNewDiff, runDebounce, awaitAck, awaitReview, handleReviewWritten } from './phases'
 import { drainCommands } from './commands'
+import { readRecoverableState } from './recover-state'
 
 export type { DaemonDeps } from './context'
 
@@ -46,7 +48,7 @@ export class Daemon {
 
   /** Load + reconcile persisted state into memory. Returns false if none existed. */
   async load(): Promise<boolean> {
-    const loaded = await this.deps.state.read()
+    const loaded = await readRecoverableState(this.deps.state, this.deps.events)
     if (!loaded) return false
     this.current = reconcile(loaded, this.deps.clock)
     await this.deps.state.write(this.current)
@@ -69,6 +71,7 @@ export class Daemon {
       ...(extra?.target ? { target: extra.target } : {}),
       ...(extra?.diff_hash ? { diff_hash: extra.diff_hash } : {}),
       ...(extra?.detail ? { detail: extra.detail } : {}),
+      replay_state: replaySnapshot(state),
     }
     await this.deps.events.append(e)
   }

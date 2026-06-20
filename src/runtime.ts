@@ -16,6 +16,7 @@ import { BrokerLock } from './adapters/lock'
 import { betweenPaths } from './adapters/paths'
 import { reconcile } from './daemon/reconcile'
 import { Daemon } from './daemon/loop'
+import { readRecoverableState } from './daemon/recover-state'
 
 export class NotInitializedError extends Error {
   constructor(root: string) {
@@ -55,7 +56,8 @@ export async function buildDaemon(
   const absRoot = resolve(root)
   const config = await loadConfig(absRoot)
   const stateRepo = new StateRepository(absRoot)
-  const existing = await stateRepo.read()
+  const events = new EventsLog(absRoot)
+  const existing = await readRecoverableState(stateRepo, events)
   const initial = existing
     ? reconcile(existing, clock)
     : initialState({ project: projectRef(absRoot, config) }, clock)
@@ -67,7 +69,7 @@ export async function buildDaemon(
       clock,
       git: new GitAdapter(absRoot),
       state: stateRepo,
-      events: new EventsLog(absRoot),
+      events,
       transport: transport ?? new FileTransport(absRoot),
       snapshots: new SnapshotStore(absRoot),
       commands: new CommandBus(absRoot),
