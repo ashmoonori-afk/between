@@ -6,6 +6,7 @@ import { verifyApproval, approvalExpiry } from '../core/approval'
 import type { ApprovalScope } from '../core/types'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
+import { evaluateCyclePolicy } from '../policy/gate'
 import type { DaemonContext } from './context'
 import { currentDiff, openCycleAndSignal } from './phases'
 
@@ -84,6 +85,30 @@ export async function approve(
     if (!verifyApproval(secret, sig ?? '', claim)) {
       await ctx.emit('approval_rejected', {
         detail: { scope, reason: sig ? 'invalid signature' : 'unsigned' },
+      })
+      return
+    }
+  }
+  // #5: policy is a LIFECYCLE gate for MERGE (the scope that authorizes a push). The daemon cycle
+  // only enforces review + verify; secret_scan / dependency_audit (and any policy.yaml gate) are
+  // NOT enforced by the flow, so a policy-failing change could reach a push. Refuse to grant a
+  // merge approval while a required gate fails (fail-closed) -> no approval -> the pre-push hook
+  // keeps blocking. deploy / promote_rule are distinct downstream gates and are not policy-gated here.
+  if (scope === 'merge') {
+    let satisfied = false
+    let reason = ''
+    try {
+      const gate = await evaluateCyclePolicy(ctx.deps.root, cur, ctx.deps.clock.nowIso())
+      satisfied = gate.evaluation.satisfied
+      reason = gate.reason
+    } catch (e) {
+      // a policy-evaluation failure (e.g. a tampered bundle that readBundle refuses) must REJECT
+      // the approval, never crash the daemon — otherwise a malformed bundle is a DoS. Fail-closed.
+      reason = `evaluation error: ${e instanceof Error ? e.message : String(e)}`
+    }
+    if (!satisfied) {
+      await ctx.emit('approval_rejected', {
+        detail: { scope, reason: `policy not satisfied: ${reason}` },
       })
       return
     }

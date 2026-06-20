@@ -68,10 +68,19 @@ export async function runChecks(
   return { checks, allPassed: checks.length > 0 && checks.every((c) => c.status === 'pass') }
 }
 
-/** Real runner: execute the command line via the shell in `cwd` (for the CLI). */
-export function shellRunner(cwd: string): CommandRunner {
+/**
+ * Real runner: execute the command line via the shell in `cwd` (for the CLI). An optional
+ * `timeoutMs` bounds the subprocess so a hung command (e.g. `npm audit` against an unreachable
+ * registry) can't stall the gate (review MEDIUM); on timeout execa rejects and the caller decides.
+ */
+export function shellRunner(cwd: string, timeoutMs?: number): CommandRunner {
   return async (command) => {
-    const r = await execa(command, { cwd, shell: true, reject: false })
+    const r = await execa(command, {
+      cwd,
+      shell: true,
+      reject: false,
+      ...(timeoutMs ? { timeout: timeoutMs } : {}),
+    })
     return { exitCode: r.exitCode ?? 1, stdout: r.stdout, stderr: r.stderr }
   }
 }

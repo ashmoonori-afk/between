@@ -259,6 +259,15 @@ export function registerBrokerCommands(program: Command): void {
             process.exitCode = 1
             return
           }
+          // #5: policy is a lifecycle gate — re-check it at push time (defense in depth: e.g. a new
+          // dependency CVE could surface after approval). A failing required gate blocks the push.
+          const { evaluateCyclePolicy } = await import('../policy/gate')
+          const gate = await evaluateCyclePolicy(root(), state, new SystemClock().nowIso())
+          if (!gate.evaluation.satisfied) {
+            printErr(`between: refusing push — policy gate failed: ${gate.reason}`)
+            process.exitCode = 1
+            return
+          }
           print('between: approval verified')
           return
         }

@@ -23,12 +23,16 @@ async function git(args: string[]): Promise<void> {
 }
 
 /** Drive a fresh repo all the way to human_gate (cycle 1) and return the reviewed hash. */
-async function toHumanGate(d: Awaited<ReturnType<typeof buildDaemon>>, fc: FakeClock) {
+async function toHumanGate(
+  d: Awaited<ReturnType<typeof buildDaemon>>,
+  fc: FakeClock,
+  content = 'v2\n',
+) {
   const bus = new CommandBus(dir)
   const p = betweenPaths(dir)
   await bus.submit({ kind: 'goal', goal: 'g' })
   await d.tick() // developing
-  await writeFile(join(dir, 'app.txt'), 'v2\n')
+  await writeFile(join(dir, 'app.txt'), content)
   await d.tick() // debouncing
   fc.advance(26_000)
   await d.tick() // review_requested
@@ -127,6 +131,63 @@ describe('approval trust boundary (P1-5)', () => {
       // the recorded token verifies independently (what `verify-push` / the pre-push hook checks)
       const persisted = await new StateRepository(dir).read()
       expect(persisted?.approval?.sig).toBe(sig)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
+
+  it(
+    'refuses a VALID merge approval when a required policy gate fails (#5 lifecycle gate)',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, {}, fc)
+      // policy.yaml: secret_scan is required at every risk level (isolated -> no npm-audit spawn).
+      await writeFile(
+        join(dir, '.between', 'policy.yaml'),
+        [
+          'version: 1',
+          'gates:',
+          '  high: [secret_scan]',
+          '  normal: [secret_scan]',
+          'approvals:',
+          '  high: { reviewers: 1, local_human_required: true }',
+          '  normal: { reviewers: 1, local_human_required: false }',
+          '',
+        ].join('\n'),
+      )
+      const d = await buildDaemon(dir, fc)
+      await d.load()
+      // a clean review/verify still reaches the gate, but the diff carries a secret the review
+      // missed -> the policy secret_scan gate (which the daemon flow does NOT enforce) must fail.
+      const hash = await toHumanGate(d, fc, 'const k = "AKIAIOSFODNN7EXAMPLE"\n')
+      expect(d.state.workflow.phase).toBe('human_gate')
+
+      const secret = resolveApprovalSecret(dir)
+      const bundleId = d.state.diff.bundle_id
+      const expiresAt = approvalExpiry(Date.now())
+      const sig = signApproval(secret, {
+        scope: 'merge',
+        diff_hash: hash,
+        cycle: 1,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
+      await new CommandBus(dir).submit({
+        kind: 'approve',
+        scope: 'merge',
+        sig,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
+      await d.tick()
+
+      // a correctly-signed merge approval is REFUSED because policy is not satisfied -> no approval
+      // recorded, still at the gate, so the pre-push hook keeps blocking the push.
+      expect(d.state.workflow.phase).toBe('human_gate')
+      expect(d.state.approval).toBeNull()
+      const rejects = (await new EventsLog(dir).read()).filter(
+        (e) => e.event === 'approval_rejected',
+      )
+      expect(rejects.some((e) => JSON.stringify(e).includes('secret_scan'))).toBe(true)
     },
     INTEGRATION_TIMEOUT_MS,
   )

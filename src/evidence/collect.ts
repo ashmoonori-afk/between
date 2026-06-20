@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises'
+import type { BetweenState } from '../core/types'
 import { StateRepository } from '../adapters/state-repository'
 import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
 import { parseReviewRecord, parseVerifyRecord } from '../core/findings'
@@ -21,8 +22,10 @@ async function readJson<T>(path: string, parse: (raw: unknown) => T): Promise<T 
 export async function collectEvidence(
   root: string,
   generatedAt: string,
+  /** reuse an already-loaded state so evidence + bundle reflect the SAME cycle (review MEDIUM). */
+  knownState?: BetweenState,
 ): Promise<EvidenceManifest | null> {
-  const state = await new StateRepository(root).read()
+  const state = knownState ?? (await new StateRepository(root).read())
   if (!state) return null
   const p = betweenPaths(root)
   const cycle = state.workflow.cycle

@@ -12,7 +12,7 @@ export function registerPolicyCommand(program: Command): void {
     .option('--init', 'write a default .between/policy.yaml')
     .action(async (opts: { init?: boolean }) => {
       try {
-        const { loadPolicy, policyPath } = await import('../policy/load')
+        const { policyPath } = await import('../policy/load')
 
         if (opts.init) {
           const { defaultPolicyYaml } = await import('../policy/schema')
@@ -33,36 +33,9 @@ export function registerPolicyCommand(program: Command): void {
           process.exitCode = 1
           return
         }
-        const { evaluatePolicy, changedPathsFromRaw, classifyRisk } =
-          await import('../policy/engine')
-        const { collectEvidence } = await import('../evidence/collect')
-        const { readBundle } = await import('../review/store')
-        const { scanDiffForSecrets } = await import('../verify/secret-scan')
-
-        const policy = await loadPolicy(root())
-        const manifest = await collectEvidence(root(), new SystemClock().nowIso())
-        const bundle = state.diff.bundle_id ? await readBundle(root(), state.diff.bundle_id) : null
-        const changedPaths = bundle ? changedPathsFromRaw(bundle.diff.trackedRaw) : []
-
-        // run npm audit lazily — only when the active (risk-based) gate set actually needs it.
-        // classifyRisk runs again inside evaluatePolicy below; both are pure + deterministic on the
-        // same (policy, changedPaths), so the duplicate call is intentional and free of skew.
-        const activeGates =
-          classifyRisk(policy, changedPaths) === 'high' ? policy.gates.high : policy.gates.normal
-        let depAuditVulns: number | null = null
-        if (activeGates.includes('dependency_audit')) {
-          const { runDepAudit } = await import('../verify/dep-audit')
-          const { shellRunner } = await import('../verify/runner')
-          depAuditVulns = await runDepAudit(shellRunner(root()))
-        }
-
-        const evaluation = evaluatePolicy(policy, {
-          changedPaths,
-          blockingFindings: manifest?.findings.blocking ?? 0,
-          verifyPassed: manifest?.verify ? manifest.verify.passed : null,
-          secretScanHits: bundle ? scanDiffForSecrets(bundle.diff.tracked).hits : null,
-          depAuditVulns,
-        })
+        // single source of truth shared with the merge-approval + push lifecycle gates (#5).
+        const { evaluateCyclePolicy } = await import('../policy/gate')
+        const { evaluation } = await evaluateCyclePolicy(root(), state, new SystemClock().nowIso())
 
         print(`Policy - ${state.project.name} | cycle ${state.workflow.cycle}`)
         print(`  risk:      ${evaluation.risk}`)
