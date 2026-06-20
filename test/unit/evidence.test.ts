@@ -73,7 +73,7 @@ describe('buildEvidenceManifest', () => {
 describe('toMarkdown', () => {
   it('renders the key sections', () => {
     const md = toMarkdown(buildEvidenceManifest(base))
-    expect(md).toMatch(/# Evidence — demo · cycle 2/)
+    expect(md).toMatch(/# Evidence - demo \| cycle 2/)
     expect(md).toMatch(/Verdict:\*\* approved/)
     expect(md).toMatch(/Review object \(immutable bundle\)/)
     expect(md).toMatch(/bundle_id: `b{64}`/)

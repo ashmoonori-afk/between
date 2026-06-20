@@ -1,7 +1,7 @@
 import { CommandBus } from '../adapters/command-bus'
 import { StateRepository } from '../adapters/state-repository'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
-import { signApproval } from '../core/approval'
+import { signApproval, approvalExpiry } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import type { ApprovalScope, Phase } from '../core/types'
 import type { ChatMessage, ChatTransport } from './transport'
@@ -91,14 +91,25 @@ export class GatewaySession {
     }
     const state = await this.repo.read()
     const secret = resolveApprovalSecret(this.root)
+    // F1: sign the bundle binding + expiry too, consistently with the CLI/daemon/hook.
+    const bundleId = state?.diff.bundle_id ?? null
+    const expiresAt = approvalExpiry(Date.now())
     const sig = secret
       ? signApproval(secret, {
           scope,
           diff_hash: state?.diff.hash ?? null,
           cycle: state?.workflow.cycle ?? 0,
+          bundle_id: bundleId,
+          expires_at: expiresAt,
         })
       : undefined
-    await this.bus.submit({ kind: 'approve', scope, sig })
+    await this.bus.submit({
+      kind: 'approve',
+      scope,
+      sig,
+      bundle_id: bundleId,
+      expires_at: expiresAt,
+    })
     return secret
       ? `${scope} approval signed + submitted`
       : `${scope} approval submitted (UNSIGNED)`

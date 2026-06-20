@@ -23,7 +23,11 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('approve'),
     scope: z.enum(['merge', 'deploy', 'promote_rule']),
-    sig: z.string().optional(), // HMAC over (scope, diff_hash, cycle); verified by the daemon (P1-5)
+    // HMAC over (scope, diff_hash, cycle, bundle_id, expires_at); verified by the daemon (P1-5/F1).
+    sig: z.string().optional(),
+    // the approver stamps + signs these so a state writer can't tamper the bundle binding / expiry.
+    bundle_id: z.string().nullable().optional(),
+    expires_at: z.string().optional(),
   }),
   z.object({ kind: z.literal('stop') }),
 ])

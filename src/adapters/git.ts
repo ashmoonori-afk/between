@@ -121,7 +121,7 @@ export class GitAdapter {
   /** numstat summary -> changed files / insertions / deletions. */
   async summary(): Promise<DiffSummary> {
     const r = await this.run(['diff', await this.base(), '--numstat', ...TRACKED_EXCLUDE])
-    if (r.exitCode !== 0) return { changed_files: 0, insertions: 0, deletions: 0 }
+    if (r.exitCode !== 0) throw new GitError('git diff --numstat failed', r.stderr) // fail-closed (A4)
     let changed = 0
     let ins = 0
     let del = 0
@@ -138,23 +138,27 @@ export class GitAdapter {
   private async untracked(opts: DiffInputOptions): Promise<UntrackedEntry[]> {
     if (!opts.reviewUntracked) return []
     const list = await this.run(['ls-files', '--others', '--exclude-standard', '-z'])
-    if (list.exitCode !== 0) return []
+    // F3 / A4: when untracked review is ON, a git failure must NOT silently drop untracked files
+    // from the review object — fail closed so the daemon surfaces an error instead.
+    if (list.exitCode !== 0) throw new GitError('git ls-files (untracked) failed', list.stderr)
     const files = list.stdout
       .split('\0')
       .map((f) => f.trim())
       .filter((f) => f.length > 0 && !f.startsWith('.between/'))
       .filter((f) => matchesGlobs(f, opts.untrackedGlobs))
     if (files.length === 0) return []
-    // Chunk hash-object so a long file list can't blow the OS command-line length limit
-    // and silently drop ALL untracked entries (which would corrupt the diff hash, HIGH-9).
+    // Chunk hash-object so a long file list can't blow the OS command-line length limit.
     const CHUNK = 100
     const oids: string[] = []
     for (let i = 0; i < files.length; i += CHUNK) {
       const hashed = await this.run(['hash-object', '--', ...files.slice(i, i + CHUNK)])
-      if (hashed.exitCode !== 0) return [] // can't hash reliably -> exclude untracked entirely
+      if (hashed.exitCode !== 0)
+        throw new GitError('git hash-object (untracked) failed', hashed.stderr)
       oids.push(...hashed.stdout.split('\n').filter((l) => l.trim().length > 0))
     }
-    if (oids.length !== files.length) return []
+    if (oids.length !== files.length) {
+      throw new GitError('git hash-object returned an unexpected oid count', '')
+    }
     return files.map((path, i) => ({ path, oid: oids[i] ?? '' }))
   }
 

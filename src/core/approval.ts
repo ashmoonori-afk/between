@@ -22,14 +22,23 @@ export interface ApprovalClaim {
   scope: string
   diff_hash: string | null
   cycle: number
+  /** the immutable bundle this approval is bound to (F1) — signed, not just stored. */
+  bundle_id: string | null
+  /** ISO expiry, set + signed by the approver (F1) so a state writer can't extend it. */
+  expires_at: string
 }
 
 function payload(claim: ApprovalClaim): string {
-  return `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}`
+  return `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}:${claim.bundle_id ?? ''}:${claim.expires_at}`
 }
 
 export function signApproval(secret: string, claim: ApprovalClaim): string {
   return createHmac('sha256', secret).update(payload(claim)).digest('hex')
+}
+
+/** Compute an approval expiry ISO string from a base epoch-ms (the approver stamps + signs it). */
+export function approvalExpiry(nowMs: number): string {
+  return new Date(nowMs + APPROVAL_TTL_SECONDS * 1000).toISOString()
 }
 
 /** The freshness inputs an approval is re-checked against at push time (A2). */

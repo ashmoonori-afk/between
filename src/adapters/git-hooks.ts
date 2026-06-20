@@ -31,9 +31,16 @@ const secret = process.env.BETWEEN_APPROVAL_SECRET || (existsSync(keyFile) ? rea
 const ap = state.approval
 const phase = state.workflow && state.workflow.phase
 
+// F2: only a MERGE approval authorizes a push — deploy/promote_rule are separate gates.
+if (ap && ap.scope !== 'merge') {
+  process.stderr.write('between: refusing push — only a merge approval authorizes a push (got ' + ap.scope + ').\\n')
+  process.exit(1)
+}
+
 function valid(a) {
   if (!secret || !a || !a.sig) return false
-  const payload = a.scope + ':' + (a.diff_hash || '') + ':' + a.cycle
+  // F1: verify the FULL signed claim (scope, diff_hash, cycle, bundle_id, expires_at).
+  const payload = a.scope + ':' + (a.diff_hash || '') + ':' + a.cycle + ':' + (a.bundle_id || '') + ':' + a.expires_at
   const expected = createHmac('sha256', secret).update(payload).digest('hex')
   if (a.sig.length !== expected.length) return false
   try { return timingSafeEqual(Buffer.from(a.sig), Buffer.from(expected)) } catch { return false }

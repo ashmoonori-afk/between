@@ -5,7 +5,7 @@ import type { ReviewBundle } from '../review/bundle'
  * B4: a portable, exporter-agnostic Evidence Manifest for one review cycle. It binds the immutable
  * bundle (A1), the reviewer findings, the verification result, and the (signed, freshness-checked)
  * approval into a single auditable record. Markdown / Obsidian / GitHub Checks / SARIF / JSON /
- * OpenTelemetry are all just exporters of THIS object — Obsidian is one port among several, not a
+ * OpenTelemetry are all just exporters of THIS object -- Obsidian is one port among several, not a
  * core dependency.
  */
 export const EVIDENCE_SCHEMA_VERSION = 1
@@ -19,7 +19,7 @@ export interface EvidenceManifestInput {
   evidenceTrust: 'simulated' | 'real'
   developer: string
   reviewer: string
-  /** stamped by the caller (CLI clock) — keeps this builder pure. */
+  /** stamped by the caller (CLI clock) -- keeps this builder pure. */
   generatedAt: string
   bundle: ReviewBundle | null
   review: ReviewRecord | null
@@ -102,13 +102,13 @@ export function buildEvidenceManifest(input: EvidenceManifestInput): EvidenceMan
 /** Pure: render a human-readable Markdown evidence report. */
 export function toMarkdown(m: EvidenceManifest): string {
   const lines: string[] = []
-  lines.push(`# Evidence — ${m.project} · cycle ${m.cycle}`)
+  lines.push(`# Evidence - ${m.project} | cycle ${m.cycle}`)
   lines.push('')
   lines.push(
     `- **Verdict:** ${m.verdict}${m.evidence_trust === 'simulated' ? ' (SIMULATION)' : ''}`,
   )
   lines.push(`- **Phase:** ${m.phase}`)
-  lines.push(`- **Agents:** developer ${m.agents.developer} · reviewer ${m.agents.reviewer}`)
+  lines.push(`- **Agents:** developer ${m.agents.developer} | reviewer ${m.agents.reviewer}`)
   lines.push(`- **Generated:** ${m.generated_at}`)
   lines.push('')
   lines.push('## Review object (immutable bundle)')
@@ -128,13 +128,13 @@ export function toMarkdown(m: EvidenceManifest): string {
   lines.push('')
   lines.push('## Verification')
   lines.push(
-    m.verify ? `- ${m.verify.passed ? 'PASSED' : 'FAILED'} — ${m.verify.summary}` : '- _none_',
+    m.verify ? `- ${m.verify.passed ? 'PASSED' : 'FAILED'} - ${m.verify.summary}` : '- _none_',
   )
   lines.push('')
   lines.push('## Approval')
   if (m.approval) {
     lines.push(
-      `- ${m.approval.scope} · signed=${m.approval.signed} · expires ${m.approval.expires_at}`,
+      `- ${m.approval.scope} | signed=${m.approval.signed} | expires ${m.approval.expires_at}`,
     )
     lines.push(`- bound to bundle: \`${m.approval.bundle_id ?? '-'}\``)
   } else {

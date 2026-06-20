@@ -1,6 +1,7 @@
 import { Command } from 'commander'
 import { VERSION } from './shared'
 import { registerBrokerCommands } from './broker-commands'
+import { registerEvidenceCommand } from './evidence-command'
 import { registerForgeCommands } from './forge-commands'
 import { registerGatewayCommand } from './gateway-command'
 import { registerSetupCommands } from './setup-commands'
@@ -14,6 +15,7 @@ export function buildProgram(): Command {
 
   registerSetupCommands(program)
   registerBrokerCommands(program)
+  registerEvidenceCommand(program)
   registerGatewayCommand(program)
   registerForgeCommands(program)
 

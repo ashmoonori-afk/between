@@ -3,7 +3,13 @@ import { signApproval, verifyApproval } from '../../src/core/approval'
 import { strippedAgentEnv, APPROVAL_SECRET_ENV } from '../../src/adapters/approval-secret'
 
 const secret = 'top-secret-32-bytes-of-entropy-xx'
-const claim = { scope: 'merge', diff_hash: 'abc123', cycle: 7 }
+const claim = {
+  scope: 'merge',
+  diff_hash: 'abc123',
+  cycle: 7,
+  bundle_id: 'bundle-xyz',
+  expires_at: '2026-06-20T01:00:00.000Z',
+}
 
 describe('signed approval (P1-5)', () => {
   it('verifies a signature it produced', () => {
@@ -18,10 +24,14 @@ describe('signed approval (P1-5)', () => {
     expect(verifyApproval('other-secret', signApproval(secret, claim), claim)).toBe(false)
   })
 
-  it('rejects a replay against a different diff/cycle (claim binding)', () => {
+  it('rejects a replay against a different diff/cycle/bundle/expiry (claim binding, F1)', () => {
     const sig = signApproval(secret, claim)
     expect(verifyApproval(secret, sig, { ...claim, diff_hash: 'XYZ' })).toBe(false)
     expect(verifyApproval(secret, sig, { ...claim, cycle: 8 })).toBe(false)
+    expect(verifyApproval(secret, sig, { ...claim, bundle_id: 'other' })).toBe(false)
+    expect(verifyApproval(secret, sig, { ...claim, expires_at: '2099-01-01T00:00:00.000Z' })).toBe(
+      false,
+    )
   })
 
   it('rejects empty secret or empty signature', () => {

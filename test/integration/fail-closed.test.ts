@@ -24,6 +24,13 @@ describe('A4 — fail-closed git', () => {
     await expect(new GitAdapter(dir).diffInput(OPTS)).rejects.toBeInstanceOf(GitError)
   })
 
+  it('F3: summary() + untracked review also fail closed on git failure (not zero/empty)', async () => {
+    await expect(new GitAdapter(dir).summary()).rejects.toBeInstanceOf(GitError)
+    await expect(
+      new GitAdapter(dir).diffInput({ reviewUntracked: true, untrackedGlobs: [] }),
+    ).rejects.toBeInstanceOf(GitError)
+  })
+
   it('the daemon routes a mid-loop git failure to `error`, not "no change"', async () => {
     const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
     await execa('git', ['init', '-b', 'main'], { cwd: dir })

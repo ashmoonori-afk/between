@@ -12,7 +12,7 @@ import { AckStore } from '../../src/adapters/ack-store'
 import { StateRepository } from '../../src/adapters/state-repository'
 import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
-import { signApproval } from '../../src/core/approval'
+import { signApproval, approvalExpiry } from '../../src/core/approval'
 import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
 import { readBundle } from '../../src/review/store'
 import { collectEvidence } from '../../src/evidence/collect'
@@ -46,12 +46,22 @@ async function ackCurrent(cycle: number, hash: string, fc: FakeClock): Promise<v
 
 async function signedApprove(scope: 'merge' | 'deploy' | 'promote_rule'): Promise<void> {
   const st = await new StateRepository(dir).read()
+  const bundleId = st?.diff.bundle_id ?? null
+  const expiresAt = approvalExpiry(Date.now())
   const sig = signApproval(resolveApprovalSecret(dir), {
     scope,
     diff_hash: st?.diff.hash ?? null,
     cycle: st?.workflow.cycle ?? 0,
+    bundle_id: bundleId,
+    expires_at: expiresAt,
   })
-  await new CommandBus(dir).submit({ kind: 'approve', scope, sig })
+  await new CommandBus(dir).submit({
+    kind: 'approve',
+    scope,
+    sig,
+    bundle_id: bundleId,
+    expires_at: expiresAt,
+  })
 }
 
 beforeEach(async () => {

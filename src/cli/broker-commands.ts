@@ -6,7 +6,7 @@ import { CommandBus } from '../adapters/command-bus'
 import { AckStore } from '../adapters/ack-store'
 import { buildSignal } from '../adapters/signal-transport'
 import type { Ack, ApprovalScope } from '../core/types'
-import { signApproval, verifyApproval, approvalFreshness } from '../core/approval'
+import { signApproval, verifyApproval, approvalFreshness, approvalExpiry } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
 import { loadConfig, runStart } from '../runtime'
@@ -137,13 +137,24 @@ export function registerBrokerCommands(program: Command): void {
         await loadConfig(root())
         const state = await new StateRepository(root()).read()
         const secret = resolveApprovalSecret(root())
+        // F1: the approver stamps + signs the bundle binding + expiry too.
+        const bundleId = state?.diff.bundle_id ?? null
+        const expiresAt = approvalExpiry(Date.now())
         const claim = {
           scope,
           diff_hash: state?.diff.hash ?? null,
           cycle: state?.workflow.cycle ?? 0,
+          bundle_id: bundleId,
+          expires_at: expiresAt,
         }
         const sig = secret ? signApproval(secret, claim) : undefined
-        await new CommandBus(root()).submit({ kind: 'approve', scope: scope as ApprovalScope, sig })
+        await new CommandBus(root()).submit({
+          kind: 'approve',
+          scope: scope as ApprovalScope,
+          sig,
+          bundle_id: bundleId,
+          expires_at: expiresAt,
+        })
         print(
           secret
             ? `between: ${scope} approval submitted (signed)`
@@ -197,36 +208,6 @@ export function registerBrokerCommands(program: Command): void {
     })
 
   program
-    .command('evidence')
-    .description(
-      'Emit the portable evidence manifest for the current cycle (bundle+review+approval)',
-    )
-    .option('--json', 'emit JSON instead of Markdown')
-    .option('--out <path>', 'write to a file instead of stdout')
-    .action(async (opts: { json?: boolean; out?: string }) => {
-      try {
-        const { collectEvidence } = await import('../evidence/collect')
-        const { toMarkdown } = await import('../evidence/manifest')
-        const manifest = await collectEvidence(root(), new SystemClock().nowIso())
-        if (!manifest) {
-          printErr('between: no state found - run `between init`')
-          process.exitCode = 1
-          return
-        }
-        const out = opts.json ? JSON.stringify(manifest, null, 2) : toMarkdown(manifest)
-        if (opts.out) {
-          const { writeFile } = await import('node:fs/promises')
-          await writeFile(opts.out, out.endsWith('\n') ? out : `${out}\n`, 'utf8')
-          print(`between: evidence written to ${opts.out}`)
-        } else {
-          print(out)
-        }
-      } catch (e) {
-        await fail(e)
-      }
-    })
-
-  program
     .command('verify-push')
     .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
     .action(async () => {
@@ -243,10 +224,20 @@ export function registerBrokerCommands(program: Command): void {
         const secret = resolveApprovalSecret(root())
         const ap = state.approval
         if (ap) {
+          // F2: only a MERGE approval authorizes a push — deploy/promote_rule are separate gates.
+          if (ap.scope !== 'merge') {
+            printErr(
+              `between: refusing push — only a merge approval authorizes a push (got ${ap.scope})`,
+            )
+            process.exitCode = 1
+            return
+          }
           const ok = verifyApproval(secret, ap.sig ?? '', {
             scope: ap.scope,
             diff_hash: ap.diff_hash,
             cycle: ap.cycle,
+            bundle_id: ap.bundle_id,
+            expires_at: ap.expires_at,
           })
           if (!ok) {
             printErr('between: recorded approval failed signature verification')

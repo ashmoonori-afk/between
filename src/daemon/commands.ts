@@ -2,7 +2,7 @@ import { touch, isAlreadyReviewed } from '../core/state'
 import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
-import { verifyApproval, APPROVAL_TTL_SECONDS } from '../core/approval'
+import { verifyApproval, approvalExpiry } from '../core/approval'
 import type { ApprovalScope } from '../core/types'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
@@ -47,7 +47,7 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
       await forceReview(ctx)
       break
     case 'approve':
-      await approve(ctx, command.scope, command.sig)
+      await approve(ctx, command.scope, command.sig, command.bundle_id ?? null, command.expires_at)
       break
     case 'stop':
       ctx.requestStop()
@@ -61,9 +61,22 @@ export async function approve(
   ctx: DaemonContext,
   scope: ApprovalScope,
   sig?: string,
+  bundleId?: string | null,
+  expiresAt?: string,
 ): Promise<void> {
   const cur = ctx.current()
-  const claim = { scope, diff_hash: cur.diff.hash, cycle: cur.workflow.cycle }
+  // F1: bundle_id + expires_at are part of the SIGNED claim — use the approver's values (what was
+  // signed) so the daemon verifies and stores exactly what the human authorized; fall back only on
+  // the unsigned path. A state writer without the secret can't forge a sig over a tampered binding.
+  const bundle_id = bundleId ?? cur.diff.bundle_id
+  const expires_at = expiresAt ?? approvalExpiry(ctx.deps.clock.now())
+  const claim = {
+    scope,
+    diff_hash: cur.diff.hash,
+    cycle: cur.workflow.cycle,
+    bundle_id,
+    expires_at,
+  }
   const secret = resolveApprovalSecret(ctx.deps.root)
   if (secret) {
     // a secret is provisioned -> a valid signature is REQUIRED; a forged/unsigned approve
@@ -84,9 +97,8 @@ export async function approve(
       cycle: cur.workflow.cycle,
       granted_at: ctx.deps.clock.nowIso(),
       sig: sig ?? null,
-      // A2: bind the approval to the exact bundle + an expiry so it can't outlive its change.
-      bundle_id: cur.diff.bundle_id,
-      expires_at: new Date(ctx.deps.clock.now() + APPROVAL_TTL_SECONDS * 1000).toISOString(),
+      bundle_id,
+      expires_at,
     },
   }
   await ctx.persist(touch(next, ctx.deps.clock))

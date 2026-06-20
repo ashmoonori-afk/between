@@ -12,7 +12,7 @@ import { EventsLog } from '../../src/adapters/events-log'
 import { StateRepository } from '../../src/adapters/state-repository'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { reviewPath, verifyPath, betweenPaths } from '../../src/adapters/paths'
-import { signApproval } from '../../src/core/approval'
+import { signApproval, approvalExpiry } from '../../src/core/approval'
 import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
 
 let dir: string
@@ -100,11 +100,25 @@ describe('approval trust boundary (P1-5)', () => {
       )
       expect(rejects.length).toBeGreaterThanOrEqual(2)
 
-      // valid: a signature from the provisioned secret -> approved
+      // valid: a signature from the provisioned secret -> approved (F1: signs bundle + expiry too)
       const secret = resolveApprovalSecret(dir)
       expect(secret).not.toBe('')
-      const sig = signApproval(secret, { scope: 'merge', diff_hash: hash, cycle: 1 })
-      await bus.submit({ kind: 'approve', scope: 'merge', sig })
+      const bundleId = d.state.diff.bundle_id
+      const expiresAt = approvalExpiry(Date.now())
+      const sig = signApproval(secret, {
+        scope: 'merge',
+        diff_hash: hash,
+        cycle: 1,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
+      await bus.submit({
+        kind: 'approve',
+        scope: 'merge',
+        sig,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
       await d.tick()
       expect(d.state.workflow.phase).toBe('done')
       expect(d.state.approval?.scope).toBe('merge')
