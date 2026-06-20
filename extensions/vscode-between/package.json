@@ -1,0 +1,43 @@
+{
+  "name": "vscode-between",
+  "displayName": "Between",
+  "description": "Local Between broker panel and review actions for VS Code.",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "publisher": "between-local",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "categories": ["Other"],
+  "main": "./src/extension.js",
+  "activationEvents": [
+    "onCommand:between.refresh",
+    "onCommand:between.openEvidence",
+    "onCommand:between.requestSecondReview",
+    "onCommand:between.askDeveloperToFix"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "between.refresh",
+        "title": "Between: Refresh"
+      },
+      {
+        "command": "between.openEvidence",
+        "title": "Between: Open Evidence"
+      },
+      {
+        "command": "between.requestSecondReview",
+        "title": "Between: Request Second Review"
+      },
+      {
+        "command": "between.askDeveloperToFix",
+        "title": "Between: Ask Developer To Fix"
+      }
+    ]
+  },
+  "scripts": {
+    "test": "node ../../node_modules/vitest/vitest.mjs"
+  }
+}
