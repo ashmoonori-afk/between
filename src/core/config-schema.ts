@@ -61,6 +61,13 @@ export const ConfigSchema = z
     // 'poll' = REST channel polling (no privileged intent, replays missed messages).
     discord_mode: z.enum(['gateway', 'poll']).default('gateway'),
     discord_poll_interval_ms: z.number().int().positive().default(4000),
+
+    // --- verification runner (`between verify`, B3) ---
+    verification_checks: z.array(z.object({ name: z.string(), command: z.string() })).default([
+      { name: 'typecheck', command: 'npm run typecheck' },
+      { name: 'lint', command: 'npm run lint' },
+      { name: 'tests', command: 'npm test' },
+    ]),
   })
   .strict()
 
