@@ -280,8 +280,11 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   approvals, gate violations as explicit results. Hardened per adversarial review (15 confirmed):
   fixed a `**​/` glob bug that let root-level secret files dodge high-risk, backslash/`./` bypass,
   ReDoS guard, gate-name enum (typo fails fast), git trackedRaw `--no-renames`.
-- ⬜ **B3** VerificationRunner (also wires the secret_scan / dependency_audit gates) · **B5**
-  EventStore · **B6** cockpit TUI · **B7** VS Code MVP. ✅ **B4** evidence manifest/exporters.
+- 🔶 **B3** VerificationRunner — first slice: `secret_scan` gate wired (src/verify/secret-scan.ts
+  scans the sealed bundle's added diff lines; enforced when run). Remaining: a runner that executes
+  tests/lint/typecheck → structured results folded into the evidence bundle + the `dependency_audit`
+  gate (`npm audit`). ✅ **B4** evidence manifest/exporters.
+- ⬜ **B5** EventStore · **B6** cockpit TUI · **B7** VS Code MVP.
   (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
