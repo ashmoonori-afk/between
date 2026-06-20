@@ -276,7 +276,12 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   `materializeBundle` (reviewer-readonly worktree reproducing the sealed bundle, `between
   review-worktree`). Remaining: stripped agent env (no secret/push creds) + network-deny +
   binary/untracked materialization + OS-level read-only.
-- ⬜ **B2** PolicyEngine · **B3** VerificationRunner · ✅ **B4** evidence manifest/exporters ·
-  ⬜ **B5** EventStore · **B6** cockpit TUI · **B7** VS Code MVP.
+- ✅ **B2** PolicyEngine — policy-as-code (`between policy`): risk-by-path, per-risk gates +
+  approvals, gate violations as explicit results. Hardened per adversarial review (15 confirmed):
+  fixed a `**​/` glob bug that let root-level secret files dodge high-risk, backslash/`./` bypass,
+  ReDoS guard, gate-name enum (typo fails fast), git trackedRaw `--no-renames`.
+- ⬜ **B3** VerificationRunner (also wires the secret_scan / dependency_audit gates) · **B5**
+  EventStore · **B6** cockpit TUI · **B7** VS Code MVP. ✅ **B4** evidence manifest/exporters.
+  (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).
