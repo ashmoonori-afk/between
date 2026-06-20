@@ -233,8 +233,8 @@ Goal
   **single-local** for now, this is acceptable near-term; revisit before any multi-user or exposed
   deployment (a local second-factor flag is the intended later mitigation, without changing
   gateway behavior for local use).
-- **Open (deferred to B5):** SQLite vs append-only checksummed journal for the EventStore — pick
-  based on the query/replay needs surfaced by the cockpit (B6).
+- **DECIDED — EventStore uses an append-only checksummed journal for B5.** SQLite remains a future
+  scalability option only if cockpit query/replay needs outgrow the current journal.
 
 ## 9. Platform / Release workstream  (now parallel to Phase A)
 
@@ -289,7 +289,7 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   structured report is now folded into the evidence manifest + its Markdown (src/verify/report.ts:
   one zod-validated reader shared by manifest collect + cockpit; schema↔runner lockstep guard).
   ✅ **B4** evidence manifest/exporters.
-- 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
+- ✅ **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
   EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop and
   tail-truncation via the chain-head pin in state.json (BetweenState.journal + verifyChainHead;
   daemon pins on every emit). Append fail-safe: the in-memory head advances only after a durable
