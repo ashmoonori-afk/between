@@ -289,8 +289,15 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   one zod-validated reader shared by manifest collect + cockpit; schema↔runner lockstep guard).
   ✅ **B4** evidence manifest/exporters.
 - 🔶 **B5** EventStore — done: tamper-evident hash-chained event journal (src/core/journal.ts +
-  EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop. Remaining:
-  pin the chain head in state.json to also detect tail-truncation (SQLite option deferred).
+  EventsLog chain + `between journal --verify`); detects edits/reorder/middle-drop AND now
+  tail-truncation via the chain-head pin in state.json (BetweenState.journal + verifyChainHead;
+  daemon pins on every emit). Append fail-safe: the in-memory head advances only after a durable
+  write. Remaining (NOT complete): **exact replay** (event-log -> state reconstruction) and an
+  optional SQLite store. (A1 hardening landed alongside: readBundle now refuses a tampered
+  content-addressed bundle - verifyBundleIntegrity, fail-closed.)
+  - Open blocking items from review (next iterations): exact replay (B5); wire policy + secret_scan
+    as LIFECYCLE gates into the daemon cycle / push gate (today they are CLI-only, so merge/push can
+    proceed without `between policy`).
 - 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
   state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
   cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).
