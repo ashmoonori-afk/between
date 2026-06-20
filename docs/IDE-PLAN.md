@@ -313,8 +313,9 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   The focused replay drilldown shows the selected snapshot's diff stats and bundle hint. The live
   Ink dashboard and embedded 3-pane TUI now expose a phase-aware command palette for
   review-now/pause/resume/stop requests through the command bus. `between cockpit --file` and
-  `--severity` filter the linked findings list without changing action validation. Remaining:
-  agent filters and cost/token/time analytics.
+  `--severity` filter the linked findings list without changing action validation. The cockpit now
+  shows broker time age/update freshness and aggregate verification duration. Remaining: agent
+  filters plus cost/token analytics once those fields exist in the evidence schema.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,

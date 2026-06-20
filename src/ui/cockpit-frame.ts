@@ -29,7 +29,8 @@ export interface CockpitData {
   /** evidence verdict: approved | blocked | pending | simulated. */
   verdict: string
   /** verification report summary, or null when `between verify` hasn't run. */
-  verification: { passed: number; total: number; allPassed: boolean } | null
+  verification: { passed: number; total: number; allPassed: boolean; durationMs?: number } | null
+  time?: { goalAgeMs: number | null; updatedAgoMs: number | null }
   journalValid: boolean
   journalEntries: number
 }
@@ -57,8 +58,13 @@ export function renderCockpit(d: CockpitData): string {
     for (const g of d.gates) out.push(`    [${g.status}] ${g.name}`)
   }
   out.push(
-    `  verify:    ${d.verification ? `${d.verification.passed}/${d.verification.total} checks ${d.verification.allPassed ? 'PASS' : 'FAIL'}` : 'not run'}`,
+    `  verify:    ${d.verification ? `${d.verification.passed}/${d.verification.total} checks ${d.verification.allPassed ? 'PASS' : 'FAIL'}${d.verification.durationMs !== undefined ? ` (${formatDuration(d.verification.durationMs)})` : ''}` : 'not run'}`,
   )
+  if (d.time) {
+    out.push(
+      `  time:      goal ${formatNullableDuration(d.time.goalAgeMs)}   updated ${formatNullableDuration(d.time.updatedAgoMs)} ago`,
+    )
+  }
   out.push(`  verdict:   ${d.verdict}`)
   out.push(`  journal:   ${d.journalValid ? 'VERIFIED' : 'BROKEN'} (${d.journalEntries} entries)`)
   out.push('-'.repeat(60))
@@ -115,6 +121,23 @@ function renderFilters(model: CockpitModel): string {
   if (model.filters.file) out.push(`file=${ascii(model.filters.file)}`)
   if (model.filters.severity) out.push(`severity=${model.filters.severity}`)
   return out.join(' ')
+}
+
+function formatNullableDuration(value: number | null): string {
+  return value === null ? '-' : formatDuration(value)
+}
+
+function formatDuration(value: number): string {
+  const ms = Math.max(0, Math.floor(value))
+  if (ms < 1000) return `${ms}ms`
+  const totalSeconds = Math.floor(ms / 1000)
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes < 60) return seconds === 0 ? `${minutes}m` : `${minutes}m${seconds}s`
+  const hours = Math.floor(minutes / 60)
+  const remainder = minutes % 60
+  return remainder === 0 ? `${hours}h` : `${hours}h${remainder}m`
 }
 
 function oneLine(value: string): string {

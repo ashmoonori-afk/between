@@ -20,7 +20,8 @@ const data: CockpitData = {
   ],
   policySatisfied: false,
   verdict: 'blocked',
-  verification: { passed: 2, total: 3, allPassed: false },
+  verification: { passed: 2, total: 3, allPassed: false, durationMs: 352 },
+  time: { goalAgeMs: 150000, updatedAgoMs: 5000 },
   journalValid: true,
   journalEntries: 42,
 }
@@ -34,7 +35,8 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/findings:\s+1 blocking\s+2 non-blocking/)
     expect(frame).toMatch(/risk:\s+high\s+policy BLOCKED/)
     expect(frame).toMatch(/\[fail\] secret_scan/)
-    expect(frame).toMatch(/verify:\s+2\/3 checks FAIL/)
+    expect(frame).toMatch(/verify:\s+2\/3 checks FAIL \(352ms\)/)
+    expect(frame).toMatch(/time:\s+goal 2m30s\s+updated 5s ago/)
     expect(frame).toMatch(/verdict:\s+blocked/)
     expect(frame).toMatch(/journal:\s+VERIFIED \(42 entries\)/)
   })

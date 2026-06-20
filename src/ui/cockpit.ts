@@ -42,6 +42,7 @@ export async function collectCockpitData(
         passed: manifest.verification.passed,
         total: manifest.verification.total,
         allPassed: manifest.verification.all_passed,
+        durationMs: manifest.verification.checks.reduce((sum, check) => sum + check.duration_ms, 0),
       }
     : null
 
@@ -66,9 +67,21 @@ export async function collectCockpitData(
     policySatisfied,
     verdict: manifest?.verdict ?? 'pending',
     verification,
+    time: {
+      goalAgeMs: elapsedMs(state.workflow.started_at, nowIso),
+      updatedAgoMs: elapsedMs(state.workflow.updated_at, nowIso),
+    },
     journalValid: journal.valid,
     journalEntries: entries.length,
   }
+}
+
+function elapsedMs(fromIso: string | null, toIso: string): number | null {
+  if (!fromIso) return null
+  const from = Date.parse(fromIso)
+  const to = Date.parse(toIso)
+  if (!Number.isFinite(from) || !Number.isFinite(to)) return null
+  return Math.max(0, to - from)
 }
 
 export async function collectCockpitModel(
