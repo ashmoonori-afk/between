@@ -14,6 +14,8 @@ export interface PolicyInput {
   blockingFindings: number
   /** true/false from the verification record, or null when none exists. */
   verifyPassed: boolean | null
+  /** secret-shaped hits in the added diff lines (B3); null/undefined = scan not run. */
+  secretScanHits?: number | null
 }
 
 export interface PolicyEvaluation {
@@ -105,8 +107,20 @@ function evaluateGate(name: string, input: PolicyInput): GateResult {
             ? 'no verification record'
             : `verification ${input.verifyPassed ? 'passed' : 'failed'}`,
       }
+    case 'secret_scan': {
+      // B3: enforced when a scan result is supplied; otherwise advisory (scan not run).
+      const hits = input.secretScanHits
+      if (hits === null || hits === undefined) {
+        return { name, status: 'not_enforced', detail: 'secret scan not run' }
+      }
+      return {
+        name,
+        status: hits === 0 ? 'pass' : 'fail',
+        detail: `${hits} secret-shaped hit(s) in the added diff`,
+      }
+    }
     default:
-      // secret_scan / dependency_audit — declared but not yet wired (B3). Advisory, not blocking.
+      // dependency_audit — declared but not yet wired (later B3 slice). Advisory, not blocking.
       // (schema restricts gate names to a known enum, so this is never a silent typo.)
       return { name, status: 'not_enforced', detail: 'gate not yet enforced (wired in B3)' }
   }

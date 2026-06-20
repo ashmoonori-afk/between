@@ -36,6 +36,7 @@ export function registerPolicyCommand(program: Command): void {
         const { evaluatePolicy, changedPathsFromRaw } = await import('../policy/engine')
         const { collectEvidence } = await import('../evidence/collect')
         const { readBundle } = await import('../review/store')
+        const { scanDiffForSecrets } = await import('../verify/secret-scan')
 
         const policy = await loadPolicy(root())
         const manifest = await collectEvidence(root(), new SystemClock().nowIso())
@@ -44,6 +45,7 @@ export function registerPolicyCommand(program: Command): void {
           changedPaths: bundle ? changedPathsFromRaw(bundle.diff.trackedRaw) : [],
           blockingFindings: manifest?.findings.blocking ?? 0,
           verifyPassed: manifest?.verify ? manifest.verify.passed : null,
+          secretScanHits: bundle ? scanDiffForSecrets(bundle.diff.tracked).hits : null,
         })
 
         print(`Policy - ${state.project.name} | cycle ${state.workflow.cycle}`)

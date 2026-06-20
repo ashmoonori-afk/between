@@ -68,10 +68,26 @@ describe('evaluatePolicy', () => {
     expect(evaluatePolicy(DEFAULT_POLICY, { ...ok, verifyPassed: null }).satisfied).toBe(false)
   })
 
-  it('not-yet-enforced gates (secret_scan) are advisory, never blocking', () => {
-    const e = evaluatePolicy(DEFAULT_POLICY, { ...ok, changedPaths: ['src/auth/x.ts'] }) // high -> includes secret_scan
-    expect(e.gates.find((g) => g.name === 'secret_scan')?.status).toBe('not_enforced')
-    expect(e.satisfied).toBe(true) // advisory gate doesn't block when others pass
+  it('secret_scan is advisory when not run, but enforced once a scan result is supplied (B3)', () => {
+    const high = ['src/auth/x.ts'] // high risk -> gate set includes secret_scan
+    // not run -> advisory (not_enforced), does not block
+    const naEval = evaluatePolicy(DEFAULT_POLICY, { ...ok, changedPaths: high })
+    expect(naEval.gates.find((g) => g.name === 'secret_scan')?.status).toBe('not_enforced')
+    expect(naEval.satisfied).toBe(true)
+    // scanned, 0 hits -> pass
+    expect(
+      evaluatePolicy(DEFAULT_POLICY, { ...ok, changedPaths: high, secretScanHits: 0 }).gates.find(
+        (g) => g.name === 'secret_scan',
+      )?.status,
+    ).toBe('pass')
+    // scanned, hits -> fail -> BLOCKED
+    const failEval = evaluatePolicy(DEFAULT_POLICY, {
+      ...ok,
+      changedPaths: high,
+      secretScanHits: 2,
+    })
+    expect(failEval.gates.find((g) => g.name === 'secret_scan')?.status).toBe('fail')
+    expect(failEval.satisfied).toBe(false)
   })
 })
 
