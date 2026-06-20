@@ -6,6 +6,7 @@ import { loadPolicy } from '../policy/load'
 import { evaluatePolicy, changedPathsFromRaw } from '../policy/engine'
 import { scanDiffForSecrets } from '../verify/secret-scan'
 import type { CockpitData, CockpitGate } from './cockpit-frame'
+import { buildCockpitModel, type CockpitModel, type ReplayCycleSnapshot } from './cockpit-model'
 
 /** Compose the cockpit facts from on-disk state + evidence + policy + verification + journal. */
 export async function collectCockpitData(
@@ -68,4 +69,34 @@ export async function collectCockpitData(
     journalValid: journal.valid,
     journalEntries: entries.length,
   }
+}
+
+export async function collectCockpitModel(
+  root: string,
+  nowIso: string,
+): Promise<CockpitModel | null> {
+  const state = await new StateRepository(root).read()
+  if (!state) return null
+  const data = await collectCockpitData(root, nowIso)
+  if (!data) return null
+  const manifest = await collectEvidence(root, nowIso, state)
+  const bundle = state.diff.bundle_id ? await readBundle(root, state.diff.bundle_id) : null
+  const entries = await new EventsLog(root).read()
+  return buildCockpitModel({
+    data,
+    diffHash: state.diff.hash,
+    trackedDiff: bundle?.diff.tracked ?? '',
+    findings: manifest?.findings.items ?? [],
+    replayCycles: entries.flatMap((entry): ReplayCycleSnapshot[] =>
+      entry.replay_state
+        ? [
+            {
+              cycle: entry.replay_state.workflow.cycle,
+              phase: entry.replay_state.workflow.phase,
+              diffHash: entry.replay_state.diff.hash,
+            },
+          ]
+        : [],
+    ),
+  })
 }
