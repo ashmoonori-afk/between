@@ -178,6 +178,12 @@ export interface BetweenState {
   reviewer: AgentState
   broker: BrokerState
   approval: ApprovalToken | null
+  /**
+   * Whether reviews in this project come from a REAL agent or the bundled SIMULATION (fake) agent
+   * (A5). A 'simulated' project can reach the demo flow but is refused at the push gate — a fake
+   * review must never be mistaken for real verification.
+   */
+  evidence_trust: 'simulated' | 'real'
 }
 
 // ---------------------------------------------------------------------------

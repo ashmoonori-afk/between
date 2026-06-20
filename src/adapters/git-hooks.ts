@@ -20,6 +20,12 @@ if (!raw) process.exit(0) // not a Between target -> never block
 let state
 try { state = JSON.parse(raw) } catch { process.exit(0) }
 
+// A5: a SIMULATION (fake-agent) project's "reviews" are not real verification -> never push.
+if (state.evidence_trust === 'simulated') {
+  process.stderr.write('between: refusing push — SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.\\n')
+  process.exit(1)
+}
+
 const keyFile = join(root, '.git', 'between-approval.key')
 const secret = process.env.BETWEEN_APPROVAL_SECRET || (existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : '')
 const ap = state.approval

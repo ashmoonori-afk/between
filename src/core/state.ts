@@ -10,6 +10,8 @@ export interface InitialStateOptions {
   project: ProjectRef
   developerName?: string
   reviewerName?: string
+  /** 'simulated' when the bundled fake agent is wired; 'real' for claude/codex (A5). */
+  evidenceTrust?: 'simulated' | 'real'
 }
 
 /** Build a fresh idle state for a new project. */
@@ -45,6 +47,7 @@ export function initialState(opts: InitialStateOptions, clock: Clock): BetweenSt
     reviewer: { name: opts.reviewerName ?? 'codex', terminal_id: 'reviewer', status: 'idle' },
     broker: { status: 'stable', last_signal: null, last_signal_at: null },
     approval: null,
+    evidence_trust: opts.evidenceTrust ?? 'real',
   }
   return withProjection(base)
 }

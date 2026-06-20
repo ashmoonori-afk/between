@@ -88,7 +88,9 @@ export async function initProject(
 
   if (!existsSync(p.state)) {
     const repo = new StateRepository(absRoot)
-    await repo.write(initialState({ project }, clock))
+    // A5: the bundled fake agent is a SIMULATION; real wrappers (claude/codex) are 'real'.
+    const evidenceTrust = preset === 'fake' ? 'simulated' : 'real'
+    await repo.write(initialState({ project, evidenceTrust }, clock))
     created.push(p.state)
   }
 

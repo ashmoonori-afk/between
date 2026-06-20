@@ -53,6 +53,7 @@ export function registerBrokerCommands(program: Command): void {
         }
         const wf = state.workflow
         print(`Between - ${state.project.name}`)
+        if (state.evidence_trust === 'simulated') print('  [SIMULATION] fake agent — push blocked')
         print(`  phase:      ${wf.phase}`)
         print(
           `  cycle:      ${wf.cycle} (this goal: ${wf.cycles_this_goal}/${cfg?.max_cycles_per_goal ?? '?'})`,
@@ -202,6 +203,13 @@ export function registerBrokerCommands(program: Command): void {
       try {
         const state = await new StateRepository(root()).read()
         if (!state) return
+        if (state.evidence_trust === 'simulated') {
+          printErr(
+            'between: refusing push — SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.',
+          )
+          process.exitCode = 1
+          return
+        }
         const secret = resolveApprovalSecret(root())
         const ap = state.approval
         if (ap) {
