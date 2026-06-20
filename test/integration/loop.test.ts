@@ -15,6 +15,7 @@ import { buildSignal } from '../../src/adapters/signal-transport'
 import { signApproval } from '../../src/core/approval'
 import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
 import { readBundle } from '../../src/review/store'
+import { collectEvidence } from '../../src/evidence/collect'
 import {
   betweenPaths,
   reviewPath,
@@ -164,6 +165,12 @@ describe('headless walking skeleton (M3)', () => {
       await d2.tick()
       expect(d2.state.workflow.phase).toBe('done')
       expect(d2.state.approval?.scope).toBe('merge')
+
+      // B4: the evidence manifest binds the bundle + approval from real on-disk state
+      const ev = await collectEvidence(dir, '2026-06-20T00:00:00.000Z')
+      expect(ev?.bundle?.bundle_id).toBe(d2.state.diff.bundle_id)
+      expect(ev?.approval?.scope).toBe('merge')
+      expect(ev?.verdict).toBe('simulated') // fake-init project -> simulated evidence
 
       // A2: the approval is bound to the exact bundle + carries an expiry
       expect(d2.state.approval?.bundle_id).toBe(d2.state.diff.bundle_id)
