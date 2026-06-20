@@ -119,6 +119,10 @@ export interface DiffState {
   insertions: number
   deletions: number
   snapshot_path: string | null
+  /** content address of the immutable review bundle this hash is bound to (A1). */
+  bundle_id: string | null
+  /** repo-relative path of the stored bundle the reviewer must read (A1). */
+  bundle_path: string | null
 }
 
 export interface DebounceState {

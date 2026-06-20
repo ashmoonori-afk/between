@@ -6,6 +6,8 @@ import { hashDiff, isEmptyDiff } from '../core/diff-hash'
 import { redactSecrets } from '../core/redact'
 import { reviewMatchesCurrent, reviewIsClean, cycleShouldEnd } from '../core/findings'
 import { buildSignal, developerSignalBody } from '../adapters/signal-transport'
+import { bundleFromDiff, writeBundle } from '../review/store'
+import { BETWEEN_VERSION } from '../core/version'
 import type { DaemonContext } from './context'
 import { ensureReviewerSignal, expectedSignalId, sendReviewerSignal } from './reviewer-signal'
 import { readReview, readVerify } from './records'
@@ -86,18 +88,18 @@ export async function runDebounce(ctx: DaemonContext): Promise<void> {
     await ctx.dispatch('max_cycles_reached', (s) => ({ ...s, debounce: emptyDebounce() }))
     return
   }
-  await openCycleAndSignal(ctx, input.tracked, hash)
+  await openCycleAndSignal(ctx, input, hash)
 }
 
 export async function openCycleAndSignal(
   ctx: DaemonContext,
-  trackedDiff: string,
+  input: DiffInput,
   hash: string,
 ): Promise<void> {
   const wf = ctx.current().workflow
   const counters = openCycle({ cycle: wf.cycle, cycles_this_goal: wf.cycles_this_goal })
   const summary = await ctx.deps.git.summary()
-  const redacted = redactSecrets(trackedDiff)
+  const redacted = redactSecrets(input.tracked)
   await ctx.deps.snapshots.write(
     counters.cycle,
     redacted.text,
@@ -105,6 +107,12 @@ export async function openCycleAndSignal(
     ctx.deps.config.snapshot_max_total_mb,
   )
   const snapRel = `.between/snapshots/${cycleName(counters.cycle)}.diff.gz`
+
+  // A1: seal the EXACT hashed diff into an immutable, content-addressed review bundle and bind
+  // the cycle's diff state to it (bundle.diff_hash === hash by construction).
+  const bundle = await bundleFromDiff(ctx.deps.git, input, BETWEEN_VERSION)
+  await writeBundle(ctx.deps.root, bundle)
+  const bundleRel = `.between/bundles/${bundle.bundle_id}.json`
 
   // persist the new cycle + diff state BEFORE sending any signal (I11)
   await ctx.dispatch('diff_stable', (s) => ({
@@ -117,6 +125,8 @@ export async function openCycleAndSignal(
       insertions: summary.insertions,
       deletions: summary.deletions,
       snapshot_path: snapRel,
+      bundle_id: bundle.bundle_id,
+      bundle_path: bundleRel,
     },
     debounce: emptyDebounce(),
   }))

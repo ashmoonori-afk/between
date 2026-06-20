@@ -37,6 +37,8 @@ export function initialState(opts: InitialStateOptions, clock: Clock): BetweenSt
       insertions: 0,
       deletions: 0,
       snapshot_path: null,
+      bundle_id: null,
+      bundle_path: null,
     },
     debounce: emptyDebounce(),
     developer: { name: opts.developerName ?? 'claude', terminal_id: 'developer', status: 'idle' },

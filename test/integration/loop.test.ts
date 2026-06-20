@@ -14,6 +14,7 @@ import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { signApproval } from '../../src/core/approval'
 import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { readBundle } from '../../src/review/store'
 import {
   betweenPaths,
   reviewPath,
@@ -104,6 +105,12 @@ describe('headless walking skeleton (M3)', () => {
       expect(hash).toMatch(/^[0-9a-f]{64}$/)
       expect(existsSync(signalPath(p, 'reviewer'))).toBe(true)
       expect(existsSync(snapshotPath(p, 1))).toBe(true)
+
+      // A1: the cycle sealed an immutable, content-addressed bundle bound to the diff hash
+      expect(d.state.diff.bundle_id).toMatch(/^[0-9a-f]{64}$/)
+      const bundle = await readBundle(dir, d.state.diff.bundle_id!)
+      expect(bundle?.diff_hash).toBe(hash) // approved == bundled == reviewed
+      expect(existsSync(join(dir, d.state.diff.bundle_path!))).toBe(true)
 
       // I7: reviewing is gated on a real ack (no ack -> stays put)
       await d.tick()

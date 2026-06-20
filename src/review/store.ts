@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import writeFileAtomic from 'write-file-atomic'
 import type { GitAdapter, DiffInputOptions } from '../adapters/git'
+import type { DiffInput } from '../core/types'
 import { buildBundle, sha256, type ReviewBundle } from './bundle'
 
 /** Immutable bundles live under .between/bundles/<bundle_id>.json (content-addressed). */
@@ -14,16 +15,16 @@ export function bundlePath(root: string, bundleId: string): string {
 }
 
 /**
- * Assemble an immutable bundle from the live repo: the exact hashed diff content plus repository +
- * environment provenance. Separate from storage so it stays unit-testable.
+ * Build an immutable bundle from an ALREADY-captured diff plus live repo/env provenance. Used by
+ * the daemon so the bundle binds to the exact `DiffInput` whose hash opened the cycle (no re-read,
+ * no chance of drift between the approved hash and the stored content).
  */
-export async function captureBundle(
+export async function bundleFromDiff(
   git: GitAdapter,
-  opts: DiffInputOptions,
+  diff: DiffInput,
   betweenVersion: string,
 ): Promise<ReviewBundle> {
-  const [diff, head_sha, branch, index_tree, git_version, attributesText] = await Promise.all([
-    git.diffInput(opts),
+  const [head_sha, branch, index_tree, git_version, attributesText] = await Promise.all([
     git.headSha(),
     git.branch(),
     git.indexTree(),
@@ -39,6 +40,15 @@ export async function captureBundle(
       attributes_hash: attributesText ? sha256(attributesText) : '',
     },
   })
+}
+
+/** Assemble an immutable bundle by capturing the live diff first (convenience for CLI/tests). */
+export async function captureBundle(
+  git: GitAdapter,
+  opts: DiffInputOptions,
+  betweenVersion: string,
+): Promise<ReviewBundle> {
+  return bundleFromDiff(git, await git.diffInput(opts), betweenVersion)
 }
 
 /** Persist a bundle atomically; returns its path. Bundles are immutable — same id, same content. */

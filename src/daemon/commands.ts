@@ -120,5 +120,5 @@ export async function forceReview(ctx: DaemonContext): Promise<void> {
       },
     }))
   }
-  await openCycleAndSignal(ctx, input.tracked, hash)
+  await openCycleAndSignal(ctx, input, hash)
 }

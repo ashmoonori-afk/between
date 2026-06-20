@@ -13,13 +13,17 @@
 
 const CONTRACT_PROMPT = [
   'You are a Between agent. Your ROLE is passed as the first CLI arg (reviewer or developer).',
-  'Read .between/signals/<role>.json, .between/state.json, and the output of: git diff HEAD.',
+  'Read .between/signals/<role>.json and .between/state.json.',
+  'If role is REVIEWER: review the IMMUTABLE review bundle at the path in state.diff.bundle_path',
+  '  (an A1 sealed review object: {bundle_id, diff_hash, diff:{tracked,trackedRaw,untracked}, repository, environment}).',
+  '  Do NOT read `git diff HEAD` — the live worktree may have moved; the bundle is the review object.',
+  '  Review against bundle.diff_hash, which equals state.diff.hash.',
+  'If role is DEVELOPER: read `git diff HEAD` and apply the reviewer feedback to the working tree (do NOT merge or deploy).',
   'Compute id = role + "-" + String(cycle).padStart(4,"0") + "-" + diff_hash.slice(0,12).',
   'Write .between/acks/<id>.json = {signal_id:id, target:role, cycle, diff_hash, acked_at:ISO}.',
   'If role is reviewer: also write .between/reviews/cycle-<cycle4>.json =',
   '  {cycle, diff_hash, findings:[{id,severity:"blocking"|"non-blocking",summary,target_hash:diff_hash}], complete:true}',
   '  and .between/verify/cycle-<cycle4>.json = {diff_hash, passed:boolean, summary}.',
-  'If role is developer: apply the reviewer feedback to the working tree (do NOT merge or deploy).',
 ].join(' ')
 
 function wrapper(cli: string, exampleCmd: string): string {
