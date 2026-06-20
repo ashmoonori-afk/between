@@ -295,9 +295,12 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   write. Remaining (NOT complete): **exact replay** (event-log -> state reconstruction) and an
   optional SQLite store. (A1 hardening landed alongside: readBundle now refuses a tampered
   content-addressed bundle - verifyBundleIntegrity, fail-closed.)
-  - Open blocking items from review (next iterations): exact replay (B5); wire policy + secret_scan
-    as LIFECYCLE gates into the daemon cycle / push gate (today they are CLI-only, so merge/push can
-    proceed without `between policy`).
+  - Policy is now a LIFECYCLE gate (src/policy/gate.ts evaluateCyclePolicy): a merge approval (the
+    push-authorizing scope) is refused fail-closed when a required gate fails, so the daemon cycle
+    can no longer reach a push without policy; verify-push re-checks as defense in depth. A missing
+    pinned bundle fails closed; dep-audit is timeout-bounded.
+  - Open blocking item (next iteration): B5 exact replay (event-log -> state reconstruction) so the
+    EventStore satisfies tamper-evidence AND exact replay.
 - 🔶 **B6** cockpit TUI — first slice: pure `renderCockpit` frame + `between cockpit` (composes
   state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable). Remaining: interactive Ink
   cockpit (inline diff↔finding linkage, accept/dispute/waive, command palette, cycle replay).
