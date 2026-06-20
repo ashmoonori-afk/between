@@ -3,29 +3,60 @@ import { existsSync } from 'node:fs'
 import type { BetweenEvent } from '../core/types'
 import { EVENT_SCHEMA_VERSION } from '../core/types'
 import { betweenPaths } from './paths'
+import {
+  sealEntry,
+  verifyChain,
+  GENESIS_HASH,
+  type ChainVerification,
+  type JournalPayload,
+} from '../core/journal'
 
 /**
  * Append-only event log (I2, I23). Writes go through a single in-process promise queue
  * so concurrent appends can never interleave a partial line. Each line is a complete
  * `\n`-terminated JSON object, fsync'd. The reader repairs (skips) a trailing partial
  * line rather than treating it as fatal.
+ *
+ * B5: each line is also hash-chained (`seq` + `prev_hash` + `hash`) so editing/reordering/
+ * truncating the journal is detectable via `verify()`. The extra fields are additive — existing
+ * readers (status, summarize, dashboard) ignore them.
  */
 export class EventsLog {
   private readonly path: string
   private queue: Promise<void> = Promise.resolve()
+  private lastHash: string | undefined // undefined until initialized from disk
+  private lastSeq = -1
 
   constructor(root: string) {
     this.path = betweenPaths(root).events
   }
 
   append(event: Omit<BetweenEvent, 'v'>): Promise<void> {
-    const line = JSON.stringify({ v: EVENT_SCHEMA_VERSION, ...event }) + '\n'
-    // Serialize writes onto the queue. The RETURNED promise rejects to the caller if this
-    // write fails (never silently swallowed); the queue is advanced with a swallowed copy
-    // so one failed write doesn't poison every future append (CRITICAL-5 fix).
-    const write = this.queue.then(() => this.writeLine(line))
+    // Serialize onto the queue so the chain head (lastHash/lastSeq) advances atomically per write.
+    const write = this.queue.then(async () => {
+      if (this.lastHash === undefined) await this.initChain()
+      const seq = ++this.lastSeq
+      const payload = { v: EVENT_SCHEMA_VERSION, ...event, seq } as unknown as JournalPayload
+      const sealed = sealEntry(payload, this.lastHash!)
+      this.lastHash = sealed.hash
+      await this.writeLine(JSON.stringify(sealed) + '\n')
+    })
+    // queue advances with a swallowed copy so one failed write doesn't poison future appends
     this.queue = write.catch(() => {})
     return write
+  }
+
+  /** Seed the chain head from the last persisted entry (once, inside the write queue). */
+  private async initChain(): Promise<void> {
+    const entries = await this.read()
+    const last = entries.at(-1) as { hash?: string; seq?: number } | undefined
+    this.lastHash = typeof last?.hash === 'string' ? last.hash : GENESIS_HASH
+    this.lastSeq = typeof last?.seq === 'number' ? last.seq : entries.length - 1
+  }
+
+  /** Walk the hash chain; reports the first tampered/broken entry, or valid (B5). */
+  async verify(): Promise<ChainVerification> {
+    return verifyChain((await this.read()) as unknown as JournalPayload[])
   }
 
   private async writeLine(line: string): Promise<void> {

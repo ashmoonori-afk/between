@@ -5,6 +5,7 @@ import { registerEvidenceCommand } from './evidence-command'
 import { registerReviewCommand } from './review-command'
 import { registerPolicyCommand } from './policy-command'
 import { registerVerifyCommand } from './verify-command'
+import { registerJournalCommand } from './journal-command'
 import { registerForgeCommands } from './forge-commands'
 import { registerGatewayCommand } from './gateway-command'
 import { registerSetupCommands } from './setup-commands'
@@ -22,6 +23,7 @@ export function buildProgram(): Command {
   registerReviewCommand(program)
   registerPolicyCommand(program)
   registerVerifyCommand(program)
+  registerJournalCommand(program)
   registerGatewayCommand(program)
   registerForgeCommands(program)
 
