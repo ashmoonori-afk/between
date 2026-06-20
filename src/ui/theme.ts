@@ -1,11 +1,5 @@
 import type { Phase } from '../core/types'
 
-/**
- * Visual system for the broker dashboard, from docs/ui-design-spec.md.
- * Palette = Kiro's coherent single-violet dark system (sourced from the Kiro dark theme);
- * the cmux influence is the *pattern* layer: functional color = status, opacity-tier text
- * hierarchy, and a colored left-edge attention bar (▎) instead of heavy boxes.
- */
 export const COLORS = {
   bg: '#19161D',
   bgChrome: '#18161C',
@@ -25,7 +19,6 @@ export const COLORS = {
   success: '#80FFB5',
   warning: '#FFCF99',
   error: '#FF8080',
-  // phase-status colors
   phaseIntake: '#8DC8FB',
   phaseRouting: '#C3A0FD',
   phaseDeveloping: '#FFCF99',
@@ -43,38 +36,37 @@ export interface PhaseStyle {
   dim?: boolean
 }
 
-/** Map every Between phase to a color + glyph + display label (spec §5). */
 export function phaseStyle(phase: Phase): PhaseStyle {
   switch (phase) {
     case 'idle':
-      return { color: COLORS.phaseIdle, glyph: '●', label: 'IDLE', dim: true }
+      return { color: COLORS.phaseIdle, glyph: '-', label: 'IDLE', dim: true }
     case 'goal_locked':
-      return { color: COLORS.phaseRouting, glyph: '⊙', label: 'GOAL LOCKED' }
+      return { color: COLORS.phaseRouting, glyph: '>', label: 'GOAL LOCKED' }
     case 'developing':
-      return { color: COLORS.phaseDeveloping, glyph: '⚒', label: 'DEVELOPING' }
+      return { color: COLORS.phaseDeveloping, glyph: 'D', label: 'DEVELOPING' }
     case 'diff_detected':
     case 'debouncing':
-      return { color: COLORS.phaseDeveloping, glyph: '◐', label: 'SETTLING DIFF' }
+      return { color: COLORS.phaseDeveloping, glyph: '~', label: 'SETTLING DIFF' }
     case 'review_requested':
-      return { color: COLORS.phaseReviewing, glyph: '◎', label: 'REVIEW REQUESTED' }
+      return { color: COLORS.phaseReviewing, glyph: 'R', label: 'REVIEW REQUESTED' }
     case 'reviewing':
-      return { color: COLORS.phaseReviewing, glyph: '◎', label: 'REVIEWING' }
+      return { color: COLORS.phaseReviewing, glyph: 'R', label: 'REVIEWING' }
     case 'review_written':
-      return { color: COLORS.phaseReviewing, glyph: '◎', label: 'REVIEW WRITTEN' }
+      return { color: COLORS.phaseReviewing, glyph: 'R', label: 'REVIEW WRITTEN' }
     case 'applying_review':
-      return { color: COLORS.phaseDeveloping, glyph: '⚒', label: 'APPLYING REVIEW' }
+      return { color: COLORS.phaseDeveloping, glyph: 'A', label: 'APPLYING REVIEW' }
     case 'verifying':
-      return { color: COLORS.phaseDeveloping, glyph: '◐', label: 'VERIFYING' }
+      return { color: COLORS.phaseDeveloping, glyph: 'V', label: 'VERIFYING' }
     case 'human_gate':
-      return { color: COLORS.phaseApproval, glyph: '⏸', label: 'AWAITING APPROVAL' }
+      return { color: COLORS.phaseApproval, glyph: 'H', label: 'AWAITING APPROVAL' }
     case 'repo_busy':
-      return { color: COLORS.warning, glyph: '⚑', label: 'REPO BUSY' }
+      return { color: COLORS.warning, glyph: '!', label: 'REPO BUSY' }
     case 'done':
-      return { color: COLORS.phaseDone, glyph: '✓', label: 'DONE' }
+      return { color: COLORS.phaseDone, glyph: '+', label: 'DONE' }
     case 'paused':
-      return { color: COLORS.phaseIdle, glyph: '⏸', label: 'PAUSED', dim: true }
+      return { color: COLORS.phaseIdle, glyph: 'P', label: 'PAUSED', dim: true }
     case 'error':
-      return { color: COLORS.phaseBlocked, glyph: '✗', label: 'ERROR' }
+      return { color: COLORS.phaseBlocked, glyph: '!', label: 'ERROR' }
     default: {
       const _never: never = phase
       return _never
@@ -82,21 +74,20 @@ export function phaseStyle(phase: Phase): PhaseStyle {
   }
 }
 
-/** Glyphs reused across the dashboard (spec §3/§5). */
 export const GLYPH = {
-  brand: '⊙',
-  live: '●',
-  spinner: '◐',
-  ok: '✓',
-  fail: '✗',
-  pause: '⏸',
-  bar: '▎',
-  dev: '⚒',
-  reviewer: '◎',
-  flag: '⚑',
+  brand: 'B',
+  live: '*',
+  spinner: '~',
+  ok: '+',
+  fail: 'x',
+  pause: '!',
+  bar: '|',
+  divider: '-',
+  dev: 'D',
+  reviewer: 'R',
+  flag: '!',
 } as const
 
-/** True when color output should be suppressed (honors NO_COLOR, spec §2). */
 export function noColor(): boolean {
   return Boolean(process.env.NO_COLOR)
 }

@@ -58,11 +58,11 @@ export function AgentPane({ host, title, glyph, accent, rows, focusId }: AgentPa
       </Box>
       {host === null ? (
         <Text color={COLORS.textFaint} dimColor>
-          (file mode — no embedded agent)
+          (file mode - no embedded agent)
         </Text>
       ) : lines.length === 0 ? (
         <Text color={COLORS.textFaint} dimColor>
-          waiting for output…
+          waiting for output...
         </Text>
       ) : (
         lines.map((line, i) => (

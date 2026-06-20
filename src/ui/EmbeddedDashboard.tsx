@@ -66,7 +66,7 @@ export function EmbeddedDashboard({
   })
 
   if (!state) {
-    return <Text>between: no state — run `between init`</Text>
+    return <Text>between: no state - run `between init`</Text>
   }
 
   const wf = state.workflow
@@ -89,7 +89,7 @@ export function EmbeddedDashboard({
               {`${ps.glyph} ${ps.label}`}
             </Text>
             <Text color={COLORS.textFaint} dimColor>
-              {`  cycle ${wf.cycle} · → ${wf.waiting_on ?? '-'} · ${now.slice(11, 19)}`}
+              {`  cycle ${wf.cycle} | wait ${wf.waiting_on ?? '-'} | ${now.slice(11, 19)}`}
             </Text>
           </Text>
         </Box>
@@ -124,7 +124,7 @@ export function EmbeddedDashboard({
       </Box>
 
       <Text color={COLORS.textFaint} dimColor>
-        {`${GLYPH.pause} Tab: focus pane · q: quit · broker drives the loop in the background`}
+        {`${GLYPH.pause} Tab: focus pane | q: quit | broker loop active`}
       </Text>
     </Box>
   )

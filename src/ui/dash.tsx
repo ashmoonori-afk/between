@@ -41,7 +41,7 @@ function DashApp({ root, intervalMs }: DashAppProps) {
   }, [root, intervalMs])
 
   if (!state) {
-    return <Text>between: no state found — run `between init`</Text>
+    return <Text>between: no state found - run `between init`</Text>
   }
   return <Dashboard state={state} events={events} now={now.slice(11, 19)} />
 }
@@ -56,7 +56,7 @@ export async function runDashboard(root: string, opts: DashOptions = {}): Promis
   if (opts.once) {
     const [s, e] = await Promise.all([new StateRepository(root).read(), new EventsLog(root).read()])
     if (!s) {
-      process.stdout.write('between: no state found — run `between init`\n')
+      process.stdout.write('between: no state found - run `between init`\n')
       return
     }
     const app = render(

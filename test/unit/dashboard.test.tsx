@@ -43,4 +43,62 @@ describe('Dashboard', () => {
     expect(frame).toContain('between approve merge')
     expect(frame).toContain('verify_passed')
   })
+
+  it('summarizes broker, diff, and review state with ASCII-safe labels', () => {
+    const reviewing = recordReviewedHash(
+      setPhase(base, 'reviewing', 'review_requested'),
+      'abc123def4567890',
+    )
+    const state = {
+      ...reviewing,
+      workflow: { ...reviewing.workflow, cycle: 7, cycles_this_goal: 3 },
+      diff: {
+        ...reviewing.diff,
+        hash: 'def789abc1234560',
+        changed_files: 2,
+        insertions: 15,
+        deletions: 3,
+        snapshot_path: '.between/diff-snapshots/def789abc1234560.diff',
+        bundle_id: 'bundle-1234567890',
+        bundle_path: '.between/review-bundles/bundle-1234567890.md',
+      },
+      broker: {
+        ...reviewing.broker,
+        last_signal: 'reviewer:7:def789abc1234560',
+        last_signal_at: '2026-06-19T14:08:18.000Z',
+      },
+    }
+    const events: BetweenEvent[] = [
+      {
+        v: 1,
+        ts: '2026-06-19T14:08:12.000Z',
+        cycle: 7,
+        phase: 'diff_detected',
+        event: 'diff_stable',
+        diff_hash: 'def789abc1234560',
+      },
+      {
+        v: 1,
+        ts: '2026-06-19T14:08:18.000Z',
+        cycle: 7,
+        phase: 'review_requested',
+        event: 'signal_sent',
+        target: 'reviewer',
+        diff_hash: 'def789abc1234560',
+      },
+    ]
+
+    const frame =
+      render(<Dashboard state={state} events={events} now="14:08:22" />).lastFrame() ?? ''
+
+    expect(frame).toContain('BROKER')
+    expect(frame).toContain('WAIT reviewer')
+    expect(frame).toContain('CYCLE 7')
+    expect(frame).toContain('DIFF 2 files +15 -3')
+    expect(frame).toContain('REVIEW abc123def456')
+    expect(frame).toContain('BUNDLE bundle-123456')
+    expect(frame).toContain('SIGNAL reviewer:7:def789')
+    expect(frame).not.toContain(String.fromCharCode(0xc9cc))
+    expect(frame).not.toContain(String.fromCharCode(0xfffd))
+  })
 })
