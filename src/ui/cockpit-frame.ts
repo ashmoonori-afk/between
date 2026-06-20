@@ -98,6 +98,7 @@ export function renderCockpitModel(model: CockpitModel): string {
   }
   out.push(bar('Actions'))
   out.push('  between cockpit --action accept|dispute|waive --finding <id> [--reason "..."]')
+  out.push('  between cockpit --rerun-checks [--replay-cycle <n>]')
   out.push('-'.repeat(60))
   return out.join('\n') + '\n'
 }

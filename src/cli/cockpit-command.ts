@@ -15,49 +15,62 @@ export function registerCockpitCommand(program: Command): void {
     .option('--finding <id>', 'finding id for --action')
     .option('--reason <text>', 'optional action reason')
     .option('--replay-cycle <cycle>', 'focus replay history on a specific cycle number')
+    .option('--rerun-checks', 'run configured verification checks before rendering the cockpit')
     .action(
       async (opts: {
         action?: string
         finding?: string
         reason?: string
         replayCycle?: string
+        rerunChecks?: boolean
       }) => {
         try {
+          const rootDir = root()
+          const action = opts.action
+          const replayCycle = opts.replayCycle ? parseReplayCycle(opts.replayCycle) : null
+          if (opts.replayCycle && replayCycle === null) {
+            printErr('between: --replay-cycle must be a non-negative integer')
+            process.exitCode = 1
+            return
+          }
+          if (action && opts.replayCycle) {
+            printErr('between: --replay-cycle is display-only and cannot be combined with --action')
+            process.exitCode = 1
+            return
+          }
+          if (action && opts.rerunChecks) {
+            printErr('between: --rerun-checks cannot be combined with --action')
+            process.exitCode = 1
+            return
+          }
+          const rerunReport = opts.rerunChecks ? await rerunConfiguredVerification(rootDir) : null
           const { collectCockpitModel } = await import('../ui/cockpit')
           const { renderCockpitModel } = await import('../ui/cockpit-frame')
-          let model = await collectCockpitModel(root(), new SystemClock().nowIso())
+          let model = await collectCockpitModel(rootDir, new SystemClock().nowIso())
           if (!model) {
             printErr('between: no state found - run `between init`')
             process.exitCode = 1
             return
           }
-          if (opts.action && opts.replayCycle) {
-            printErr('between: --replay-cycle is display-only and cannot be combined with --action')
-            process.exitCode = 1
-            return
-          }
-          if (opts.replayCycle) {
-            const cycle = parseReplayCycle(opts.replayCycle)
-            if (cycle === null) {
-              printErr('between: --replay-cycle must be a non-negative integer')
-              process.exitCode = 1
-              return
-            }
+          if (replayCycle !== null) {
             const { focusReplayCycle } = await import('../ui/cockpit-model')
-            const result = focusReplayCycle(model, cycle)
+            const result = focusReplayCycle(model, replayCycle)
             if (!result.ok) {
-              printErr(`between: replay cycle ${cycle} was not found in the journal`)
+              printErr(`between: replay cycle ${replayCycle} was not found in the journal`)
               process.exitCode = 1
               return
             }
             model = result.model
           }
-          const action = opts.action
           if (action) {
             await submitFindingAction(action, opts.finding, opts.reason, model)
             return
           }
+          if (rerunReport) {
+            print(`between: verification re-run ${rerunReport.allPassed ? 'PASS' : 'FAIL'}`)
+          }
           print(renderCockpitModel(model))
+          if (rerunReport && !rerunReport.allPassed) process.exitCode = 1
         } catch (e) {
           await fail(e)
         }
@@ -69,6 +82,11 @@ function parseReplayCycle(value: string): number | null {
   if (!/^\d+$/.test(value)) return null
   const cycle = Number(value)
   return Number.isSafeInteger(cycle) ? cycle : null
+}
+
+async function rerunConfiguredVerification(rootDir: string) {
+  const { runConfiguredVerification } = await import('./verify-command')
+  return runConfiguredVerification(rootDir)
 }
 
 async function submitFindingAction(

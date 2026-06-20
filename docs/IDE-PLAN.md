@@ -309,8 +309,8 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
   accept|dispute|waive --finding <id>` validates current/non-stale findings and queues an exact
   cycle+diff-bound daemon command, which the daemon records/rejects as durable events; `between
   cockpit --replay-cycle <n>` now focuses a specific journal replay snapshot in the cockpit frame.
-  Remaining: live Ink interaction loop, command palette UX, deeper replay drilldown, and test
-  re-run controls.
+  `between cockpit --rerun-checks` re-runs configured verification and refreshes the cockpit report.
+  Remaining: live Ink interaction loop, command palette UX, and deeper replay drilldown.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,

@@ -79,6 +79,7 @@ describe('renderCockpit (B6)', () => {
     expect(frame).toMatch(/F1 \[blocking\] linked app\.ts:2/)
     expect(frame).toMatch(/cycle 2: reviewing h0/)
     expect(frame).toMatch(/between cockpit --action accept\|dispute\|waive/)
+    expect(frame).toMatch(/between cockpit --rerun-checks/)
     expect(frame).toMatch(/^[\x00-\x7F]*$/)
   })
 
