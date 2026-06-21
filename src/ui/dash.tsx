@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { render, useApp, useInput, Text } from 'ink'
 import { Dashboard } from './Dashboard'
+import { renderDashboardFrame } from './dashboard-frame'
 import { StateRepository } from '../adapters/state-repository'
 import { EventsLog } from '../adapters/events-log'
 import { SystemClock } from '../core/clock'
@@ -140,10 +141,7 @@ export async function runDashboard(root: string, opts: DashOptions = {}): Promis
       process.stdout.write('between: no state found - run `between init`\n')
       return
     }
-    const app = render(
-      <Dashboard state={s} events={e} now={new SystemClock().nowIso().slice(11, 19)} />,
-    )
-    app.unmount()
+    process.stdout.write(renderDashboardFrame(s, e, new SystemClock().nowIso().slice(11, 19)))
     return
   }
   // defense-in-depth: never let a bad interval collapse setInterval to a tight loop (P2)
