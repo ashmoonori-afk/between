@@ -1,342 +1,378 @@
 <div align="center">
 
-```
-██████╗ ███████╗████████╗██╗    ██╗███████╗███████╗███╗   ██╗
-██╔══██╗██╔════╝╚══██╔══╝██║    ██║██╔════╝██╔════╝████╗  ██║
-██████╔╝█████╗     ██║   ██║ █╗ ██║█████╗  █████╗  ██╔██╗ ██║
-██╔══██╗██╔══╝     ██║   ██║███╗██║██╔══╝  ██╔══╝  ██║╚██╗██║
-██████╔╝███████╗   ██║   ╚███╔███╔╝███████╗███████╗██║ ╚████║
-╚═════╝ ╚══════╝   ╚═╝    ╚══╝╚══╝ ╚══════╝╚══════╝╚═╝  ╚═══╝
+```text
+ ____  _____ _______        _______ _____ _   _
+| __ )| ____|_   _\ \      / / ____| ____| \ | |
+|  _ \|  _|   | |  \ \ /\ / /|  _| |  _| |  \| |
+| |_) | |___  | |   \ V  V / | |___| |___| |\  |
+|____/|_____| |_|    \_/\_/  |_____|_____|_| \_|
 ```
 
-### Watch the diff. Broker the review. Keep the human in charge.
+### A local broker cockpit for AI pair development.
 
-A **local terminal broker for AI pair development**. Between runs a developer
-agent and a reviewer agent that **never talk to each other** — they coordinate
-through `git diff`, durable JSON state, and structured files under `.between/`,
-while **you** stay the only one who can merge or deploy. Observable, restartable,
-and honest about what it is.
+Between watches the repository, not private agent chats. A developer agent and a
+reviewer agent coordinate through `git diff`, durable JSON state, review files,
+and short broker signals while the human keeps final authority over merge,
+deploy, and rule promotion.
 
 [![CI](https://github.com/ashmoonori-afk/between/actions/workflows/ci.yml/badge.svg)](https://github.com/ashmoonori-afk/between/actions/workflows/ci.yml)
-[![Node](https://img.shields.io/badge/node-%E2%89%A522.12-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-[![tests](https://img.shields.io/badge/tests-145%20passing-success)](#-verification)
-[![license](https://img.shields.io/badge/license-MIT-blue)](#-license)
+![Node](https://img.shields.io/badge/node-%3E%3D22.12-339933?logo=node.js&logoColor=white)
+![TypeScript](https://img.shields.io/badge/typescript-strict-3178c6?logo=typescript&logoColor=white)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
 </div>
 
 ---
 
-Most AI pair-programming setups put two agents in one chat, or make a human relay
-messages between them. Between takes a stricter, calmer shape: the broker watches
-the **repository**, not the agents' private reasoning. A reviewer is asked to look
-at a real, stable `git diff` — never a transcript — and writes its verdict to a
-file. The loop survives restarts, refuses to approve a diff that changed under it,
-and stops at a **human gate** before anything irreversible.
+## What Between Is
 
-- 🧭 **Agents never chat directly.** Coordination is `git diff` (code truth),
-  `.between/*.json` (machine truth), and an optional Obsidian vault (human memory).
-- 🔁 **Diff-driven cycles.** The broker polls, hashes, debounces, and opens a
-  review cycle only for a _meaningful, stable_ change — and never reviews the same
-  hash twice.
-- 🧱 **Recovery-first.** Atomic state writes, a `.bak` fallback, a single-writer
-  lock, an append-only event log, restart reconciliation, and signal re-send.
-- 🛑 **Human-owned merges.** `between approve merge|deploy|promote_rule` is the
-  only way past `human_gate`; agents cannot self-merge.
-- 🖥️ **Observable.** A broker-dominant Ink dashboard (`between dash`) and an
-  embedded window that hosts the two agent panes live.
-- 💬 **Drive it from chat.** `between gateway` bridges **Telegram or Discord** to the
-  broker — `status`, `goal`, and **signed** approvals over chat. Bot tokens stay in
-  env, never in `config.yaml`. Both channels can run as a **pull/poll** model
-  (Telegram long-poll; Discord `discord_mode: poll` REST polling — no privileged
-  intent, and it replays messages missed while offline).
-- 🧱 **Idea → ship, builtin.** `between forge` drives a 12-phase app-build lifecycle
-  (PWSForge) with phase gates and **CLI-forced execution**: it never codes inline —
-  it routes build tasks to the broker's developer/reviewer loop.
+Most AI pair-programming setups put two agents in one transcript or make the
+human relay messages between them. Between takes a stricter shape:
 
----
+- The broker watches `git diff`, hashes stable changes, and starts review cycles.
+- Agents never talk directly to each other.
+- The reviewer reads the real tree and writes structured review output.
+- The developer receives only the broker's short "reflect this review" signal.
+- State, events, acks, reviews, verification, and approvals are plain local files
+  under `.between/`.
+- The loop can recover after restarts and will not approve a diff that changed
+  under review.
+- The human is the only actor allowed to approve `merge`, `deploy`, or
+  `promote_rule`.
 
-## 🎯 Design intent
+Think of it as a local, file-shaped protocol for controlled AI collaboration:
+terminal-native, restartable, inspectable, and conservative about trust.
 
-Between is deliberately **small, file-shaped, and careful**.
+## Actual TUI Capture
 
-1. **The repository is the contract.** `git diff` is the review object; the
-   reviewer reads the real tree, not a chat log. Staging never changes the hash
-   (it is computed against `HEAD`).
-2. **Files are the protocol.** Signals, acks, reviews, verification, commands, and
-   approval are plain JSON under `.between/`. Inspectable, replayable, and easy to
-   wire any agent to (see [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md)).
-3. **The headless path is the baseline.** `agent_mode: file` has **zero native
-   dependencies** and is the verified, tested core. Terminal embedding is additive.
-4. **One stable transport port.** `FileTransport`, `OneShotTransport`, and
-   `PtyTransport` all implement the same `SignalTransport` — and the PTY/one-shot
-   modes reuse the exact same ack-file gate, so nothing is faked.
-5. **Hexagonal & honest.** A pure `core/` (FSM, diff-hash, debounce, cycle) with an
-   injected clock, `adapters/` for IO, a thin `daemon/`, and an `ui/` layer — and a
-   README that says plainly where the alpha edges are.
+Captured from the current built CLI with `node dist/cli.js dash --once` after
+`between init --agent fake` in a temporary git repository.
 
----
+```text
++------------------------------------------------------------------------------------------+
+| B BETWEEN session:readme-tui-capture | 15:58:01                                          |
+| PHASE IDLE | WAIT - | CYCLE 0 | GOAL 0 | TRUST simulated                                 |
++------------------------------------------------------------------------------------------+
+| BROKER stable | DIFF 0 files +0 -0 | HASH - | BUNDLE -                                   |
+| REVIEW - | SIGNAL -                                                                      |
++------------------------------------------------------------------------------------------+
+| DEVELOPER fake status idle | snap -                                                      |
+| REVIEWER fake status idle | review - | trust simulated                                   |
++------------------------------------------------------------------------------------------+
+| RECENT EVENTS                                                                            |
+| no events yet                                                                            |
+| COMMANDS r review now (off) | esc abort agents (off) | p pause | s stop broker | q qu... |
++------------------------------------------------------------------------------------------+
+```
 
-## 🚀 Install
+The dashboard is intentionally broker-dominant. The top surface tells you the
+phase, cycle, waiting actor, diff hash, trust mode, and latest events; the lower
+surfaces expose developer and reviewer status without making the agents share a
+conversation.
 
-Requires **Node.js ≥ 22.12**, **git**, and Windows / macOS / Linux.
+## Why This Shape
+
+Between is designed around a few non-negotiables:
+
+1. `git diff` is the shared truth. The reviewer inspects code changes, not a chat
+   summary.
+2. Files are the protocol. JSON and Markdown make the workflow easy to audit,
+   replay, and adapt to different CLIs.
+3. The broker owns timing. Polling, debounce, stale-diff detection, signal resend,
+   pause, abort, and steer all belong to the broker.
+4. Agent work stays bounded. Agents receive short signals and read the current
+   repo state themselves.
+5. Human gates stay explicit. Agents can propose and verify; they cannot silently
+   merge, deploy, or promote project rules.
+
+## Quick Start
+
+Requires Node.js `>=22.12` and git.
 
 ```bash
 git clone https://github.com/ashmoonori-afk/between
 cd between
 npm install
-npm run build        # bundles dist/cli.js
-```
-
-During development you can run the TypeScript entrypoint directly:
-
-```bash
-npm run between -- --help     # via tsx, no build step
-# after a build:
+npm run build
 node dist/cli.js --help
 ```
 
-> Optional: live PTY-hosted agent panes use `@lydell/node-pty` (prebuilt — no
-> compiler needed on common platforms). It is an **optional** dependency; if it
-> isn't present, Between degrades to the one-shot/file path automatically.
-
----
-
-## 🎮 Quick start
-
-Run inside the git repository you want Between to broker (the Between repo itself
-works as a target during local development).
+When you broker the Between repo itself during development, `node dist/cli.js`
+is enough. When you broker another repository, either link/install the CLI or
+call the built CLI by absolute path while your current directory is the target
+repo. The examples below assume the `between` binary is on `PATH`.
 
 ```bash
-node dist/cli.js onboard                               # first-run: scaffold + pick a gateway
-node dist/cli.js goal "refresh tokens without leaking secrets"
-node dist/cli.js start --headless --max-ticks 6        # drive the file-signal loop
-node dist/cli.js status                                # phase, cycle, waiting actor
-node dist/cli.js dash --once                           # render the broker cockpit
+cd path/to/target-repo
+between onboard
+between goal "refresh tokens without leaking secrets"
+between start --headless --max-ticks 6
+between status
+between dash --once
 ```
 
-`between onboard` is the first-run wizard: it scaffolds `.between/`, lets you pick a
-chat channel (`echo` / `telegram` / `discord`), persists the non-secret chat id, and
-**smoke-tests the credentials** — the bot token is read from `BETWEEN_TELEGRAM_TOKEN`
-/ `BETWEEN_DISCORD_TOKEN` and is never written to disk. (`between init` still does the
-bare scaffold if you prefer to wire config by hand.)
-
-### See it end-to-end with the bundled agent
-
-`between init` writes a stdlib-only `fake-agent` so the whole loop is demoable with
-**zero external CLIs**:
+Demo the full loop with the bundled fake agent:
 
 ```bash
-# choose the one-shot embed (spawns the agent per signal) and run it:
-node dist/cli.js init --agent fake
-# ...edit a file in the repo, then:
-node dist/cli.js start --embed     # opens the broker + developer/reviewer panes
+between init --agent fake
+# edit a file in the target repo
+between start --embed
 ```
 
-Wire real agents when you're ready — `between init --agent claude|codex` writes a
-wrapper and points `developer_command` / `reviewer_command` at it (see the
-[agent contract](./docs/AGENT-CONTRACT.md)).
+Wire real agents later with explicit roles:
 
----
-
-## 🔁 How the broker loop works
-
-```
-goal_locked ─▶ developing ─▶ debouncing ─▶ review_requested ─▶ reviewing
-                  ▲                                                 │
-                  │                                      review_written
-        new developer diff                                         │
-                  │                          ┌── blocking ─▶ applying_review
-              human_gate ◀── verify_passed ──┴── clean + verify ok
+```bash
+between init --developer claude --reviewer codex
 ```
 
-1. The human locks a **goal**.
-2. The broker polls the repo and computes a deterministic **diff hash**.
-3. A change that stays **stable through the debounce window** opens a **cycle** —
-   the new cycle is persisted _before_ any signal (crash-safe), and the same hash
-   is never reviewed twice.
-4. The broker writes a short **reviewer signal**; the reviewer reads the diff +
-   state itself and writes an **ack**, a **review record**, and a **verification**.
-5. **Blocking** findings send a **developer signal**; a **clean** review + passing
-   verify advances to **`human_gate`**.
-6. A diff that changes while a review is outstanding is **superseded** (no stale
-   approval); a missing signal after a restart is **re-sent**; a dead hosted agent
-   is surfaced as broker state.
-7. **Merge / deploy / rule-promotion** wait for an explicit human token.
+The generated wrappers and file contract are documented in
+[`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md).
 
----
+## Broker Cycle
 
-## 🧩 Agent modes
+```mermaid
+flowchart LR
+    Goal["goal locked"] --> Develop["developing"]
+    Develop --> Debounce["debouncing"]
+    Debounce --> ReviewRequested["review requested"]
+    ReviewRequested --> Reviewing["reviewing"]
+    Reviewing --> ReviewWritten["review written"]
+    ReviewWritten --> Blocking{"blocking findings?"}
+    Blocking -->|yes| Applying["applying review"]
+    Applying --> Develop
+    Blocking -->|no| Verify["verify passed"]
+    Verify --> HumanGate["human gate"]
+    HumanGate --> Done["approved by human"]
+```
 
-One `SignalTransport` port, three ways to drive agents — selected by
-`agent_mode` in `.between/config.yaml`:
+Important cycle rules:
 
-| Mode               | What it does                                                                     | Native deps | Status                   |
-| ------------------ | -------------------------------------------------------------------------------- | :---------: | ------------------------ |
-| `file` _(default)_ | Broker writes signal files; any agent/script reads & replies via `.between/`.    |    none     | ✅ verified baseline     |
-| `oneshot`          | Spawns `developer_command` / `reviewer_command` once per signal (body on stdin). |    none     | ✅ runnable everywhere   |
-| `pty`              | Hosts a live ConPTY/forkpty terminal per agent via optional `@lydell/node-pty`.  |  optional   | 🧪 embed (auto-degrades) |
+- The broker persists the new cycle before signaling an agent.
+- The same diff hash is not reviewed twice.
+- A diff that changes while a review is outstanding supersedes the stale review.
+- A missing signal after restart is resent.
+- Hosted-agent failures are surfaced in broker state.
+- With `BETWEEN_APPROVAL_SECRET` configured, approval is signed and human-owned.
 
-All three deliver short pointers and **reuse the same `.between/acks/<id>.json`
-gate** — `reviewing` only advances on a real acknowledgement.
+## Agent Modes
 
----
+Between exposes one `SignalTransport` interface with three operating modes.
 
-## 📟 CLI cheat sheet
+| Mode | What it does | Native dependency | Use when |
+| --- | --- | --- | --- |
+| `file` | Writes signal files; agents or scripts reply through `.between/`. | none | You want the most portable baseline. |
+| `oneshot` | Spawns `developer_command` or `reviewer_command` once per signal. | none | You want CLI automation without a live PTY. |
+| `pty` | Hosts live ConPTY/forkpty terminals through optional `@lydell/node-pty`. | optional | You want visible agent panes and live terminal control. |
+
+All modes reuse the same ack-file gate, so `reviewing` only advances after a real
+acknowledgement.
+
+## Between And cmux
+
+cmux is a terminal/session cockpit. Between is a broker workflow engine with a
+terminal cockpit. They overlap visually, but the product center is different.
+
+| Area | Where Between is stronger | Where cmux is stronger |
+| --- | --- | --- |
+| Workflow ownership | Diff-driven broker cycles, debounce, review state, approval gates, and evidence bundles are first-class. | General terminal multiplexing is broader and more mature. |
+| Agent separation | Developer and reviewer never share a transcript; the repo, diff, JSON state, and review files are the contract. | cmux is better when you primarily want multiple live terminal panes under direct human control. |
+| Restartability | `.between/state.json`, `.between/events.jsonl`, acks, reviews, and snapshots make the broker loop inspectable after a crash. | A multiplexer session is more ergonomic for long-running interactive shells. |
+| Human control | With `BETWEEN_APPROVAL_SECRET`, signed approvals and `verify-push` protect merge/deploy/promotion from forged local protocol writes. | cmux is not trying to be an approval or policy gate. |
+| Automation surface | `status`, `goal`, `steer`, `abort`, `review-now`, `evidence`, `policy`, `verify`, and chat gateways can drive the broker. | cmux has the advantage when the needed primitive is session navigation, split management, or shell ergonomics. |
+| Portability | The `file` and `oneshot` paths have no native dependency and can run headless. | cmux-style live pane richness depends on the terminal/session runtime. |
+
+Practical takeaway: run Between when you need a durable review protocol around
+AI coding work. Use cmux, tmux, or another multiplexer when the main job is rich
+interactive terminal management. They can coexist: Between can run inside a cmux
+pane while still owning the broker protocol.
+
+## Current Limits
+
+Between is alpha. It is useful now, but it is not pretending to be finished.
+
+- It is not a general-purpose terminal multiplexer.
+- PTY hosting is optional and platform-sensitive; the file path is the baseline.
+- Real Claude/Codex wrapper behavior depends on the target machine, CLI version,
+  login state, and terminal capabilities.
+- Abort and steer are broker-level controls; downstream agent compliance depends
+  on the wrapper and hosted process behavior.
+- `.between/` is a cooperative local protocol, not a sandbox.
+- The dashboard is compact and operational by design; it is not a full IDE.
+
+## Forward Vision
+
+The long-term goal is a verifiable AI change cockpit:
+
+- Obsidian/project-wiki memory as the durable design-rule layer.
+- Repeated review findings promoted into project rules after human approval.
+- Stronger agent-control adapters for abort, steer, interrupt, resume, and
+  session recovery.
+- A real-agent compatibility matrix for Claude, Codex, and other CLI agents.
+- cmux-grade terminal comfort without giving up the broker's file protocol.
+- IDE and chat surfaces that drive the same command bus instead of inventing a
+  second workflow.
+- Policy-as-code gates for risk, approvals, evidence bundles, and verification.
+- Portable review packets that let a reviewer inspect the exact cycle without
+  reading agent transcripts.
+
+The direction is simple: less chat theater, more observable change control.
+
+## CLI Cheat Sheet
 
 ```bash
 between onboard [--channel echo|telegram|discord] [--agent ...] [--chat-id <id>] [--yes]
-between init [--vault <path>] [--agent fake|claude|codex]   # bare scaffold + pick agents
-between goal "<text>"                # lock a work goal (via the command bus)
-between start [--embed] [--headless] [--max-ticks <n>]      # run the broker loop
-between status [--json]              # phase, cycle, diff hash, waiting actor
-between dash [--once] [--interval <ms>]                     # Ink broker dashboard
-between gateway [--max-seconds <n>]  # bridge Telegram/Discord/echo to the broker
-between review-now                   # force a review of the current diff
-between pause | resume | stop        # control the running daemon
-between ack                          # reviewer helper: ack the current signal
-between approve merge|deploy|promote_rule                  # signed human approval token
-between verify-push                  # pre-push gate: block a forged/unapproved push
-between doctor                       # diagnose git, init state, PTY availability
-between summarize                    # cycle/phase analytics from events.jsonl
+between init [--vault <path>] [--agent fake|claude|codex] [--developer ...] [--reviewer ...]
+between goal "<text>"
+between start [--embed] [--headless] [--max-ticks <n>]
+between status [--json]
+between dash [--once] [--interval <ms>]
+between gateway [--max-seconds <n>]
+between review-now
+between pause
+between resume
+between interrupt|abort
+between steer "<text>"
+between stop
+between ack
+between approve merge|deploy|promote_rule
+between verify-push
+between doctor
+between summarize
+between evidence
+between review-worktree
+between policy
+between verify
+between journal
+between replay
+between cockpit
 ```
 
-### Forge — builtin idea-to-ship lifecycle
+## Forge Lifecycle
+
+Between also includes a PWSForge-style app-build lifecycle:
 
 ```bash
-between forge init "<idea>" [--platform ios,android,web]   # scaffold docs/pwsforge/
-between forge status                 # phase (n/12), gate open/closed, blockers
-between forge approve                # mark the current phase approved (satisfies the gate)
-between forge advance                # move to the next phase (refused while the gate is closed)
-between forge block P0|P1|P2|P3 "<desc>" · between forge unblock <index>
-between forge build "<task>"         # CLI-forced: route the build to the broker (never inline)
+between forge init "<idea>" [--platform ios,android,web]
+between forge status
+between forge approve
+between forge advance
+between forge block P0|P1|P2|P3 "<description>"
+between forge unblock <index>
+between forge build "<task>"
 ```
 
-`--interval` must be an integer ≥ 250 ms. On a non-TTY (or `NO_COLOR`) `doctor` and
-`onboard` fall back to non-interactive / ASCII behavior.
+`between forge build` does not code inline. It routes build work back through the
+developer/reviewer broker loop.
 
----
+## Runtime Files
 
-## 🗂️ Runtime files
+`between init` creates `.between/` inside the target repository and adds it to the
+target `.gitignore` so broker writes do not self-trigger review cycles.
 
-`between init` creates a `.between/` directory inside the **target** repo (and
-adds it to `.gitignore` so the broker's own writes can't self-trigger a review):
-
-```
+```text
 .between/
-├─ config.yaml          # tunables: watch/debounce/cycle, retention, agent mode
-├─ state.json (+ .bak)  # phase, cycle, diff hash, reviewed hashes, approval
-├─ events.jsonl         # append-only broker event log (analytics source)
-├─ commands/            # CLI → daemon command bus (single-writer safe)
-├─ signals/             # broker → agent pointers
-├─ acks/                # agent → broker receipts (gates `reviewing`)
-├─ reviews/ · verify/   # structured findings + verification per cycle
-├─ snapshots/           # gzipped, secret-scrubbed, bounded diff snapshots
-└─ agents/              # bundled fake-agent + any real wrapper
+|-- config.yaml          # watch/debounce/cycle config and agent mode
+|-- state.json           # phase, cycle, hash, reviewed hashes, approval
+|-- state.json.bak       # recovery fallback
+|-- events.jsonl         # append-only event log
+|-- commands/            # CLI to daemon command bus
+|-- signals/             # broker to agent pointers
+|-- acks/                # agent to broker receipts
+|-- reviews/             # structured review findings
+|-- verify/              # verification reports
+|-- snapshots/           # bounded, scrubbed diff snapshots
+|-- cycles/              # per-cycle evidence
+|-- usage/               # local usage telemetry
+`-- agents/              # fake agent and generated wrappers
 ```
 
----
-
-## 🗺️ Architecture
+## Architecture
 
 ```mermaid
 flowchart LR
     Human["Human"] --> CLI["between CLI"]
     CLI --> Commands[".between/commands"]
-    Commands --> Daemon["Broker daemon (tick loop)"]
+    Commands --> Daemon["Broker daemon"]
     Daemon --> Git["git diff HEAD"]
-    Daemon --> State["state.json (atomic)"]
+    Daemon --> State["state.json"]
     Daemon --> Events["events.jsonl"]
     Daemon --> Signals["SignalTransport"]
     Signals --> Reviewer["Reviewer agent"]
     Reviewer --> Acks["acks"]
-    Reviewer --> Reviews["reviews / verify"]
+    Reviewer --> Reviews["reviews and verify"]
     Reviews --> Daemon
     Acks --> Daemon
     Daemon --> Developer["Developer agent"]
     Developer --> Git
-    Daemon --> Gate["human_gate"]
+    Daemon --> Gate["human gate"]
     Gate --> Human
 ```
 
 Source map:
 
-- `src/core/` — pure, injected-clock logic: FSM, diff-hash, debounce, cycle math,
-  config schema (zod), findings, redaction, state projection.
-- `src/adapters/` — git, atomic state repo, events log, single-writer lock, command
-  bus, signal transports, agent hosts (pipe/pty), snapshot store.
-- `src/daemon/` — `loop.ts` (the `Daemon`), `phases.ts`, `commands.ts`, `context.ts`,
-  reconciliation, and reviewer-signal recovery.
-- `src/ui/` — Ink dashboard, agent panes, embedded window (`DESIGN.md` is the TUI
-  design system).
-- `src/gateway/` — chat bridge: `ChatTransport` port + echo/Telegram/Discord
-  transports + `GatewaySession` (routes chat → command bus, signed approvals).
-- `src/onboard/` — first-run wizard: pure `plan` (config patch, env-only tokens),
-  `smoke` (credential check), injected-IO `wizard`.
-- `src/forge/` — builtin PWSForge lifecycle: `phases` + `state` (zod) + pure
-  `machine` (gates) + `repository` + `build` (CLI-forced broker handoff).
-- `src/cli.ts` — command registration.
+- `src/core/`: pure broker logic, FSM, diff hashing, debounce, findings,
+  redaction, and state projection.
+- `src/adapters/`: git, atomic state, event log, locks, command bus, signal
+  transports, agent hosts, and snapshots.
+- `src/daemon/`: tick loop, commands, phase transitions, context, reconciliation,
+  and reviewer-signal recovery.
+- `src/ui/`: Ink dashboard, cockpit frame, agent panes, and terminal theme.
+- `src/gateway/`: echo, Telegram, and Discord chat transports.
+- `src/onboard/`: first-run wizard and credential smoke tests.
+- `src/forge/`: app-build phase machine and broker handoff.
+- `src/cli.ts`: command registration.
 
----
+## Trust Boundary
 
-## 🔒 Trust boundary (read this)
+`.between/` is a cooperative local protocol, not a complete security boundary.
+Any local process that can write `.between/` can try to forge ack, review, or
+verify files.
 
-`.between/` is a **cooperative local protocol, not a full security boundary.** Any
-local process that can write `.between/` can forge ack/review/verify files — the
-review _workflow_ is a convention. But the **approval** step now has teeth (P1-5):
-`between approve` is **HMAC-signed** with the human-owned env secret
-`BETWEEN_APPROVAL_SECRET` (stripped from spawned-agent env), and `between init`
-installs a **pre-push hook** (`between verify-push`) that
-blocks a push whose recorded approval fails signature verification. An agent that can
-only write `.between/` cannot forge an approval the daemon or the hook will accept.
-Still: don't run Between with untrusted agents where an unapproved merge/deploy would
-be harmful.
+Approval has stronger protection when `BETWEEN_APPROVAL_SECRET` is configured:
+`between approve` signs approval records with that human-owned secret, and the
+daemon requires a valid signature. `between init` also installs a `pre-push`
+hook through `between verify-push`, which re-checks the recorded approval before
+push. Without the env secret, local unsigned approvals can move the demo
+workflow, but push verification remains blocked.
 
----
+Do not run Between with untrusted agents in a repository where unapproved merge
+or deploy would be harmful.
 
-## ✅ Verification
+## Verification
+
+Recommended local gate:
 
 ```bash
-npm run typecheck     # tsc --noEmit (strict)
-npm run lint          # prettier --check
-npm test              # vitest: 314 tests / 62 files
-npm run build         # tsup → dist/cli.js (target node22)
-npm run test:vscode   # extension unit + VS Code host smoke tests
-npm audit --omit=dev  # production dependency audit
+npm run typecheck
+npm run lint
+npm test
+npm run build
+npm run test:vscode
+npm audit --omit=dev
 ```
 
-CI runs the full gate on a **GitHub Actions matrix** (ubuntu + windows x Node
-22/24), plus a non-blocking `node-pty` prebuilt probe. Production `npm audit` is
-clean.
+The CI workflow runs the gate on GitHub Actions across Ubuntu and Windows with
+Node 22/24, plus a non-blocking `node-pty` prebuilt probe.
 
----
+## Documentation
 
-## 📚 Documentation
+| File | Purpose |
+| --- | --- |
+| [`BETWEEN-BROKER-BLUEPRINT.md`](./BETWEEN-BROKER-BLUEPRINT.md) | Original product concept and broker architecture. |
+| [`DEVELOPMENT-PLAN.md`](./DEVELOPMENT-PLAN.md) | Node/TypeScript implementation plan and acceptance map. |
+| [`IMPROVEMENTS.md`](./IMPROVEMENTS.md) | Adversarial design review backlog. |
+| [`TASKS.md`](./TASKS.md) | Phase and task build tracker. |
+| [`DESIGN.md`](./DESIGN.md) | Compact TUI design rules. |
+| [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md) | Agent signal, ack, review, and wrapper contract. |
+| [`docs/adr/`](./docs/adr/) | Architecture decision records. |
 
-| File                                                           | What it is                                                           |
-| -------------------------------------------------------------- | -------------------------------------------------------------------- |
-| [`BETWEEN-BROKER-BLUEPRINT.md`](./BETWEEN-BROKER-BLUEPRINT.md) | Original product concept (referenced as §N).                         |
-| [`DEVELOPMENT-PLAN.md`](./DEVELOPMENT-PLAN.md)                 | Node/TS implementation plan (M0–M7), schemas, acceptance map.        |
-| [`IMPROVEMENTS.md`](./IMPROVEMENTS.md)                         | Adversarial design review backlog (`I1`–`I26`).                      |
-| [`TASKS.md`](./TASKS.md)                                       | Phase → task build tracker.                                          |
-| [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md)           | What an agent reads/writes; claude/codex commands.                   |
-| [`docs/adr/`](./docs/adr/)                                     | ADR-0001 (transport), ADR-0002 (agent invocation).                   |
-| [`DESIGN.md`](./DESIGN.md)                                     | Compact TUI design system for the broker/agent panes.                |
-| `review.md`                                                    | Latest deep review (RESOLVED vs TRACKED). _(local-only, gitignored)_ |
+## Status
 
----
+Between is alpha. The file-signal loop is the verified baseline. One-shot and
+PTY-hosted agent paths are additive and improving. The next meaningful frontier
+is not more spectacle; it is stronger evidence, stronger steering, and less
+room for invisible agent drift.
 
-## 🛠️ Where Between is today
-
-Between is **alpha**. The file-signal headless loop is the verified baseline;
-embedding (one-shot + PTY) and real-CLI wiring are additive and improving.
-
-**Tracked next:** Obsidian project-file scaffolding, detective merge/deploy checks,
-smoke-testing real claude/codex wrappers on target machines, and deeper
-interactive-embed visual QA.
-
----
-
-## 📄 License
+## License
 
 MIT.
