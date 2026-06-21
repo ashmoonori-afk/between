@@ -11,6 +11,8 @@ const HELP = [
   'Between gateway — commands:',
   '  status                 broker phase / cycle / waiting',
   '  goal <text>            lock a work goal',
+  '  steer <text>           steer active agents',
+  '  interrupt | abort      abort agents + pause',
   '  review-now             force a review of the current diff',
   '  approve <merge|deploy|promote_rule>   sign + submit a human approval',
   '  pause | resume | stop  control the broker',
@@ -65,6 +67,14 @@ export class GatewaySession {
         if (!arg) return 'usage: goal <text>'
         await this.bus.submit({ kind: 'goal', goal: arg })
         return `goal locked: ${arg}`
+      case 'steer':
+        if (!arg) return 'usage: steer <text>'
+        await this.bus.submit({ kind: 'steer_goal', goal: arg })
+        return `goal steered: ${arg}`
+      case 'interrupt':
+      case 'abort':
+        await this.bus.submit({ kind: 'interrupt' })
+        return 'agent abort requested'
       case 'review-now':
       case 'review_now':
         await this.bus.submit({ kind: 'review_now' })

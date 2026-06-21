@@ -135,6 +135,11 @@ export function EmbeddedDashboard({
       setSelectedCommandIndex((index) => clampCommandIndex(commandItems, index))
       return
     }
+    if (key.escape) {
+      const item = commandItemForKey(commandItems, 'escape')
+      if (item) queueCommand(item)
+      return
+    }
     const item = commandItemForKey(commandItems, input)
     if (item) queueCommand(item)
   })

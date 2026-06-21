@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OneShotTransport, PtyTransport } from '../../src/adapters/pty-transport'
 import { PtyAgentHost } from '../../src/adapters/pty-agent-host'
+import { BaseAgentHost, type AgentHostKind, type AgentRole } from '../../src/adapters/agent-host'
 import { FileTransport } from '../../src/adapters/signal-transport'
 import { AckStore } from '../../src/adapters/ack-store'
 import { betweenPaths, ackPath } from '../../src/adapters/paths'
@@ -13,6 +14,31 @@ let dir: string
 afterEach(async () => {
   if (dir) await rm(dir, { recursive: true, force: true })
 })
+
+class MemoryAgentHost extends BaseAgentHost {
+  readonly kind: AgentHostKind = 'pipe'
+  readonly delivered: string[] = []
+  stops = 0
+
+  constructor(role: AgentRole) {
+    super(role, 20)
+  }
+
+  async start(): Promise<void> {
+    this.markStart()
+  }
+
+  async deliver(body: string): Promise<void> {
+    this.delivered.push(body)
+  }
+
+  resize(): void {}
+
+  async stop(): Promise<void> {
+    this.stops += 1
+    this.markExit(null)
+  }
+}
 
 describe('OneShotTransport / PtyTransport pollAck delegation (I7)', () => {
   it('returns exactly what FileTransport returns for the same ack file', async () => {
@@ -73,5 +99,26 @@ describe('OneShotTransport / PtyTransport pollAck delegation (I7)', () => {
 
     expect(host.snapshot().alive).toBe(false)
     expect(host.snapshot().exited).toBe(true)
+  })
+
+  it('steers and aborts active hosted agents through the transport control port', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'between-agent-control-'))
+    const host = new MemoryAgentHost('developer')
+    host.markStart()
+    const transport = new PtyTransport(dir, { hosts: { developer: host } })
+
+    await transport.steerActive('ship safe goal')
+    await transport.abortActive('user_requested')
+
+    expect(host.delivered[0]).toContain('ship safe goal')
+    expect(host.stops).toBe(1)
+    const snap = host.snapshot()
+    expect(snap.alive).toBe(false)
+    expect(
+      snap.lines.some((line) => line.includes('[between] steer requested: ship safe goal')),
+    ).toBe(true)
+    expect(
+      snap.lines.some((line) => line.includes('[between] abort requested: user_requested')),
+    ).toBe(true)
   })
 })

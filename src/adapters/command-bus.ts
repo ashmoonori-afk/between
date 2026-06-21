@@ -19,6 +19,8 @@ const CommandSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('goal'), goal: z.string().max(8192) }),
   z.object({ kind: z.literal('pause') }),
   z.object({ kind: z.literal('resume') }),
+  z.object({ kind: z.literal('interrupt') }),
+  z.object({ kind: z.literal('steer_goal'), goal: z.string().min(1).max(8192) }),
   z.object({ kind: z.literal('review_now') }),
   z.object({
     kind: z.literal('approve'),

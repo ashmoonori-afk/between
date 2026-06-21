@@ -106,6 +106,11 @@ export function registerBrokerCommands(program: Command): void {
     .description('Resume the loop')
     .action(enqueue('resume', () => ({ kind: 'resume' })))
   program
+    .command('interrupt')
+    .alias('abort')
+    .description('Abort active hosted agents and pause for steering')
+    .action(enqueue('interrupt', () => ({ kind: 'interrupt' })))
+  program
     .command('review-now')
     .description('Force a review of the current diff (unless already reviewed)')
     .action(enqueue('review-now', () => ({ kind: 'review_now' })))
@@ -122,6 +127,19 @@ export function registerBrokerCommands(program: Command): void {
         await loadConfig(root())
         await new CommandBus(root()).submit({ kind: 'goal', goal: text.join(' ') })
         print('between: goal locked')
+      } catch (e) {
+        await fail(e)
+      }
+    })
+
+  program
+    .command('steer <text...>')
+    .description('Steer active hosted agents and clear stale approval')
+    .action(async (text: string[]) => {
+      try {
+        await loadConfig(root())
+        await new CommandBus(root()).submit({ kind: 'steer_goal', goal: text.join(' ') })
+        print('between: goal steered')
       } catch (e) {
         await fail(e)
       }

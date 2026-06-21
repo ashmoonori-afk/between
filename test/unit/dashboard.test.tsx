@@ -114,12 +114,13 @@ describe('Dashboard', () => {
           state={state}
           events={[]}
           now="14:08:22"
-          commandPalette={{ open: true, selectedIndex: 1, lastMessage: 'pause queued' }}
+          commandPalette={{ open: true, selectedIndex: 2, lastMessage: 'pause queued' }}
         />,
       ).lastFrame() ?? ''
 
     expect(frame).toContain('COMMAND PALETTE')
     expect(frame).toContain('r review now')
+    expect(frame).toContain('esc abort agents')
     expect(frame).toContain('> p pause')
     expect(frame).toContain('pause queued')
   })

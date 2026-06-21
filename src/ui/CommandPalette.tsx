@@ -18,8 +18,8 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   if (!open) {
     const keys = extraKeys
-      ? `${extraKeys} | c palette | r review | p pause/resume | q quit`
-      : 'c palette | r review | p pause/resume | q quit'
+      ? `${extraKeys} | esc abort | c palette | r review | p pause/resume | q quit`
+      : 'esc abort | c palette | r review | p pause/resume | q quit'
     return (
       <Text color={COLORS.textFaint} dimColor>
         {`${lastMessage ? `${lastMessage} | ` : ''}keys: ${keys}`}

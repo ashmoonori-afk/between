@@ -2,7 +2,7 @@ import type { Command } from '../adapters/command-bus'
 import { CommandBus } from '../adapters/command-bus'
 import type { BetweenState, Phase } from '../core/types'
 
-export type DashboardCommandId = 'review_now' | 'pause' | 'resume' | 'stop'
+export type DashboardCommandId = 'review_now' | 'interrupt' | 'pause' | 'resume' | 'stop'
 
 export interface DashboardCommandItem {
   id: DashboardCommandId
@@ -20,6 +20,20 @@ export interface DashboardCommandPaletteState {
 }
 
 const REVIEWABLE_PHASES = new Set<Phase>(['developing', 'applying_review', 'debouncing'])
+const INTERRUPTIBLE_PHASES = new Set<Phase>([
+  'goal_locked',
+  'developing',
+  'diff_detected',
+  'debouncing',
+  'review_requested',
+  'reviewing',
+  'review_written',
+  'applying_review',
+  'verifying',
+  'human_gate',
+  'repo_busy',
+  'error',
+])
 
 export function buildDashboardCommandItems(state: BetweenState): DashboardCommandItem[] {
   const canReviewNow = REVIEWABLE_PHASES.has(state.workflow.phase) && Boolean(state.diff.hash)
@@ -32,6 +46,14 @@ export function buildDashboardCommandItems(state: BetweenState): DashboardComman
       hint: canReviewNow ? 'queue reviewer signal' : 'needs active diff',
       enabled: canReviewNow,
       command: { kind: 'review_now' },
+    },
+    {
+      id: 'interrupt',
+      key: 'esc',
+      label: 'abort agents',
+      hint: 'abort agents + pause',
+      enabled: INTERRUPTIBLE_PHASES.has(state.workflow.phase),
+      command: { kind: 'interrupt' },
     },
     {
       id: paused ? 'resume' : 'pause',
@@ -56,7 +78,7 @@ export function commandItemForKey(
   items: readonly DashboardCommandItem[],
   input: string,
 ): DashboardCommandItem | null {
-  const key = input.toLowerCase()
+  const key = input.toLowerCase() === 'escape' ? 'esc' : input.toLowerCase()
   return items.find((item) => item.enabled && item.key === key) ?? null
 }
 

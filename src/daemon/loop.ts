@@ -33,7 +33,7 @@ export class Daemon {
       current: () => this.current,
       persist: (next) => this.persist(next),
       emit: (event, extra) => this.emit(event, extra),
-      dispatch: (event, mutate) => this.dispatch(event, mutate),
+      dispatch: (event, mutate, extra) => this.dispatch(event, mutate, extra),
       requestStop: () => this.requestStop(),
     }
   }

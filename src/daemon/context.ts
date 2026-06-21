@@ -5,6 +5,7 @@ import type { StateRepository } from '../adapters/state-repository'
 import type { EventsLog } from '../adapters/events-log'
 import type { SnapshotStore } from '../adapters/snapshot-store'
 import type { CommandBus } from '../adapters/command-bus'
+import type { AgentControl } from '../adapters/agent-control'
 
 export interface DaemonDeps {
   root: string
@@ -16,6 +17,7 @@ export interface DaemonDeps {
   transport: SignalTransport
   snapshots: SnapshotStore
   commands: CommandBus
+  agentControl: AgentControl
   log?: (msg: string) => void
 }
 

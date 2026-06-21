@@ -242,4 +242,55 @@ describe('headless walking skeleton (M3)', () => {
     },
     INTEGRATION_TIMEOUT_MS,
   )
+
+  it(
+    'interrupt pauses the active loop and steer_goal redirects work without stale approval',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
+      const d = await buildDaemon(dir, fc)
+      await d.load()
+      const bus = new CommandBus(dir)
+
+      await bus.submit({ kind: 'goal', goal: 'first goal' })
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('developing')
+
+      await bus.submit({ kind: 'interrupt' })
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('paused')
+      expect(d.state.workflow.previous_phase).toBe('developing')
+
+      const approved = {
+        ...d.state,
+        approval: {
+          actor: 'human' as const,
+          scope: 'merge' as const,
+          diff_hash: 'old',
+          cycle: 99,
+          granted_at: fc.nowIso(),
+          sig: 'stale',
+          bundle_id: 'old-bundle',
+          expires_at: approvalExpiry(fc.now()),
+        },
+      }
+      await new StateRepository(dir).write(approved)
+      const steered = await buildDaemon(dir, fc)
+      await steered.load()
+
+      await bus.submit({ kind: 'steer_goal', goal: 'ship safer chat UX SECRET_KEY=123456' })
+      await steered.tick()
+
+      expect(steered.state.workflow.phase).toBe('developing')
+      expect(steered.state.approval).toBeNull()
+      expect(steered.state.debounce.candidate_hash).toBeNull()
+      const names = (await new EventsLog(dir).read()).map((e) => e.event)
+      expect(names).toContain('goal_steered')
+      const detail = (await new EventsLog(dir).read()).find(
+        (e) => e.event === 'goal_steered',
+      )?.detail
+      expect(detail?.goal).toBe('ship safer chat UX SECRET_KEY=[REDACTED]')
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
 })

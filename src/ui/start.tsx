@@ -9,6 +9,7 @@ import { OneShotTransport, PtyTransport } from '../adapters/pty-transport'
 import { PipeAgentHost } from '../adapters/pipe-agent-host'
 import { PtyAgentHost, PtyUnavailableError } from '../adapters/pty-agent-host'
 import type { AgentHost, AgentRole } from '../adapters/agent-host'
+import type { AgentControl } from '../adapters/agent-control'
 import { EmbeddedDashboard } from './EmbeddedDashboard'
 import { print } from '../cli/output'
 
@@ -39,6 +40,7 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
 
   let hosts: Hosts = null
   let transport: SignalTransport | undefined
+  let agentControl: AgentControl | undefined
   let mode = config.agent_mode
   let stopDeathWiring: Array<() => void> = []
 
@@ -57,7 +59,9 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
         })
         await developer.start()
         hosts = { developer, reviewer }
-        transport = new PtyTransport(absRoot, { hosts })
+        const ptyTransport = new PtyTransport(absRoot, { hosts })
+        transport = ptyTransport
+        agentControl = ptyTransport
       } catch (e) {
         if (!(e instanceof PtyUnavailableError)) throw e
         print('between: PTY unavailable — falling back to pipe / one-shot')
@@ -69,16 +73,18 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
       const developer = new PipeAgentHost('developer', scrollback)
       const reviewer = new PipeAgentHost('reviewer', scrollback)
       hosts = { developer, reviewer }
-      transport = new OneShotTransport(absRoot, {
+      const oneShotTransport = new OneShotTransport(absRoot, {
         developerCommand: config.developer_command,
         reviewerCommand: config.reviewer_command,
         cwd,
         hosts,
       })
+      transport = oneShotTransport
+      agentControl = oneShotTransport
     }
     // mode === 'file' -> hosts stays null, transport stays undefined (FileTransport default)
 
-    const daemon = await buildDaemon(absRoot, clock, transport)
+    const daemon = await buildDaemon(absRoot, clock, transport, agentControl)
     await daemon.load()
     stopDeathWiring = wirePtyDeaths(hosts, daemon)
 
@@ -116,6 +122,7 @@ function wirePtyDeaths(hosts: Hosts, daemon: Daemon): Array<() => void> {
     if (host.kind !== 'pty') return []
     return [
       host.subscribeExit((event) => {
+        if (event.exitCode === null && daemon.state.workflow.phase === 'paused') return
         void daemon.reportAgentDied(event.role, event.exitCode)
       }),
     ]

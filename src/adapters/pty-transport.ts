@@ -1,10 +1,11 @@
 import { execa } from 'execa'
 import type { Ack, Signal, SignalTransport } from '../core/types'
 import { FileTransport } from './signal-transport'
-import { tokenizeCommand, type AgentHost, type AgentRole } from './agent-host'
+import { tokenizeCommand, type AgentHostMap, type AgentRole } from './agent-host'
 import { prepareAgentExecution, resolveAgentCommandPaths } from './agent-execution'
+import { createHostAgentControl, steerInstruction, type AgentControl } from './agent-control'
 
-export type AgentHostMap = Partial<Record<AgentRole, AgentHost>>
+type OneShotChild = ReturnType<typeof execa>
 
 function roleOf(signal: Signal): AgentRole | null {
   return signal.target === 'reviewer' || signal.target === 'developer' ? signal.target : null
@@ -24,9 +25,10 @@ export interface OneShotOptions {
  * still persisted via a composed FileTransport, and `pollAck` is delegated to it verbatim
  * so `reviewing` stays gated on a real `.between/acks/<id>.json` receipt (I7).
  */
-export class OneShotTransport implements SignalTransport {
+export class OneShotTransport implements SignalTransport, AgentControl {
   readonly kind = 'oneshot'
   private readonly file: FileTransport
+  private readonly active = new Map<AgentRole, OneShotChild>()
 
   constructor(
     private readonly root: string,
@@ -52,19 +54,54 @@ export class OneShotTransport implements SignalTransport {
       input: signal.body,
       reject: false,
       env: launch.env,
+      forceKillAfterDelay: 1_000,
     })
+    this.active.set(role, sub)
     sub.stdout?.on('data', (d: Buffer) => host?.feed(d.toString()))
     sub.stderr?.on('data', (d: Buffer) => host?.feed(d.toString()))
-    void sub.then(
-      (r) => host?.markExit(r.exitCode ?? null),
-      () => host?.markExit(null),
-    )
+    void sub
+      .then(
+        (r) => host?.markExit(r.exitCode ?? null),
+        () => host?.markExit(null),
+      )
+      .finally(() => {
+        if (this.active.get(role) === sub) this.active.delete(role)
+      })
     // intentionally NOT awaited — fire and forget
   }
 
   pollAck(signalId: string): Promise<Ack | null> {
     return this.file.pollAck(signalId)
   }
+
+  async abortActive(reason: string): Promise<void> {
+    await Promise.all(
+      [...this.active.entries()].map(async ([role, child]) => {
+        this.opts.hosts?.[role]?.feed(`[between] abort requested: ${reason}\n`)
+        child.kill('SIGTERM')
+        if (!(await childExited(child, 1_500))) child.kill('SIGKILL')
+      }),
+    )
+  }
+
+  async steerActive(goal: string): Promise<void> {
+    await Promise.all(
+      [...this.active.entries()].map(async ([role, child]) => {
+        this.opts.hosts?.[role]?.feed(`[between] steer requested: ${goal}\n`)
+        if (child.stdin?.writable) child.stdin.write(steerInstruction(goal))
+      }),
+    )
+  }
+}
+
+async function childExited(child: OneShotChild, timeoutMs: number): Promise<boolean> {
+  return Promise.race([
+    child.then(
+      () => true,
+      () => true,
+    ),
+    new Promise<boolean>((resolve) => setTimeout(() => resolve(false), timeoutMs)),
+  ])
 }
 
 export interface PtyTransportOptions {
@@ -76,15 +113,17 @@ export interface PtyTransportOptions {
  * Like OneShotTransport, it persists the signal pointer and delegates `pollAck` to a composed
  * FileTransport, reusing the proven ack-file gate.
  */
-export class PtyTransport implements SignalTransport {
+export class PtyTransport implements SignalTransport, AgentControl {
   readonly kind = 'pty'
   private readonly file: FileTransport
+  private readonly control: AgentControl
 
   constructor(
     root: string,
     private readonly opts: PtyTransportOptions,
   ) {
     this.file = new FileTransport(root)
+    this.control = createHostAgentControl(opts.hosts)
   }
 
   async send(signal: Signal): Promise<void> {
@@ -102,5 +141,13 @@ export class PtyTransport implements SignalTransport {
 
   pollAck(signalId: string): Promise<Ack | null> {
     return this.file.pollAck(signalId)
+  }
+
+  abortActive(reason: string): Promise<void> {
+    return this.control.abortActive(reason)
+  }
+
+  steerActive(goal: string): Promise<void> {
+    return this.control.steerActive(goal)
   }
 }

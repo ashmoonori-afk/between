@@ -1,4 +1,4 @@
-import { touch, isAlreadyReviewed } from '../core/state'
+import { touch, isAlreadyReviewed, setPhase } from '../core/state'
 import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
@@ -9,6 +9,7 @@ import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
 import { usesSimulatedEvidence } from '../core/evidence-trust'
 import type { DaemonContext } from './context'
+import { abortActiveAgents, steerActiveAgents } from './agent-control-actions'
 import { currentDiff, openCycleAndSignal } from './phases'
 import { readReview } from './records'
 
@@ -46,6 +47,12 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
     case 'resume':
       await ctx.dispatch('resume')
       break
+    case 'interrupt':
+      await interrupt(ctx)
+      break
+    case 'steer_goal':
+      await steerGoal(ctx, command.goal)
+      break
     case 'review_now':
       await forceReview(ctx)
       break
@@ -61,6 +68,54 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
     default:
       break
   }
+}
+
+async function interrupt(ctx: DaemonContext): Promise<void> {
+  await ctx.emit('interrupt_requested', { detail: { reason: 'user_requested' } })
+  await ctx.dispatch('pause', undefined, { detail: { reason: 'user_requested' } })
+  await abortActiveAgents(ctx, 'user_requested')
+}
+
+async function steerGoal(ctx: DaemonContext, goal: string): Promise<void> {
+  const redacted = redactSecrets(goal).text
+  const cur = ctx.current()
+
+  if (cur.workflow.phase === 'idle' || cur.workflow.phase === 'done') {
+    await ctx.dispatch('goal_locked', (s) => ({
+      ...s,
+      workflow: {
+        ...s.workflow,
+        cycles_this_goal: 0,
+        started_at: ctx.deps.clock.nowIso(),
+        error: null,
+      },
+      approval: null,
+      debounce: emptyDebounce(),
+    }))
+    await steerActiveAgents(ctx, redacted)
+    await ctx.emit('goal_steered', { detail: { goal: redacted } })
+    return
+  }
+
+  const steered = setPhase(cur, 'developing', cur.workflow.phase)
+  await ctx.persist(
+    touch(
+      {
+        ...steered,
+        approval: null,
+        debounce: emptyDebounce(),
+        workflow: {
+          ...steered.workflow,
+          cycles_this_goal: 0,
+          started_at: cur.workflow.started_at ?? ctx.deps.clock.nowIso(),
+          error: null,
+        },
+      },
+      ctx.deps.clock,
+    ),
+  )
+  await steerActiveAgents(ctx, redacted)
+  await ctx.emit('goal_steered', { detail: { goal: redacted } })
 }
 
 async function recordFindingAction(

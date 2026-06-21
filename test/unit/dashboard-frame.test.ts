@@ -44,7 +44,7 @@ describe('renderDashboardFrame', () => {
     expect(frame).toContain('B BETWEEN')
     expect(frame).toContain('AWAITING APPROVAL')
     expect(frame).toContain('APPROVAL needed')
-    expect(frame).toContain('COMMANDS r review now (off) | p pause | s stop broker')
+    expect(frame).toContain('COMMANDS r review now (off) | esc abort agents | p pause')
     expect(frame).not.toMatch(/[^\x0A\x20-\x7E]/)
     expect(Math.max(...lines.map((line) => line.length))).toBe(DASHBOARD_FRAME_WIDTH)
     expect(new Set(lines.map((line) => line.length))).toEqual(new Set([DASHBOARD_FRAME_WIDTH]))

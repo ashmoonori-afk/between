@@ -20,10 +20,12 @@ describe('dashboard command palette', () => {
 
     expect(items.map((item) => `${item.key}:${item.label}`)).toEqual([
       'r:review now',
+      'esc:abort agents',
       'p:resume',
       's:stop broker',
     ])
-    expect(items[1]?.command).toEqual({ kind: 'resume' })
+    expect(items[1]?.command).toEqual({ kind: 'interrupt' })
+    expect(items[2]?.command).toEqual({ kind: 'resume' })
   })
 
   it('disables review-now without a current diff and skips it during selection', () => {
@@ -44,5 +46,11 @@ describe('dashboard command palette', () => {
 
     expect(items[0]?.enabled).toBe(true)
     expect(commandItemForKey(items, 'r')?.command).toEqual({ kind: 'review_now' })
+  })
+
+  it('maps Escape to an interrupt command from active phases', () => {
+    const items = buildDashboardCommandItems(setPhase(base, 'reviewing', 'review_requested'))
+
+    expect(commandItemForKey(items, 'escape')?.command).toEqual({ kind: 'interrupt' })
   })
 })

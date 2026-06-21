@@ -14,6 +14,7 @@ import { SnapshotStore } from './adapters/snapshot-store'
 import { CommandBus } from './adapters/command-bus'
 import { BrokerLock } from './adapters/lock'
 import { betweenPaths } from './adapters/paths'
+import { NOOP_AGENT_CONTROL, type AgentControl } from './adapters/agent-control'
 import { reconcile } from './daemon/reconcile'
 import { Daemon } from './daemon/loop'
 import { readRecoverableState } from './daemon/recover-state'
@@ -52,6 +53,7 @@ export async function buildDaemon(
   root: string,
   clock: Clock = new SystemClock(),
   transport?: SignalTransport,
+  agentControl: AgentControl = NOOP_AGENT_CONTROL,
 ): Promise<Daemon> {
   const absRoot = resolve(root)
   const config = await loadConfig(absRoot)
@@ -73,6 +75,7 @@ export async function buildDaemon(
       transport: transport ?? new FileTransport(absRoot),
       snapshots: new SnapshotStore(absRoot),
       commands: new CommandBus(absRoot),
+      agentControl,
     },
     initial,
   )

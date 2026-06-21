@@ -87,6 +87,30 @@ describe('gateway core (Phase 2)', () => {
     expect(echo.lastSent()).toContain('unknown command')
   })
 
+  it('routes interrupt/abort and steer chat messages into durable broker commands', async () => {
+    const { echo } = await freshSession()
+    await echo.inject('c1', 'interrupt')
+    expect(echo.lastSent()).toContain('agent abort requested')
+    await echo.inject('c1', 'abort')
+    expect(echo.lastSent()).toContain('agent abort requested')
+    await echo.inject('c1', 'steer keep the UI calm')
+    expect(echo.lastSent()).toContain('goal steered')
+
+    const cmds = await new CommandBus(dir).drain()
+    expect(cmds.map((c) => c.command)).toEqual([
+      { kind: 'interrupt' },
+      { kind: 'interrupt' },
+      { kind: 'steer_goal', goal: 'keep the UI calm' },
+    ])
+  })
+
+  it('rejects malformed steer chat messages without writing a command', async () => {
+    const { echo } = await freshSession()
+    await echo.inject('c1', 'steer')
+    expect(echo.lastSent()).toContain('usage: steer <text>')
+    expect(await new CommandBus(dir).drain()).toHaveLength(0)
+  })
+
   it('notifies the chat when the broker reaches a human gate', async () => {
     const { echo, gw } = await freshSession()
     await echo.inject('c1', 'status') // registers the chat id
