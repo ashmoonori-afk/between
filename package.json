@@ -39,6 +39,8 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@emnapi/core": "^1.11.1",
+    "@emnapi/runtime": "^1.11.1",
     "@sinonjs/fake-timers": "^15.4.0",
     "@types/node": "^25.9.3",
     "@types/proper-lockfile": "^4.1.4",
