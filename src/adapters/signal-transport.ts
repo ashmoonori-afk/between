@@ -61,7 +61,9 @@ export class FileTransport implements SignalTransport {
 export function reviewerSignalBody(): string {
   return [
     'Between signal: review requested.',
-    'Read: git diff, .between/state.json, Obsidian project notes.',
+    'Read: .between/state.json and the immutable review bundle at state.diff.bundle_path.',
+    'If BETWEEN_REVIEW_WORKTREE is set, inspect that sealed read-only worktree.',
+    'Do not read the live git diff; the live worktree may have moved.',
     'Write findings to: .between/reviews/<cycle>.json (+ Obsidian review feed).',
     'Do not edit code unless explicitly instructed.',
   ].join('\n')

@@ -2,7 +2,7 @@ import { execa } from 'execa'
 import type { Ack, Signal, SignalTransport } from '../core/types'
 import { FileTransport } from './signal-transport'
 import { tokenizeCommand, type AgentHost, type AgentRole } from './agent-host'
-import { buildAgentSandboxEnv, writeAgentEnvManifest } from './agent-env'
+import { prepareAgentExecution, resolveAgentCommandPaths } from './agent-execution'
 
 export type AgentHostMap = Partial<Record<AgentRole, AgentHost>>
 
@@ -40,17 +40,18 @@ export class OneShotTransport implements SignalTransport {
     const role = roleOf(signal)
     if (!role) return
     const command = role === 'reviewer' ? this.opts.reviewerCommand : this.opts.developerCommand
-    const { file, args } = tokenizeCommand(command)
+    const launch = await prepareAgentExecution(this.root, role, this.opts.cwd, { FORCE_COLOR: '1' })
+    const { file, args } = resolveAgentCommandPaths(this.root, tokenizeCommand(command))
     const host = this.opts.hosts?.[role]
     host?.markStart()
     host?.feed(`$ ${command}\n`)
-    const sandbox = buildAgentSandboxEnv({ FORCE_COLOR: '1', BETWEEN_ROOT: this.root }, { role })
-    await writeAgentEnvManifest(this.root, role, sandbox.manifest)
+    if (launch.reviewerWorktree)
+      host?.feed(`[between] reviewer worktree ${launch.reviewerWorktree}\n`)
     const sub = execa(file, args, {
-      cwd: this.opts.cwd,
+      cwd: launch.cwd,
       input: signal.body,
       reject: false,
-      env: sandbox.env,
+      env: launch.env,
     })
     sub.stdout?.on('data', (d: Buffer) => host?.feed(d.toString()))
     sub.stderr?.on('data', (d: Buffer) => host?.feed(d.toString()))
@@ -90,7 +91,13 @@ export class PtyTransport implements SignalTransport {
     await this.file.send(signal)
     const role = roleOf(signal)
     if (!role) return
-    await this.opts.hosts[role]?.deliver(signal.body)
+    const host = this.opts.hosts[role]
+    if (!host) return
+    if (host.kind === 'pty') {
+      if (role === 'reviewer' && host.snapshot().alive) await host.stop()
+      if (!host.snapshot().alive) await host.start()
+    }
+    await host.deliver(signal.body)
   }
 
   pollAck(signalId: string): Promise<Ack | null> {

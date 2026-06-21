@@ -4,7 +4,7 @@
  * HONESTY: only the bundled fake-agent is verified end-to-end. These wrappers encode the
  * documented invocation (see docs/AGENT-CONTRACT.md) but require the CLI installed + an API
  * key, and the exact flags/prompt may need tuning for your CLI version. The wrapper feeds the
- * agent the Between contract (read the signal + git diff; write the ack/review/verify files)
+ * agent the Between contract (read the signal + sealed bundle; write the ack/review/verify files)
  * and spawns the CLI; the CLI's own file tools do the writing — Between never fakes it.
  *
  * Sources use string concatenation (no backticks / no ${}) so they live safely in this TS
@@ -13,17 +13,19 @@
 
 const CONTRACT_PROMPT = [
   'You are a Between agent. Your ROLE is passed as the first CLI arg (reviewer or developer).',
-  'Read .between/signals/<role>.json and .between/state.json.',
+  'BETWEEN_ROOT points to the repository root that owns .between/ state and output files.',
+  'Read BETWEEN_ROOT/.between/signals/<role>.json and BETWEEN_ROOT/.between/state.json.',
   'If role is REVIEWER: review the IMMUTABLE review bundle at the path in state.diff.bundle_path',
   '  (an A1 sealed review object: {bundle_id, diff_hash, diff:{tracked,trackedRaw,untracked}, repository, environment}).',
   '  Do NOT read `git diff HEAD` — the live worktree may have moved; the bundle is the review object.',
+  '  Prefer BETWEEN_REVIEW_WORKTREE when present; it is a sealed read-only materialization of the bundle.',
   '  Review against bundle.diff_hash, which equals state.diff.hash.',
   'If role is DEVELOPER: read `git diff HEAD` and apply the reviewer feedback to the working tree (do NOT merge or deploy).',
   'Compute id = role + "-" + String(cycle).padStart(4,"0") + "-" + diff_hash.slice(0,12).',
-  'Write .between/acks/<id>.json = {signal_id:id, target:role, cycle, diff_hash, acked_at:ISO}.',
-  'If role is reviewer: also write .between/reviews/cycle-<cycle4>.json =',
+  'Write BETWEEN_ROOT/.between/acks/<id>.json = {signal_id:id, target:role, cycle, diff_hash, acked_at:ISO}.',
+  'If role is reviewer: also write BETWEEN_ROOT/.between/reviews/cycle-<cycle4>.json =',
   '  {cycle, diff_hash, findings:[{id,severity:"blocking"|"non-blocking",summary,agent:"reviewer",target_hash:diff_hash}], complete:true}',
-  '  and .between/verify/cycle-<cycle4>.json = {diff_hash, passed:boolean, summary}.',
+  '  and BETWEEN_ROOT/.between/verify/cycle-<cycle4>.json = {diff_hash, passed:boolean, summary}.',
 ].join(' ')
 
 function wrapper(cli: string, exampleCmd: string): string {
@@ -37,12 +39,14 @@ function wrapper(cli: string, exampleCmd: string): string {
     "import { join } from 'node:path'\n\n" +
     "const role = process.argv[2] === 'developer' ? 'developer' : 'reviewer'\n" +
     'const root = process.env.BETWEEN_ROOT || process.cwd()\n' +
+    "const reviewWorktree = process.env.BETWEEN_REVIEW_WORKTREE || ''\n" +
+    "const agentCwd = role === 'reviewer' && reviewWorktree ? reviewWorktree : root\n" +
     "function read(p){ try { return readFileSync(join(root, '.between', p), 'utf8') } catch { return '' } }\n" +
     "const signal = read('signals/' + role + '.json')\n" +
     'const CONTRACT = ' +
     JSON.stringify(CONTRACT_PROMPT) +
     '\n' +
-    "const prompt = CONTRACT + '\\n\\nYour role: ' + role + '\\nSignal:\\n' + signal\n" +
+    "const prompt = CONTRACT + '\\n\\nYour role: ' + role + '\\nBETWEEN_ROOT: ' + root + '\\nBETWEEN_REVIEW_WORKTREE: ' + reviewWorktree + '\\nSignal:\\n' + signal\n" +
     '// Documented invocation (confidence: claude HIGH, codex MEDIUM — smoke-test before relying):\n' +
     '// ' +
     exampleCmd +
@@ -51,7 +55,7 @@ function wrapper(cli: string, exampleCmd: string): string {
     cli +
     "', " +
     spawnArgs(cli) +
-    ", { cwd: root, input: prompt, stdio: ['pipe','inherit','inherit'] })\n" +
+    ", { cwd: agentCwd, input: prompt, stdio: ['pipe','inherit','inherit'] })\n" +
     "if (r.error && r.error.code === 'ENOENT') {\n" +
     "  process.stderr.write('[' + role + '] " +
     cli +

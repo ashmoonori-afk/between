@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
-import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +11,7 @@ import { OneShotTransport } from '../../src/adapters/pty-transport'
 import { CommandBus } from '../../src/adapters/command-bus'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { betweenPaths, ackPath } from '../../src/adapters/paths'
+import { REVIEWER_WORKTREE } from '../../src/review/materialize'
 
 let dir: string
 const INTEGRATION_TIMEOUT_MS = 90_000
@@ -89,6 +90,78 @@ describe('oneshot embed (real fake-agent drives the loop)', () => {
       await d.tick() // clean review + passing verify -> human_gate
       expect(d.state.workflow.phase).toBe('human_gate')
       expect(d.state.workflow.reviewed_hashes).toContain(hash)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
+
+  it(
+    'launches the reviewer in a sealed reviewer worktree with sandbox env',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, {}, fc)
+      const reviewerScript = join(dir, 'capture-reviewer.mjs')
+      await writeFile(
+        reviewerScript,
+        [
+          "import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'",
+          "import { join } from 'node:path'",
+          "const role = 'reviewer'",
+          'const root = process.env.BETWEEN_ROOT',
+          "if (!root) throw new Error('BETWEEN_ROOT missing')",
+          "const dir = join(root, '.between')",
+          "const state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8'))",
+          'const cycle = state.workflow.cycle',
+          'const hash = state.diff.hash',
+          "const id = role + '-' + String(cycle).padStart(4, '0') + '-' + String(hash).slice(0, 12)",
+          "writeFileSync(join(dir, 'reviewer-cwd.txt'), process.cwd())",
+          "writeFileSync(join(dir, 'reviewer-env.json'), JSON.stringify({",
+          '  BETWEEN_SANDBOX_ROLE: process.env.BETWEEN_SANDBOX_ROLE,',
+          '  BETWEEN_NETWORK_DISABLED: process.env.BETWEEN_NETWORK_DISABLED,',
+          '  GIT_TERMINAL_PROMPT: process.env.GIT_TERMINAL_PROMPT,',
+          '  BETWEEN_REVIEW_WORKTREE: process.env.BETWEEN_REVIEW_WORKTREE,',
+          '}, null, 2))',
+          "mkdirSync(join(dir, 'acks'), { recursive: true })",
+          "mkdirSync(join(dir, 'reviews'), { recursive: true })",
+          "mkdirSync(join(dir, 'verify'), { recursive: true })",
+          "writeFileSync(join(dir, 'acks', id + '.json'), JSON.stringify({ signal_id: id, target: role, cycle, diff_hash: hash, acked_at: new Date().toISOString() }, null, 2))",
+          "const name = 'cycle-' + String(cycle).padStart(4, '0')",
+          "writeFileSync(join(dir, 'reviews', name + '.json'), JSON.stringify({ cycle, diff_hash: hash, findings: [], complete: true }, null, 2))",
+          "writeFileSync(join(dir, 'verify', name + '.json'), JSON.stringify({ diff_hash: hash, passed: true, summary: 'sandbox reviewer ok' }, null, 2))",
+          '',
+        ].join('\n'),
+        'utf8',
+      )
+
+      const config = await loadConfig(dir)
+      const transport = new OneShotTransport(dir, {
+        developerCommand: config.developer_command,
+        reviewerCommand: `node ${reviewerScript} reviewer`,
+        cwd: dir,
+      })
+      const d = await buildDaemon(dir, fc, transport)
+      await d.load()
+
+      await new CommandBus(dir).submit({ kind: 'goal', goal: 'review in sealed worktree' })
+      await d.tick()
+      await writeFile(join(dir, 'app.txt'), 'v2 by the developer\n')
+      await d.tick()
+      fc.advance(26_000)
+      await d.tick()
+
+      const hash = d.state.diff.hash!
+      const id = buildSignal('reviewer', 1, hash, '', '').id
+      expect(await waitFor(() => existsSync(ackPath(betweenPaths(dir), id)))).toBe(true)
+
+      const reviewerCwd = await readFile(join(dir, '.between', 'reviewer-cwd.txt'), 'utf8')
+      const expectedWorktree = join(dir, '.between', 'worktrees', REVIEWER_WORKTREE)
+      expect(reviewerCwd).toBe(expectedWorktree)
+      const env = JSON.parse(await readFile(join(dir, '.between', 'reviewer-env.json'), 'utf8'))
+      expect(env).toMatchObject({
+        BETWEEN_SANDBOX_ROLE: 'reviewer',
+        BETWEEN_NETWORK_DISABLED: '1',
+        GIT_TERMINAL_PROMPT: '0',
+        BETWEEN_REVIEW_WORKTREE: expectedWorktree,
+      })
     },
     INTEGRATION_TIMEOUT_MS,
   )

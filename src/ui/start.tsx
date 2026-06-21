@@ -56,7 +56,6 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
           cwd,
         })
         await developer.start()
-        await reviewer.start()
         hosts = { developer, reviewer }
         transport = new PtyTransport(absRoot, { hosts })
       } catch (e) {

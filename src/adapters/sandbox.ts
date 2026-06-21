@@ -18,9 +18,11 @@ export function buildSandboxedAgentEnv(
   role: SandboxRole,
   root: string,
   baseEnv: Record<string, string | undefined> = process.env,
+  extra: Record<string, string | undefined> = {},
 ): AgentSandboxEnv {
   return buildAgentSandboxEnv(
     {
+      ...extra,
       BETWEEN_ROOT: root,
       BETWEEN_SANDBOX_ROLE: role,
       BETWEEN_NETWORK_DISABLED: '1',
