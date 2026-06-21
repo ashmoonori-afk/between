@@ -13,7 +13,7 @@ import { StateRepository } from '../../src/adapters/state-repository'
 import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { signApproval, approvalExpiry } from '../../src/core/approval'
-import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/approval-secret'
 import { readBundle } from '../../src/review/store'
 import { collectEvidence } from '../../src/evidence/collect'
 import {
@@ -27,6 +27,7 @@ import type { Ack } from '../../src/core/types'
 
 let dir: string
 const INTEGRATION_TIMEOUT_MS = 90_000
+const priorApprovalSecret = process.env[APPROVAL_SECRET_ENV]
 
 async function git(args: string[]): Promise<void> {
   await execa('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir })
@@ -65,6 +66,7 @@ async function signedApprove(scope: 'merge' | 'deploy' | 'promote_rule'): Promis
 }
 
 beforeEach(async () => {
+  process.env[APPROVAL_SECRET_ENV] = 'loop-human-secret'
   dir = await mkdtemp(join(tmpdir(), 'between-it-'))
   await git(['init', '-b', 'main'])
   await git(['config', 'user.email', 't@example.com'])
@@ -75,6 +77,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  if (priorApprovalSecret === undefined) delete process.env[APPROVAL_SECRET_ENV]
+  else process.env[APPROVAL_SECRET_ENV] = priorApprovalSecret
   try {
     await rm(dir, { recursive: true, force: true })
   } catch {
@@ -87,7 +91,7 @@ describe('headless walking skeleton (M3)', () => {
     'drives edit -> debounce -> review_requested -> ack -> review -> human_gate, and survives restart',
     async () => {
       const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-      await initProject(dir, {}, fc)
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
       const d = await buildDaemon(dir, fc)
       await d.load()
 
@@ -180,7 +184,7 @@ describe('headless walking skeleton (M3)', () => {
       const ev = await collectEvidence(dir, '2026-06-20T00:00:00.000Z')
       expect(ev?.bundle?.bundle_id).toBe(d2.state.diff.bundle_id)
       expect(ev?.approval?.scope).toBe('merge')
-      expect(ev?.verdict).toBe('simulated') // fake-init project -> simulated evidence
+      expect(ev?.verdict).toBe('approved')
 
       // A2: the approval is bound to the exact bundle + carries an expiry
       expect(d2.state.approval?.bundle_id).toBe(d2.state.diff.bundle_id)
@@ -197,7 +201,7 @@ describe('headless walking skeleton (M3)', () => {
     '§15.6: the same diff hash does not trigger a repeated review',
     async () => {
       const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-      await initProject(dir, {}, fc)
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
       const d = await buildDaemon(dir, fc)
       await d.load()
       const bus = new CommandBus(dir)

@@ -13,12 +13,13 @@ import { StateRepository } from '../../src/adapters/state-repository'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { betweenPaths, reviewPath, verifyPath } from '../../src/adapters/paths'
 import { signApproval, approvalExpiry } from '../../src/core/approval'
-import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/approval-secret'
 import { replayStateFromEvents, ReplayError } from '../../src/core/replay'
 import type { Ack, BetweenState } from '../../src/core/types'
 
 let dir: string
 const INTEGRATION_TIMEOUT_MS = 90_000
+const priorApprovalSecret = process.env[APPROVAL_SECRET_ENV]
 
 async function git(args: string[]): Promise<void> {
   await execa('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir })
@@ -93,6 +94,7 @@ async function completedCycle(fc: FakeClock): Promise<BetweenState> {
 }
 
 beforeEach(async () => {
+  process.env[APPROVAL_SECRET_ENV] = 'replay-human-secret'
   dir = await mkdtemp(join(tmpdir(), 'between-replay-'))
   await git(['init', '-b', 'main'])
   await git(['config', 'user.email', 't@example.com'])
@@ -103,6 +105,8 @@ beforeEach(async () => {
 })
 
 afterEach(async () => {
+  if (priorApprovalSecret === undefined) delete process.env[APPROVAL_SECRET_ENV]
+  else process.env[APPROVAL_SECRET_ENV] = priorApprovalSecret
   await rm(dir, { recursive: true, force: true }).catch(() => {})
 })
 

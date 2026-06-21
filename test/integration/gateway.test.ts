@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../src/core/clock'
@@ -10,8 +10,10 @@ import { EchoTransport } from '../../src/gateway/echo-transport'
 import { CommandBus } from '../../src/adapters/command-bus'
 import { StateRepository } from '../../src/adapters/state-repository'
 import { initialState, setPhase } from '../../src/core/state'
+import { APPROVAL_SECRET_ENV } from '../../src/adapters/approval-secret'
 
 let dir: string
+const priorApprovalSecret = process.env[APPROVAL_SECRET_ENV]
 
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'between-gw-'))
@@ -19,6 +21,8 @@ beforeEach(async () => {
   await initProject(dir, {}, new FakeClock(0))
 })
 afterEach(async () => {
+  if (priorApprovalSecret === undefined) delete process.env[APPROVAL_SECRET_ENV]
+  else process.env[APPROVAL_SECRET_ENV] = priorApprovalSecret
   try {
     await rm(dir, { recursive: true, force: true })
   } catch {
@@ -31,6 +35,15 @@ async function freshSession() {
   const gw = new GatewaySession(dir, echo)
   await gw.start()
   return { echo, gw }
+}
+
+async function allowGatewayApprover(chatId: string): Promise<void> {
+  const path = join(dir, '.between', 'config.yaml')
+  const config = await readFile(path, 'utf8')
+  await writeFile(
+    path,
+    config.replace('gateway_approval_chat_ids: []', `gateway_approval_chat_ids: ["${chatId}"]`),
+  )
 }
 
 describe('gateway core (Phase 2)', () => {
@@ -49,7 +62,16 @@ describe('gateway core (Phase 2)', () => {
     ).toBe(true)
   })
 
-  it('signs an approval from chat with the human session secret (P1-5)', async () => {
+  it('rejects chat approvals unless the chat id is allowlisted', async () => {
+    const { echo } = await freshSession()
+    await echo.inject('c1', 'approve merge')
+    expect(echo.lastSent()).toContain('not allowed')
+    expect(await new CommandBus(dir).drain()).toHaveLength(0)
+  })
+
+  it('signs an allowlisted approval from chat with the human session secret (P1-5)', async () => {
+    process.env[APPROVAL_SECRET_ENV] = 'gateway-human-secret'
+    await allowGatewayApprover('c1')
     const { echo } = await freshSession()
     await echo.inject('c1', 'approve merge')
     expect(echo.lastSent()).toContain('signed')

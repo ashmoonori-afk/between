@@ -284,9 +284,9 @@ Source map:
 `.between/` is a **cooperative local protocol, not a full security boundary.** Any
 local process that can write `.between/` can forge ack/review/verify files — the
 review _workflow_ is a convention. But the **approval** step now has teeth (P1-5):
-`between approve` is **HMAC-signed** with a secret kept **outside** `.between/` (env
-`BETWEEN_APPROVAL_SECRET` or `.git/between-approval.key`, stripped from spawned-agent
-env), and `between init` installs a **pre-push hook** (`between verify-push`) that
+`between approve` is **HMAC-signed** with the human-owned env secret
+`BETWEEN_APPROVAL_SECRET` (stripped from spawned-agent env), and `between init`
+installs a **pre-push hook** (`between verify-push`) that
 blocks a push whose recorded approval fails signature verification. An agent that can
 only write `.between/` cannot forge an approval the daemon or the hook will accept.
 Still: don't run Between with untrusted agents where an unapproved merge/deploy would
@@ -299,14 +299,15 @@ be harmful.
 ```bash
 npm run typecheck     # tsc --noEmit (strict)
 npm run lint          # prettier --check
-npm test              # vitest: 145 tests / 29 files
-npm run test:cov      # ≥80% gate on src/core (~95% lines)
+npm test              # vitest: 314 tests / 62 files
 npm run build         # tsup → dist/cli.js (target node22)
+npm run test:vscode   # extension unit + VS Code host smoke tests
+npm audit --omit=dev  # production dependency audit
 ```
 
-CI runs the full gate on a **GitHub Actions matrix** (ubuntu + windows × Node
+CI runs the full gate on a **GitHub Actions matrix** (ubuntu + windows x Node
 22/24), plus a non-blocking `node-pty` prebuilt probe. Production `npm audit` is
-clean; a single low-severity **dev-only** esbuild advisory remains.
+clean.
 
 ---
 
@@ -330,9 +331,9 @@ clean; a single low-severity **dev-only** esbuild advisory remains.
 Between is **alpha**. The file-signal headless loop is the verified baseline;
 embedding (one-shot + PTY) and real-CLI wiring are additive and improving.
 
-**Tracked next:** Obsidian project-file scaffolding · detective merge/deploy checks
-· a stronger-than-cooperative approval boundary · smoke-testing real claude/codex
-wrappers on target machines · deeper interactive-embed visual QA.
+**Tracked next:** Obsidian project-file scaffolding, detective merge/deploy checks,
+smoke-testing real claude/codex wrappers on target machines, and deeper
+interactive-embed visual QA.
 
 ---
 

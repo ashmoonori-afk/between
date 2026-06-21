@@ -1,45 +1,37 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, chmodSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const MARKER = 'between-verify-push'
 
-/**
- * A standalone, stdlib-only verifier dropped into `.git/`. It blocks a push when a recorded
- * approval fails signature verification (forged `state.json`) or when a human gate is pending
- * without approval (P1-5). It needs no Between install — only Node + the approval secret
- * (`BETWEEN_APPROVAL_SECRET` env or the `.git/between-approval.key`).
- */
-const VERIFY_PUSH_SCRIPT = `import { readFileSync, existsSync } from 'node:fs'
+const VERIFY_PUSH_SCRIPT = `import { readFileSync } from 'node:fs'
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import { join } from 'node:path'
 
 const root = process.cwd()
 function rd(p) { try { return readFileSync(join(root, p), 'utf8') } catch { return null } }
 const raw = rd('.between/state.json')
-if (!raw) process.exit(0) // not a Between target -> never block
+if (!raw) process.exit(0)
 let state
 try { state = JSON.parse(raw) } catch { process.exit(0) }
 
-// A5: a SIMULATION (fake-agent) project's "reviews" are not real verification -> never push.
-if (state.evidence_trust === 'simulated') {
-  process.stderr.write('between: refusing push — SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.\\n')
+const configRaw = rd('.between/config.yaml') || ''
+const configUsesFakeAgent = /(?:^|\\s|[\\\\/])fake-agent\\.mjs(?:\\s|$)/.test(configRaw)
+if (state.evidence_trust === 'simulated' || configUsesFakeAgent) {
+  process.stderr.write('between: refusing push -- SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.\\n')
   process.exit(1)
 }
 
-const keyFile = join(root, '.git', 'between-approval.key')
-const secret = process.env.BETWEEN_APPROVAL_SECRET || (existsSync(keyFile) ? readFileSync(keyFile, 'utf8').trim() : '')
+const secret = process.env.BETWEEN_APPROVAL_SECRET || ''
 const ap = state.approval
 const phase = state.workflow && state.workflow.phase
 
-// F2: only a MERGE approval authorizes a push — deploy/promote_rule are separate gates.
 if (ap && ap.scope !== 'merge') {
-  process.stderr.write('between: refusing push — only a merge approval authorizes a push (got ' + ap.scope + ').\\n')
+  process.stderr.write('between: refusing push -- only a merge approval authorizes a push (got ' + ap.scope + ').\\n')
   process.exit(1)
 }
 
 function valid(a) {
   if (!secret || !a || !a.sig) return false
-  // F1: verify the FULL signed claim (scope, diff_hash, cycle, bundle_id, expires_at).
   const payload = a.scope + ':' + (a.diff_hash || '') + ':' + a.cycle + ':' + (a.bundle_id || '') + ':' + a.expires_at
   const expected = createHmac('sha256', secret).update(payload).digest('hex')
   if (a.sig.length !== expected.length) return false
@@ -47,11 +39,9 @@ function valid(a) {
 }
 
 if (ap && !valid(ap)) {
-  process.stderr.write('between: refusing push — recorded approval failed signature verification.\\n')
+  process.stderr.write('between: refusing push -- recorded approval failed signature verification.\\n')
   process.exit(1)
 }
-// A2: a valid signature is necessary but not sufficient — the approval must still match the
-// current diff/cycle/bundle and not be expired, or a stale approval could push new content.
 if (ap && valid(ap)) {
   const d = state.diff || {}
   const wf = state.workflow || {}
@@ -61,12 +51,12 @@ if (ap && valid(ap)) {
   else if (ap.bundle_id !== (d.bundle_id ?? null)) stale = 'review bundle changed'
   else if (!(Date.parse(ap.expires_at) > Date.now())) stale = 'approval expired'
   if (stale) {
-    process.stderr.write('between: refusing push — approval no longer valid (' + stale + '). Re-approve the current diff.\\n')
+    process.stderr.write('between: refusing push -- approval no longer valid (' + stale + '). Re-approve the current diff.\\n')
     process.exit(1)
   }
 }
 if (!ap && phase === 'human_gate') {
-  process.stderr.write('between: refusing push — human approval is pending (run: between approve merge).\\n')
+  process.stderr.write('between: refusing push -- human approval is pending (run: between approve merge).\\n')
   process.exit(1)
 }
 process.exit(0)
@@ -77,10 +67,6 @@ const HOOK = `#!/bin/sh
 exec node "$(git rev-parse --git-dir)/${MARKER}.mjs"
 `
 
-/**
- * Install the pre-push approval gate. Returns the hook path if written, null if skipped
- * (no `.git/hooks`, or a non-Between pre-push hook already exists — we never clobber it).
- */
 export function installPrePushHook(root: string): string | null {
   const gitDir = join(root, '.git')
   const hooksDir = join(gitDir, 'hooks')
@@ -91,13 +77,13 @@ export function installPrePushHook(root: string): string | null {
     const hookPath = join(hooksDir, 'pre-push')
     if (existsSync(hookPath)) {
       const cur = readFileSync(hookPath, 'utf8')
-      if (!cur.includes(MARKER)) return null // respect a user's existing hook
+      if (!cur.includes(MARKER)) return null
     }
     writeFileSync(hookPath, HOOK, 'utf8')
     try {
       chmodSync(hookPath, 0o755)
     } catch {
-      // exec bit is irrelevant on Windows (git runs hooks via sh)
+      return hookPath
     }
     return hookPath
   } catch {

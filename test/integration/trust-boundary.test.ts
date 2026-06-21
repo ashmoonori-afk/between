@@ -13,10 +13,11 @@ import { StateRepository } from '../../src/adapters/state-repository'
 import { buildSignal } from '../../src/adapters/signal-transport'
 import { reviewPath, verifyPath, betweenPaths } from '../../src/adapters/paths'
 import { signApproval, approvalExpiry } from '../../src/core/approval'
-import { resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/approval-secret'
 
 let dir: string
 const INTEGRATION_TIMEOUT_MS = 90_000
+const priorApprovalSecret = process.env[APPROVAL_SECRET_ENV]
 
 async function git(args: string[]): Promise<void> {
   await execa('git', ['-c', 'commit.gpgsign=false', ...args], { cwd: dir })
@@ -60,6 +61,7 @@ async function toHumanGate(
 }
 
 beforeEach(async () => {
+  process.env[APPROVAL_SECRET_ENV] = 'trust-human-secret'
   dir = await mkdtemp(join(tmpdir(), 'between-trust-'))
   await git(['init', '-b', 'main'])
   await git(['config', 'user.email', 't@example.com'])
@@ -69,6 +71,8 @@ beforeEach(async () => {
   await git(['commit', '-m', 'init'])
 })
 afterEach(async () => {
+  if (priorApprovalSecret === undefined) delete process.env[APPROVAL_SECRET_ENV]
+  else process.env[APPROVAL_SECRET_ENV] = priorApprovalSecret
   try {
     await rm(dir, { recursive: true, force: true })
   } catch {
@@ -81,7 +85,7 @@ describe('approval trust boundary (P1-5)', () => {
     'rejects a forged (unsigned / bad-sig) approve and accepts a valid signed one',
     async () => {
       const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-      await initProject(dir, {}, fc) // provisions the .git approval secret
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
       const d = await buildDaemon(dir, fc)
       await d.load()
       const hash = await toHumanGate(d, fc)
@@ -139,7 +143,7 @@ describe('approval trust boundary (P1-5)', () => {
     'refuses a VALID merge approval when a required policy gate fails (#5 lifecycle gate)',
     async () => {
       const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
-      await initProject(dir, {}, fc)
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
       // policy.yaml: secret_scan is required at every risk level (isolated -> no npm-audit spawn).
       await writeFile(
         join(dir, '.between', 'policy.yaml'),
@@ -188,6 +192,52 @@ describe('approval trust boundary (P1-5)', () => {
         (e) => e.event === 'approval_rejected',
       )
       expect(rejects.some((e) => JSON.stringify(e).includes('secret_scan'))).toBe(true)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
+
+  it(
+    'refuses a valid merge approval when current agent config uses the fake agent',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
+      await writeFile(
+        join(dir, '.between', 'config.yaml'),
+        [
+          'schema_version: 1',
+          "developer_command: 'node .between/agents/fake-agent.mjs developer'",
+          "reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'",
+          '',
+        ].join('\n'),
+      )
+      const d = await buildDaemon(dir, fc)
+      await d.load()
+      const hash = await toHumanGate(d, fc)
+      const secret = resolveApprovalSecret(dir)
+      const bundleId = d.state.diff.bundle_id
+      const expiresAt = approvalExpiry(Date.now())
+      const sig = signApproval(secret, {
+        scope: 'merge',
+        diff_hash: hash,
+        cycle: 1,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
+      await new CommandBus(dir).submit({
+        kind: 'approve',
+        scope: 'merge',
+        sig,
+        bundle_id: bundleId,
+        expires_at: expiresAt,
+      })
+      await d.tick()
+
+      expect(d.state.workflow.phase).toBe('human_gate')
+      expect(d.state.approval).toBeNull()
+      const rejects = (await new EventsLog(dir).read()).filter(
+        (e) => e.event === 'approval_rejected',
+      )
+      expect(rejects.some((e) => JSON.stringify(e).includes('simulated evidence'))).toBe(true)
     },
     INTEGRATION_TIMEOUT_MS,
   )

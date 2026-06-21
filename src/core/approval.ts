@@ -12,8 +12,8 @@ export const APPROVAL_TTL_SECONDS = 3600
  * Signed human approval (trust boundary, P1-5). The cooperative `.between/` protocol lets
  * any local writer drop an `approve` command — so the broker only honors an approval whose
  * HMAC signature, over (scope, diff_hash, cycle), verifies against a secret that lives
- * OUTSIDE the agents' `.between/` write surface (an env var, or a `.git/` key). An agent
- * without the secret cannot forge a valid signature, so it cannot pass `human_gate`.
+ * OUTSIDE the agents' `.between/` write surface (`BETWEEN_APPROVAL_SECRET`). An agent
+ * without the env secret cannot forge a valid signature, so it cannot pass `human_gate`.
  *
  * The claim binds an approval to a SPECIFIC diff hash + cycle, so a captured signature can't
  * be replayed against a different review object.

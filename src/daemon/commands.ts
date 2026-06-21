@@ -7,6 +7,7 @@ import type { ApprovalScope } from '../core/types'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
+import { usesSimulatedEvidence } from '../core/evidence-trust'
 import type { DaemonContext } from './context'
 import { currentDiff, openCycleAndSignal } from './phases'
 import { readReview } from './records'
@@ -130,6 +131,12 @@ export async function approve(
   // F1: bundle_id + expires_at are part of the SIGNED claim — use the approver's values (what was
   // signed) so the daemon verifies and stores exactly what the human authorized; fall back only on
   // the unsigned path. A state writer without the secret can't forge a sig over a tampered binding.
+  if (scope === 'merge' && usesSimulatedEvidence(cur.evidence_trust, ctx.deps.config)) {
+    await ctx.emit('approval_rejected', {
+      detail: { scope, reason: 'simulated evidence cannot be approved for merge' },
+    })
+    return
+  }
   const bundle_id = bundleId ?? cur.diff.bundle_id
   const expires_at = expiresAt ?? approvalExpiry(ctx.deps.clock.now())
   const claim = {

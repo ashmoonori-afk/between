@@ -5,6 +5,7 @@ import { signApproval, approvalExpiry } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import type { ApprovalScope, Phase } from '../core/types'
 import type { ChatMessage, ChatTransport } from './transport'
+import { loadConfig } from '../runtime'
 
 const HELP = [
   'Between gateway — commands:',
@@ -46,11 +47,11 @@ export class GatewaySession {
 
   private async onMessage(msg: ChatMessage): Promise<void> {
     this.lastChatId = msg.chatId
-    const reply = await this.handle(msg.text.trim())
+    const reply = await this.handle(msg.text.trim(), msg.chatId)
     await this.transport.send(msg.chatId, reply)
   }
 
-  async handle(text: string): Promise<string> {
+  async handle(text: string, chatId = ''): Promise<string> {
     const sp = text.indexOf(' ')
     const cmd = (sp === -1 ? text : text.slice(0, sp)).toLowerCase()
     const arg = sp === -1 ? '' : text.slice(sp + 1).trim()
@@ -78,16 +79,20 @@ export class GatewaySession {
         await this.bus.submit({ kind: 'stop' })
         return 'stopping the broker'
       case 'approve':
-        return this.approve(arg)
+        return this.approve(arg, chatId)
       default:
         return `unknown command "${cmd}". ${HELP}`
     }
   }
 
-  private async approve(scopeArg: string): Promise<string> {
+  private async approve(scopeArg: string, chatId: string): Promise<string> {
     const scope = scopeArg.trim() as ApprovalScope
     if (!APPROVAL_SCOPES.includes(scope)) {
       return `usage: approve <${APPROVAL_SCOPES.join('|')}>`
+    }
+    const config = await loadConfig(this.root)
+    if (!chatId || !config.gateway_approval_chat_ids.includes(chatId)) {
+      return 'approval rejected: chat id is not allowed to approve'
     }
     const state = await this.repo.read()
     const secret = resolveApprovalSecret(this.root)

@@ -53,6 +53,7 @@ export const ConfigSchema = z
 
     // --- gateway (chat bridge: `between gateway`) ---
     gateway_channel: z.enum(['echo', 'telegram', 'discord']).default('echo'),
+    gateway_approval_chat_ids: z.array(z.string()).default([]),
     telegram_bot_token: z.string().default(''),
     telegram_chat_id: z.string().default(''),
     discord_bot_token: z.string().default(''),
@@ -137,6 +138,7 @@ agent_pane_visible_rows: 10      # visible tail rows per agent pane
 
 # --- gateway (between gateway: chat <-> broker bridge) ---
 gateway_channel: echo            # echo | telegram | discord
+gateway_approval_chat_ids: []     # chat ids allowed to submit approve commands (empty disables chat approvals)
 telegram_bot_token: ''           # @BotFather token (or set BETWEEN_TELEGRAM_TOKEN)
 telegram_chat_id: ''             # chat to notify (optional; learned from first message)
 discord_bot_token: ''            # Discord bot token (or set BETWEEN_DISCORD_TOKEN)

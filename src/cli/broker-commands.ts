@@ -10,6 +10,7 @@ import { signApproval, verifyApproval, approvalFreshness, approvalExpiry } from 
 import { APPROVAL_SCOPES } from '../core/constants'
 import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
 import { loadConfig, runStart } from '../runtime'
+import { usesSimulatedEvidence } from '../core/evidence-trust'
 import { print, printErr, printJson } from './output'
 import { parseInterval } from './args'
 import { fail, root } from './shared'
@@ -158,7 +159,7 @@ export function registerBrokerCommands(program: Command): void {
         print(
           secret
             ? `between: ${scope} approval submitted (signed)`
-            : `between: ${scope} approval submitted (UNSIGNED - set ${APPROVAL_SECRET_ENV} or run \`between init\` to enable the approval boundary)`,
+            : `between: ${scope} approval submitted (UNSIGNED - set ${APPROVAL_SECRET_ENV} to enable the approval boundary)`,
         )
       } catch (e) {
         await fail(e)
@@ -214,7 +215,8 @@ export function registerBrokerCommands(program: Command): void {
       try {
         const state = await new StateRepository(root()).read()
         if (!state) return
-        if (state.evidence_trust === 'simulated') {
+        const cfg = await loadConfig(root()).catch(() => null)
+        if (!cfg || usesSimulatedEvidence(state.evidence_trust, cfg)) {
           printErr(
             'between: refusing push — SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.',
           )

@@ -1,4 +1,5 @@
 import { execa } from 'execa'
+import { tokenizeCommand } from '../adapters/agent-host'
 
 export interface CheckSpec {
   name: string
@@ -75,9 +76,10 @@ export async function runChecks(
  */
 export function shellRunner(cwd: string, timeoutMs?: number): CommandRunner {
   return async (command) => {
-    const r = await execa(command, {
+    const { file, args } = tokenizeCommand(command)
+    if (!file) return { exitCode: 1, stdout: '', stderr: 'empty command' }
+    const r = await execa(file, args, {
       cwd,
-      shell: true,
       reject: false,
       ...(timeoutMs ? { timeout: timeoutMs } : {}),
     })
