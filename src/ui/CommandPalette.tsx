@@ -21,7 +21,7 @@ export function CommandPalette({
       ? `${extraKeys} | esc abort | c palette | r review | p pause/resume | q quit`
       : 'esc abort | c palette | r review | p pause/resume | q quit'
     return (
-      <Text color={COLORS.textFaint} dimColor>
+      <Text color={COLORS.textFaint} dimColor wrap="truncate-end">
         {`${lastMessage ? `${lastMessage} | ` : ''}keys: ${keys}`}
       </Text>
     )

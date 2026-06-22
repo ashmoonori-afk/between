@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { OneShotTransport, PtyTransport } from '../../src/adapters/pty-transport'
-import { PtyAgentHost } from '../../src/adapters/pty-agent-host'
+import { PtyAgentHost, resolvePtyCommand, type PtyModule } from '../../src/adapters/pty-agent-host'
 import { BaseAgentHost, type AgentHostKind, type AgentRole } from '../../src/adapters/agent-host'
 import { FileTransport } from '../../src/adapters/signal-transport'
 import { AckStore } from '../../src/adapters/ack-store'
@@ -41,6 +41,56 @@ class MemoryAgentHost extends BaseAgentHost {
 }
 
 describe('OneShotTransport / PtyTransport pollAck delegation (I7)', () => {
+  it('wraps Windows PTY commands so PATH and cmd shims resolve', () => {
+    const command = resolvePtyCommand(
+      'C:\\repo',
+      'node "C:\\repo with spaces\\agent.mjs"',
+      'win32',
+      'C:\\Windows\\System32\\cmd.exe',
+    )
+
+    expect(command).toEqual({
+      file: 'C:\\Windows\\System32\\cmd.exe',
+      args: ['/d', '/c', 'node', 'C:\\repo with spaces\\agent.mjs'],
+    })
+  })
+
+  it('keeps non-Windows PTY commands direct', () => {
+    expect(resolvePtyCommand('/repo', 'codex --help', 'linux')).toEqual({
+      file: 'codex',
+      args: ['--help'],
+    })
+  })
+
+  it('uses the latest resize when a PTY host starts after layout measurement', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'between-pty-resize-'))
+    const spawns: Array<{ cols?: number; rows?: number }> = []
+    const fakePty: PtyModule = {
+      spawn(_file, _args, opts) {
+        spawns.push({ cols: opts.cols, rows: opts.rows })
+        return {
+          onData() {},
+          onExit() {},
+          write() {},
+          resize() {},
+          kill() {},
+        }
+      },
+    }
+    const host = new PtyAgentHost('developer', 10, {
+      command: 'node -e ""',
+      root: dir,
+      cwd: dir,
+      loadPty: async () => fakePty,
+    })
+
+    host.resize(42, 7)
+    await host.start()
+
+    expect(spawns).toEqual([{ cols: 42, rows: 7 }])
+    await host.stop()
+  })
+
   it('returns exactly what FileTransport returns for the same ack file', async () => {
     dir = await mkdtemp(join(tmpdir(), 'between-tx-'))
     await mkdir(betweenPaths(dir).acks, { recursive: true })

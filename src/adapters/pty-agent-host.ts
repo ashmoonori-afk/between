@@ -2,14 +2,14 @@ import { BaseAgentHost, tokenizeCommand, type AgentHostKind, type AgentRole } fr
 import { prepareAgentExecution, resolveAgentCommandPaths } from './agent-execution'
 
 /** Minimal structural type for the (optional) node-pty module — we ship no @types for it. */
-interface IPtyLike {
+export interface IPtyLike {
   onData(cb: (data: string) => void): void
   onExit(cb: (e: { exitCode: number; signal?: number }) => void): void
   write(data: string): void
   resize(cols: number, rows: number): void
   kill(signal?: string): void
 }
-interface PtyModule {
+export interface PtyModule {
   spawn(
     file: string,
     args: string[],
@@ -55,6 +55,7 @@ export interface PtyAgentOptions {
   cwd: string
   cols?: number
   rows?: number
+  loadPty?: () => Promise<PtyModule>
 }
 
 /**
@@ -65,6 +66,8 @@ export interface PtyAgentOptions {
 export class PtyAgentHost extends BaseAgentHost {
   readonly kind: AgentHostKind = 'pty'
   private proc: IPtyLike | null = null
+  private cols: number
+  private rows: number
 
   constructor(
     role: AgentRole,
@@ -72,15 +75,14 @@ export class PtyAgentHost extends BaseAgentHost {
     private readonly opts: PtyAgentOptions,
   ) {
     super(role, scrollback)
+    this.cols = opts.cols ?? 80
+    this.rows = opts.rows ?? 24
   }
 
   async start(): Promise<void> {
     if (this.proc) await this.stop()
-    const pty = await loadPty()
-    const { file, args } = resolveAgentCommandPaths(
-      this.opts.root,
-      tokenizeCommand(this.opts.command),
-    )
+    const pty = await (this.opts.loadPty ?? loadPty)()
+    const { file, args } = resolvePtyCommand(this.opts.root, this.opts.command)
     const launch = await prepareAgentExecution(this.opts.root, this.role, this.opts.cwd, {
       FORCE_COLOR: '1',
     })
@@ -89,8 +91,8 @@ export class PtyAgentHost extends BaseAgentHost {
       this.feed(`[between] reviewer worktree ${launch.reviewerWorktree}\n`)
     const proc = pty.spawn(file, args, {
       name: 'xterm-color',
-      cols: this.opts.cols ?? 80,
-      rows: this.opts.rows ?? 24,
+      cols: this.cols,
+      rows: this.rows,
       cwd: launch.cwd,
       env: launch.env,
     })
@@ -109,6 +111,8 @@ export class PtyAgentHost extends BaseAgentHost {
   }
 
   resize(cols: number, rows: number): void {
+    this.cols = cols
+    this.rows = rows
     try {
       this.proc?.resize(cols, rows)
     } catch {
@@ -125,5 +129,20 @@ export class PtyAgentHost extends BaseAgentHost {
     }
     if (this.proc === proc) this.proc = null
     if (this.alive) this.markExit(null)
+  }
+}
+
+export function resolvePtyCommand(
+  root: string,
+  command: string,
+  platform: NodeJS.Platform = process.platform,
+  comspec = process.env.ComSpec,
+): { file: string; args: string[] } {
+  const resolved = resolveAgentCommandPaths(root, tokenizeCommand(command))
+  if (platform !== 'win32') return resolved
+
+  return {
+    file: comspec && comspec.trim().length > 0 ? comspec : 'cmd.exe',
+    args: ['/d', '/c', resolved.file, ...resolved.args],
   }
 }

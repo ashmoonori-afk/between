@@ -1,13 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Box, Text, useApp, useInput, useFocusManager } from 'ink'
+import { Box, Text, useApp, useInput, useFocusManager, useWindowSize } from 'ink'
 import { AgentPane } from './AgentPane'
+import { EmbeddedBrokerPane } from './EmbeddedBrokerPane'
 import { StateRepository } from '../adapters/state-repository'
 import { EventsLog } from '../adapters/events-log'
 import { SystemClock } from '../core/clock'
-import { COLORS, GLYPH, phaseStyle } from './theme'
+import { COLORS, phaseStyle } from './theme'
 import type { BetweenEvent, BetweenState } from '../core/types'
 import type { AgentHost } from '../adapters/agent-host'
 import { CommandPalette } from './CommandPalette'
+import { computeEmbeddedLayout } from './embedded-layout'
 import {
   buildDashboardCommandItems,
   clampCommandIndex,
@@ -70,7 +72,9 @@ export function EmbeddedDashboard({
   const [selectedCommandIndex, setSelectedCommandIndex] = useState(0)
   const [lastCommandMessage, setLastCommandMessage] = useState<string | null>(null)
   const { exit } = useApp()
-  const { focusNext } = useFocusManager()
+  const { focusNext, focus, activeId } = useFocusManager()
+  const terminal = useWindowSize()
+  const layout = computeEmbeddedLayout(terminal, paneRows)
   const commandItems = state ? buildDashboardCommandItems(state) : []
   const commandSignature = commandItems
     .map((item) => `${item.id}:${item.enabled ? '1' : '0'}`)
@@ -79,6 +83,21 @@ export function EmbeddedDashboard({
   useEffect(() => {
     setSelectedCommandIndex((index) => clampCommandIndex(commandItems, index))
   }, [commandSignature])
+
+  useEffect(() => {
+    if (activeId || !hosts) return
+    if (hosts.developer.kind === 'pty') {
+      focus('developer')
+      return
+    }
+    if (hosts.reviewer.kind === 'pty') focus('reviewer')
+  }, [activeId, focus, hosts])
+
+  useEffect(() => {
+    if (!hosts) return
+    hosts.developer.resize(layout.agentWidth, layout.agentHeight)
+    hosts.reviewer.resize(layout.agentWidth, layout.agentHeight)
+  }, [hosts, layout.agentWidth, layout.agentHeight])
 
   const queueCommand = useCallback(
     (item: DashboardCommandItem) => {
@@ -97,11 +116,12 @@ export function EmbeddedDashboard({
   )
 
   useInput((input, key) => {
-    if (input === 'q') {
-      exit()
+    if (!state) {
+      if (input === 'q' || (key.ctrl && input === 'q')) exit()
       return
     }
-    if (!state) return
+
+    const agentFocused = activeId === 'developer' || activeId === 'reviewer'
 
     if (paletteOpen) {
       if (key.escape || input === 'c') {
@@ -126,6 +146,24 @@ export function EmbeddedDashboard({
       return
     }
 
+    if (agentFocused) {
+      if (key.tab) {
+        focusNext()
+        return
+      }
+      if (key.escape) {
+        const item = commandItemForKey(commandItems, 'escape')
+        if (item) queueCommand(item)
+        return
+      }
+      if (key.ctrl && input === 'q') exit()
+      return
+    }
+
+    if (input === 'q') {
+      exit()
+      return
+    }
     if (key.tab) {
       focusNext()
       return
@@ -148,57 +186,38 @@ export function EmbeddedDashboard({
     return <Text>between: no state - run `between init`</Text>
   }
 
-  const wf = state.workflow
-  const ps = phaseStyle(wf.phase)
-  const recent = events.slice(-4)
-
   return (
-    <Box flexDirection="column">
-      {/* compact broker strip */}
-      <Box flexDirection="column" borderStyle="round" borderColor={COLORS.focusRing} paddingX={1}>
-        <Box justifyContent="space-between">
-          <Text>
-            <Text color={COLORS.accent} bold>
-              {`${GLYPH.brand} BETWEEN`}
-            </Text>
-            <Text color={COLORS.textMuted}>{`  ${state.project.name}`}</Text>
-          </Text>
-          <Text>
-            <Text color={ps.color} bold>
-              {`${ps.glyph} ${ps.label}`}
-            </Text>
-            <Text color={COLORS.textFaint} dimColor>
-              {`  cycle ${wf.cycle} | wait ${wf.waiting_on ?? '-'} | ${now.slice(11, 19)}`}
-            </Text>
-          </Text>
-        </Box>
-        {recent.map((e, i) => (
-          <Text key={`${e.ts}-${i}`} color={COLORS.textFaint} dimColor>
-            {`${GLYPH.bar} ${e.ts.slice(11, 19)} ${e.event}`}
-          </Text>
-        ))}
-        {wf.error ? (
-          <Text color={COLORS.error}>{`${GLYPH.flag} ${wf.error.code}: ${wf.error.message}`}</Text>
-        ) : null}
-      </Box>
+    <Box flexDirection="column" width={layout.width}>
+      <EmbeddedBrokerPane
+        state={state}
+        events={events}
+        now={now}
+        width={layout.width}
+        height={layout.brokerHeight}
+      />
 
-      {/* live agent panes */}
-      <Box flexDirection="row">
+      <Box flexDirection={layout.agentDirection} width={layout.width}>
         <AgentPane
           host={hosts?.developer ?? null}
           title="DEVELOPER"
-          glyph={GLYPH.dev}
+          glyph="D"
           accent={phaseStyle('developing').color}
-          rows={paneRows}
+          rows={layout.agentRows}
           focusId="developer"
+          width={layout.agentWidth}
+          height={layout.agentHeight}
+          inputActive={activeId === 'developer'}
         />
         <AgentPane
           host={hosts?.reviewer ?? null}
           title="REVIEWER"
-          glyph={GLYPH.reviewer}
+          glyph="R"
           accent={phaseStyle('reviewing').color}
-          rows={paneRows}
+          rows={layout.agentRows}
           focusId="reviewer"
+          width={layout.agentWidth}
+          height={layout.agentHeight}
+          inputActive={activeId === 'reviewer'}
         />
       </Box>
 
@@ -207,8 +226,8 @@ export function EmbeddedDashboard({
         selectedIndex={selectedCommandIndex}
         lastMessage={lastCommandMessage}
         items={commandItems}
-        width={76}
-        extraKeys="tab focus pane"
+        width={layout.width}
+        extraKeys="tab pane | type in pty"
       />
     </Box>
   )
