@@ -50,6 +50,23 @@ export const ConfigSchema = z
     agent_cwd: z.string().default(''), // '' resolves to the project root
     agent_pane_scrollback: z.number().int().positive().default(2000),
     agent_pane_visible_rows: z.number().int().positive().default(10),
+    builder_agent_count: z.number().int().min(1).max(16).default(1),
+    reviewer_agent_count: z.number().int().min(1).max(16).default(1),
+    ide_cli_rules_mode: z.enum(['project_only', 'inherit_global']).default('project_only'),
+    ide_cli_profile_dir: z
+      .string()
+      .refine(isProjectLocalIdeProfileDir, {
+        message: 'must be a relative path under .between/ide-profile',
+      })
+      .default('.between/ide-profile'),
+    ide_permission_mode: z.enum(['read_only', 'guard', 'full_access']).default('guard'),
+    ide_working_folder: z
+      .string()
+      .refine(isProjectLocalWorkingFolder, {
+        message: 'must be a project-local relative path',
+      })
+      .default('.'),
+    ide_followup_mode: z.enum(['steer', 'queue']).default('steer'),
 
     // --- gateway (chat bridge: `between gateway`) ---
     gateway_channel: z.enum(['echo', 'telegram', 'discord']).default('echo'),
@@ -135,6 +152,13 @@ reviewer_command: 'node .between/agents/fake-agent.mjs reviewer'
 agent_cwd: ''                    # '' = project root
 agent_pane_scrollback: 2000      # lines retained per agent pane
 agent_pane_visible_rows: 10      # visible tail rows per agent pane
+builder_agent_count: 1           # Builder panes/tasks shown in the IDE topology
+reviewer_agent_count: 1          # Reviewer panes/tasks shown in the IDE topology
+ide_cli_rules_mode: project_only # project_only bypasses global agent rules for IDE CLI only
+ide_cli_profile_dir: .between/ide-profile # local CLI profile root for IDE-launched agents
+ide_permission_mode: guard       # read_only | guard | full_access, IDE-local intent only
+ide_working_folder: .            # project-local folder hint for IDE-launched agents
+ide_followup_mode: steer         # steer | queue, follow-up intent for IDE broker input
 
 # --- gateway (between gateway: chat <-> broker bridge) ---
 gateway_channel: echo            # echo | telegram | discord
@@ -146,4 +170,18 @@ discord_channel_id: ''           # channel to notify (required for discord_mode:
 discord_mode: gateway            # gateway (realtime WS, needs MESSAGE_CONTENT intent) | poll (REST, no privileged intent)
 discord_poll_interval_ms: 4000   # poll cadence when discord_mode: poll
 `
+}
+
+function isProjectLocalIdeProfileDir(value: string): boolean {
+  const normalized = value.replaceAll('\\', '/')
+  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) return false
+  if (normalized.split('/').includes('..')) return false
+  return normalized === '.between/ide-profile' || normalized.startsWith('.between/ide-profile/')
+}
+
+function isProjectLocalWorkingFolder(value: string): boolean {
+  const normalized = value.replaceAll('\\', '/')
+  if (!normalized || normalized.startsWith('/') || /^[A-Za-z]:/.test(normalized)) return false
+  if (normalized.split('/').includes('..')) return false
+  return true
 }

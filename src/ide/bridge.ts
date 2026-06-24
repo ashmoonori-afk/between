@@ -1,9 +1,13 @@
 import { existsSync } from 'node:fs'
 import { betweenPaths } from '../adapters/paths'
 import { CommandBus } from '../adapters/command-bus'
+import { StateRepository } from '../adapters/state-repository'
 import type { Finding } from '../core/types'
 import { collectEvidence } from '../evidence/collect'
 import { collectCockpitData } from '../ui/cockpit'
+import { parseBrokerInput } from '../ui/broker-input'
+import { loadConfig } from '../runtime'
+import { buildIdeProfile, type IdeProfile } from './profile'
 
 export interface IdeWorkspaceView {
   project: string
@@ -14,11 +18,13 @@ export interface IdeWorkspaceView {
   findings: Finding[]
   evidenceVerdict: string
   canApprove: boolean
+  ideProfile: IdeProfile
 }
 
 export type IdeAction =
   | { kind: 'request_second_review' }
   | { kind: 'ask_developer_to_fix'; message: string }
+  | { kind: 'broker_input'; message: string }
 
 export class IdeBridgeError extends Error {
   constructor(message: string) {
@@ -34,6 +40,7 @@ export async function readIdeWorkspace(root: string, nowIso: string): Promise<Id
     collectEvidence(root, nowIso),
   ])
   if (!cockpit) throw new IdeBridgeError(`No .between/ found in ${root}`)
+  const cfg = await loadConfig(root)
   return {
     project: cockpit.project,
     phase: cockpit.phase,
@@ -43,6 +50,7 @@ export async function readIdeWorkspace(root: string, nowIso: string): Promise<Id
     findings: evidence?.findings.items ?? [],
     evidenceVerdict: cockpit.verdict,
     canApprove: cockpit.evidenceTrust === 'real' && Boolean(cockpit.bundleId),
+    ideProfile: buildIdeProfile(cfg),
   }
 }
 
@@ -56,7 +64,21 @@ export async function submitIdeAction(root: string, action: IdeAction): Promise<
     case 'ask_developer_to_fix':
       await bus.submit({ kind: 'goal', goal: action.message })
       return
+    case 'broker_input':
+      await submitBrokerInput(root, bus, action.message)
+      return
   }
+}
+
+async function submitBrokerInput(root: string, bus: CommandBus, message: string): Promise<void> {
+  const state = await new StateRepository(root).read()
+  if (!state) throw new IdeBridgeError(`No readable state.json found in ${root}`)
+  const parsed = parseBrokerInput(message, state)
+  if (parsed.kind === 'submit') {
+    await bus.submit(parsed.command)
+    return
+  }
+  throw new IdeBridgeError(parsed.kind === 'noop' ? parsed.message : 'IDE bridge cannot quit')
 }
 
 function ensureBetweenWorkspace(root: string): void {

@@ -3,15 +3,11 @@ import { existsSync } from 'node:fs'
 import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { buildFindingModel } from './finding-model.js'
+import { BetweenWorkspaceError } from './workspace-errors.js'
+import { configureTopology, readIdeProfile } from './workspace-topology.js'
 
 export const APPROVAL_TTL_MS = 3_600_000
-
-export class BetweenWorkspaceError extends Error {
-  constructor(message) {
-    super(message)
-    this.name = 'BetweenWorkspaceError'
-  }
-}
+export { BetweenWorkspaceError } from './workspace-errors.js'
 
 export function findWorkspaceRoot(vscodeApi) {
   return vscodeApi.workspace.workspaceFolders?.[0]?.uri.fsPath ?? process.cwd()
@@ -19,6 +15,7 @@ export function findWorkspaceRoot(vscodeApi) {
 
 export async function readBetweenWorkspace(root, nowIso = new Date().toISOString()) {
   const state = await readJson(requiredPath(root, '.between', 'state.json'))
+  const ideProfile = await readIdeProfile(root)
   const cycle = Number(state.workflow?.cycle ?? 0)
   const diffHash = state.diff?.hash ?? null
   const bundleId = state.diff?.bundle_id ?? null
@@ -38,12 +35,18 @@ export async function readBetweenWorkspace(root, nowIso = new Date().toISOString
     diffHash,
     evidenceTrust: state.evidence_trust ?? 'simulated',
     developer: state.developer?.name ?? 'developer',
+    developerStatus: state.developer?.status ?? 'unknown',
     reviewer: state.reviewer?.name ?? 'reviewer',
+    reviewerStatus: state.reviewer?.status ?? 'unknown',
+    waitingOn: state.workflow?.waiting_on ?? null,
+    cyclesThisGoal: Number(state.workflow?.cycles_this_goal ?? 0),
+    changedFiles: Number(state.diff?.changed_files ?? 0),
     approval: state.approval ?? null,
     review,
     bundle,
     evidenceVerdict: deriveEvidenceVerdict(state, findings),
     canApprove: state.evidence_trust === 'real' && sealedBundle,
+    ideProfile,
     model: buildFindingModel({
       diffHash,
       trackedDiff: bundle?.diff?.tracked ?? '',
@@ -88,6 +91,8 @@ export function buildEvidenceMarkdown(view) {
 
 export async function submitBetweenAction(root, action, nowMs = Date.now()) {
   switch (action.kind) {
+    case 'broker_input':
+      return submitBrokerInput(root, action.message)
     case 'request_second_review':
       await writeCommand(root, { kind: 'review_now' })
       return { ok: true }
@@ -96,8 +101,52 @@ export async function submitBetweenAction(root, action, nowMs = Date.now()) {
       return { ok: true }
     case 'approve_exact_bundle':
       return submitApproveExactBundle(root, nowMs)
+    case 'configure_topology':
+      return configureTopology(root, action)
     default:
       throw new BetweenWorkspaceError(`Unsupported action: ${action.kind}`)
+  }
+}
+
+export async function submitBrokerInput(root, message) {
+  const state = await readJson(requiredPath(root, '.between', 'state.json'))
+  const command = buildBrokerInputCommand(state, message)
+  if (!command) return { ok: false, reason: 'empty' }
+  await writeCommand(root, command)
+  return { ok: true, command }
+}
+
+export function buildBrokerInputCommand(state, message) {
+  const text = String(message ?? '').trim()
+  if (!text) return null
+  const normalized = text.startsWith('/') ? text.slice(1).trim() : text
+  const [verb = '', ...rest] = normalized.split(/\s+/)
+  const key = verb.toLowerCase()
+  const arg = rest.join(' ').trim()
+  switch (key) {
+    case 'goal':
+      return arg ? { kind: 'goal', goal: arg } : null
+    case 'steer':
+      return arg ? { kind: 'steer_goal', goal: arg } : null
+    case 'review':
+    case 'review-now':
+      return { kind: 'review_now' }
+    case 'abort':
+    case 'interrupt':
+      return { kind: 'interrupt' }
+    case 'pause':
+      return { kind: 'pause' }
+    case 'resume':
+      return { kind: 'resume' }
+    case 'stop':
+      return { kind: 'stop' }
+    case 'quit':
+    case 'q':
+      return null
+    default:
+      return isFreshGoalPhase(state.workflow?.phase)
+        ? { kind: 'goal', goal: text }
+        : { kind: 'steer_goal', goal: text }
   }
 }
 
@@ -161,6 +210,10 @@ function deriveEvidenceVerdict(state, findings) {
   if (state.approval?.scope === 'merge') return 'approved'
   if (findings.some((finding) => finding.severity === 'blocking')) return 'blocked'
   return 'pending'
+}
+
+function isFreshGoalPhase(phase) {
+  return phase === 'idle' || phase === 'done'
 }
 
 function isMatchingBundle(bundle, bundleId, diffHash) {

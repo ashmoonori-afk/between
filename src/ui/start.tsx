@@ -1,11 +1,12 @@
-import { resolve } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { render } from 'ink'
 import type { Clock, SignalTransport } from '../core/types'
 import { SystemClock } from '../core/clock'
 import { BrokerLock } from '../adapters/lock'
 import { buildDaemon, loadConfig } from '../runtime'
 import type { Daemon } from '../daemon/loop'
-import { OneShotTransport, PtyTransport } from '../adapters/pty-transport'
+import { OneShotTransport, PtyTransport, RoleSplitTransport } from '../adapters/pty-transport'
 import { PipeAgentHost } from '../adapters/pipe-agent-host'
 import { PtyAgentHost, PtyUnavailableError } from '../adapters/pty-agent-host'
 import type { AgentHost, AgentRole } from '../adapters/agent-host'
@@ -52,16 +53,20 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
           root: absRoot,
           cwd,
         })
-        const reviewer = new PtyAgentHost('reviewer', scrollback, {
-          command: config.reviewer_command,
-          root: absRoot,
-          cwd,
-        })
         await developer.start()
-        hosts = { developer, reviewer }
-        const ptyTransport = new PtyTransport(absRoot, { hosts })
-        transport = ptyTransport
-        agentControl = ptyTransport
+        const reviewerPane = new PipeAgentHost('reviewer', scrollback)
+        reviewerPane.feed('[between] reviewer standby - waiting for broker review bundle\n')
+        hosts = { developer, reviewer: reviewerPane }
+        const ptyTransport = new PtyTransport(absRoot, { hosts: { developer } })
+        const reviewerTransport = new OneShotTransport(absRoot, {
+          developerCommand: config.developer_command,
+          reviewerCommand: reviewerOneShotCommand(absRoot, config.reviewer_command),
+          cwd,
+          hosts: { reviewer: reviewerPane },
+        })
+        const splitTransport = new RoleSplitTransport(ptyTransport, reviewerTransport)
+        transport = splitTransport
+        agentControl = splitTransport
       } catch (e) {
         if (!(e instanceof PtyUnavailableError)) throw e
         print('between: PTY unavailable — falling back to pipe / one-shot')
@@ -113,6 +118,16 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
     }
     await lock.releaseLock()
   }
+}
+
+export function reviewerOneShotCommand(root: string, command: string): string {
+  const trimmed = command.trim()
+  const preset =
+    trimmed === 'codex' ? 'codex-agent.mjs' : trimmed === 'claude' ? 'claude-agent.mjs' : ''
+  if (!preset) return command
+  return existsSync(join(root, '.between', 'agents', preset))
+    ? `node .between/agents/${preset} reviewer`
+    : command
 }
 
 function wirePtyDeaths(hosts: Hosts, daemon: Daemon): Array<() => void> {

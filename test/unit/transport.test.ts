@@ -2,13 +2,20 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { OneShotTransport, PtyTransport } from '../../src/adapters/pty-transport'
+import {
+  OneShotTransport,
+  PtyTransport,
+  RoleSplitTransport,
+} from '../../src/adapters/pty-transport'
 import { PtyAgentHost, resolvePtyCommand, type PtyModule } from '../../src/adapters/pty-agent-host'
 import { BaseAgentHost, type AgentHostKind, type AgentRole } from '../../src/adapters/agent-host'
 import { FileTransport } from '../../src/adapters/signal-transport'
 import { AckStore } from '../../src/adapters/ack-store'
 import { betweenPaths, ackPath } from '../../src/adapters/paths'
 import type { Ack } from '../../src/core/types'
+import { buildSignal } from '../../src/adapters/signal-transport'
+import type { Signal, SignalTransport } from '../../src/core/types'
+import type { AgentControl } from '../../src/adapters/agent-control'
 
 let dir: string
 afterEach(async () => {
@@ -37,6 +44,43 @@ class MemoryAgentHost extends BaseAgentHost {
   async stop(): Promise<void> {
     this.stops += 1
     this.markExit(null)
+  }
+}
+
+class MemoryPtyAgentHost extends MemoryAgentHost {
+  override readonly kind = 'pty' as const
+  starts = 0
+
+  override async start(): Promise<void> {
+    this.starts += 1
+    this.markStart()
+  }
+}
+
+class RecordingTransport implements SignalTransport, AgentControl {
+  readonly kind: string
+  readonly sent: Signal[] = []
+  readonly aborts: string[] = []
+  readonly steers: string[] = []
+
+  constructor(kind: string) {
+    this.kind = kind
+  }
+
+  async send(signal: Signal): Promise<void> {
+    this.sent.push(signal)
+  }
+
+  async pollAck(): Promise<Ack | null> {
+    return null
+  }
+
+  async abortActive(reason: string): Promise<void> {
+    this.aborts.push(reason)
+  }
+
+  async steerActive(goal: string): Promise<void> {
+    this.steers.push(goal)
   }
 }
 
@@ -170,5 +214,40 @@ describe('OneShotTransport / PtyTransport pollAck delegation (I7)', () => {
     expect(
       snap.lines.some((line) => line.includes('[between] abort requested: user_requested')),
     ).toBe(true)
+  })
+
+  it('starts a standby reviewer PTY only when a broker review signal arrives', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'between-reviewer-signal-'))
+    const host = new MemoryPtyAgentHost('reviewer')
+    const transport = new PtyTransport(dir, { hosts: { reviewer: host } })
+
+    expect(host.snapshot().alive).toBe(false)
+    await transport.send(
+      buildSignal('reviewer', 1, 'abcdef0123456789', 'Between signal: review requested.', 'now'),
+    )
+
+    expect(host.starts).toBe(1)
+    expect(host.snapshot().alive).toBe(true)
+    expect(host.delivered).toEqual(['Between signal: review requested.'])
+  })
+
+  it('routes developer signals to PTY and reviewer signals to one-shot transport', async () => {
+    const developer = new RecordingTransport('pty')
+    const reviewer = new RecordingTransport('oneshot')
+    const split = new RoleSplitTransport(developer, reviewer)
+    const devSignal = buildSignal('developer', 1, 'abc', 'dev', 'now')
+    const reviewSignal = buildSignal('reviewer', 1, 'abc', 'review', 'now')
+
+    await split.send(devSignal)
+    await split.send(reviewSignal)
+    await split.abortActive('user_requested')
+    await split.steerActive('new goal')
+
+    expect(developer.sent).toEqual([devSignal])
+    expect(reviewer.sent).toEqual([reviewSignal])
+    expect(developer.aborts).toEqual(['user_requested'])
+    expect(reviewer.aborts).toEqual(['user_requested'])
+    expect(developer.steers).toEqual(['new goal'])
+    expect(reviewer.steers).toEqual(['new goal'])
   })
 })

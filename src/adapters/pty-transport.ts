@@ -151,3 +151,28 @@ export class PtyTransport implements SignalTransport, AgentControl {
     return this.control.steerActive(goal)
   }
 }
+
+export class RoleSplitTransport implements SignalTransport, AgentControl {
+  readonly kind = 'split'
+
+  constructor(
+    private readonly developer: SignalTransport & AgentControl,
+    private readonly reviewer: SignalTransport & AgentControl,
+  ) {}
+
+  send(signal: Signal): Promise<void> {
+    return signal.target === 'reviewer' ? this.reviewer.send(signal) : this.developer.send(signal)
+  }
+
+  pollAck(signalId: string): Promise<Ack | null> {
+    return this.reviewer.pollAck(signalId)
+  }
+
+  async abortActive(reason: string): Promise<void> {
+    await Promise.all([this.developer.abortActive(reason), this.reviewer.abortActive(reason)])
+  }
+
+  async steerActive(goal: string): Promise<void> {
+    await Promise.all([this.developer.steerActive(goal), this.reviewer.steerActive(goal)])
+  }
+}

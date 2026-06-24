@@ -37,6 +37,40 @@ Only the bundled `fake-agent` is verified end-to-end here. The real wrappers are
 
 `between init --agent claude|codex` writes `.between/agents/<cli>-agent.mjs`, feeds the contract prompt plus signal to the CLI, and lets the CLI's own file tools do the writing. Edit `developer_command` and `reviewer_command` in `config.yaml` to point at any compatible command.
 
+## IDE-Local Invocation Profile
+
+`between ide --print-cli <target>` prints the project-local invocation profile for `builder`,
+`reviewer`, or a concrete target such as `builder:2` / `reviewer:1`.
+
+The IDE profile sets:
+
+- `BETWEEN_IDE=1`
+- `BETWEEN_IDE_TARGET=<builder:n|reviewer:n>`
+- `BETWEEN_IDE_RULES=<project_only|inherit_global>`
+- `BETWEEN_IDE_PERMISSION_MODE=<read_only|guard|full_access>`
+- `BETWEEN_IDE_WORKING_FOLDER=<project-local-relative-path>`
+- `BETWEEN_IDE_FOLLOWUP_MODE=<steer|queue>`
+- `BETWEEN_ROOT=<repo>`
+
+For direct Codex commands and the generated `.between/agents/codex-agent.mjs` wrapper, the IDE
+profile also sets `CODEX_HOME=<repo>/.between/ide-profile/codex`. This isolates IDE-launched
+Codex processes from the user's global Codex home. The profile is local process environment only:
+it must not write `~/.codex`, parent-workspace rules, global git config, or global npm config.
+
+`ide_cli_rules_mode: project_only` means global agent-rule injection is bypassed for the
+IDE-launched CLI profile. It does not bypass the Between broker, `.between/commands`, policy
+evaluation, sandbox/worktree boundaries, signed approvals, `verify-push`, or evidence gates.
+
+The Aside-inspired IDE controls are profile hints only:
+
+- `ide_permission_mode` describes the intended local IDE task posture.
+- `ide_working_folder` stays project-local and is passed to the agent as context.
+- `ide_followup_mode` names whether the operator is steering the current run or queuing intent for
+  a later run; it does not create a durable queue by itself.
+
+These values must not grant filesystem, network, approval, push, or sandbox access beyond the
+broker's existing policy and verification path.
+
 ## Trust Boundary
 
 `.between/` is a cooperative local protocol, not a full security boundary. Any local process that can write `.between/` can write ack/review/verify files and enqueue an `approve` command. The broker therefore treats fake-agent projects as simulation evidence and refuses merge approval for them.

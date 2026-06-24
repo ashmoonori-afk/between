@@ -67,26 +67,40 @@ const HOOK = `#!/bin/sh
 exec node "$(git rev-parse --git-dir)/${MARKER}.mjs"
 `
 
-export function installPrePushHook(root: string): string | null {
+export type PrePushHookInstallResult =
+  | { kind: 'installed'; path: string }
+  | { kind: 'already_installed'; path: string }
+  | { kind: 'not_git_repo' }
+  | { kind: 'conflict'; path: string }
+  | { kind: 'failed'; reason: string }
+
+export function installPrePushHookDetailed(root: string): PrePushHookInstallResult {
   const gitDir = join(root, '.git')
   const hooksDir = join(gitDir, 'hooks')
-  if (!existsSync(gitDir)) return null
+  if (!existsSync(gitDir)) return { kind: 'not_git_repo' }
   try {
     mkdirSync(hooksDir, { recursive: true })
     writeFileSync(join(gitDir, `${MARKER}.mjs`), VERIFY_PUSH_SCRIPT, 'utf8')
     const hookPath = join(hooksDir, 'pre-push')
+    let alreadyInstalled = false
     if (existsSync(hookPath)) {
       const cur = readFileSync(hookPath, 'utf8')
-      if (!cur.includes(MARKER)) return null
+      if (!cur.includes(MARKER)) return { kind: 'conflict', path: hookPath }
+      alreadyInstalled = true
     }
     writeFileSync(hookPath, HOOK, 'utf8')
     try {
       chmodSync(hookPath, 0o755)
     } catch {
-      return hookPath
+      return { kind: alreadyInstalled ? 'already_installed' : 'installed', path: hookPath }
     }
-    return hookPath
-  } catch {
-    return null
+    return { kind: alreadyInstalled ? 'already_installed' : 'installed', path: hookPath }
+  } catch (e) {
+    return { kind: 'failed', reason: e instanceof Error ? e.message : String(e) }
   }
+}
+
+export function installPrePushHook(root: string): string | null {
+  const result = installPrePushHookDetailed(root)
+  return result.kind === 'installed' || result.kind === 'already_installed' ? result.path : null
 }

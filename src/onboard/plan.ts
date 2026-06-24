@@ -91,14 +91,15 @@ export function planOnboarding(answers: OnboardAnswers): OnboardPlan {
 
 /**
  * Replace the value of a `key: value   # comment` line in a YAML body, preserving any trailing
- * comment and indentation. Appends `key: value` if the key is absent. Pure + unit-tested.
+ * comment and indentation. Quoted `#` characters remain part of the scalar. Appends `key: value`
+ * if the key is absent. Pure + unit-tested.
  */
 export function setYamlScalar(text: string, key: string, value: string): string {
   const safeKey = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  const re = new RegExp(`^(\\s*${safeKey}:\\s*)(.*?)(\\s*#.*)?$`, 'm')
+  const re = new RegExp(`^(\\s*${safeKey}:\\s*)(.*)$`, 'm')
   if (re.test(text)) {
-    return text.replace(re, (_m, prefix: string, _old: string, comment = '') => {
-      return `${prefix}${value}${comment ?? ''}`
+    return text.replace(re, (_m, prefix: string, tail: string) => {
+      return `${prefix}${value}${trailingYamlComment(tail)}`
     })
   }
   const sep = text.endsWith('\n') || text.length === 0 ? '' : '\n'
@@ -108,4 +109,38 @@ export function setYamlScalar(text: string, key: string, value: string): string 
 /** Apply an ordered config patch to a YAML body. */
 export function applyConfigPatch(text: string, patch: Array<[string, string]>): string {
   return patch.reduce((acc, [key, value]) => setYamlScalar(acc, key, value), text)
+}
+
+function trailingYamlComment(tail: string): string {
+  let quote: '"' | "'" | null = null
+  let escaped = false
+
+  for (let index = 0; index < tail.length; index += 1) {
+    const ch = tail[index]
+    if (quote === '"') {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === quote) {
+        quote = null
+      }
+      continue
+    }
+    if (quote === "'") {
+      if (ch === quote) quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      continue
+    }
+    if (ch === '#' && (index === 0 || /\s/.test(tail[index - 1] ?? ''))) {
+      let start = index
+      while (start > 0 && /\s/.test(tail[start - 1] ?? '')) start -= 1
+      return tail.slice(start)
+    }
+  }
+
+  return ''
 }

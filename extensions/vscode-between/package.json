@@ -15,6 +15,7 @@
   "main": "./src/extension.js",
   "activationEvents": [
     "onView:between.panel",
+    "onCommand:between.openIde",
     "onCommand:between.refresh",
     "onCommand:between.openEvidence",
     "onCommand:between.requestSecondReview",
@@ -31,6 +32,10 @@
       ]
     },
     "commands": [
+      {
+        "command": "between.openIde",
+        "title": "Between: Open IDE"
+      },
       {
         "command": "between.refresh",
         "title": "Between: Refresh"
@@ -63,5 +68,8 @@
     "@types/vscode": "1.90.0",
     "@vscode/test-cli": "0.0.12",
     "@vscode/test-electron": "3.0.0"
+  },
+  "dependencies": {
+    "yaml": "^2.9.0"
   }
 }

@@ -1,5 +1,6 @@
 import { BetweenDecorationController } from './decorations.js'
 import { BetweenDiagnosticsController } from './diagnostics.js'
+import { BetweenIdePanel } from './ide-panel.js'
 import { BetweenTreeProvider } from './tree.js'
 import {
   buildEvidenceMarkdown,
@@ -12,6 +13,7 @@ export function activateBetween(context, vscodeApi, overrides = {}) {
   const diagnostics = vscodeApi.languages.createDiagnosticCollection('between')
   const diagnosticsController = new BetweenDiagnosticsController(vscodeApi, diagnostics)
   const decorations = new BetweenDecorationController(vscodeApi)
+  const idePanel = new BetweenIdePanel(vscodeApi)
   const treeProvider = new BetweenTreeProvider(vscodeApi)
   const rootOf = overrides.workspaceRoot ?? (() => findWorkspaceRoot(vscodeApi))
   const readWorkspace = overrides.readWorkspace ?? readBetweenWorkspace
@@ -21,6 +23,7 @@ export function activateBetween(context, vscodeApi, overrides = {}) {
   context.subscriptions.push(
     diagnostics,
     decorations,
+    idePanel,
     { dispose: () => diagnosticsController.clear() },
     vscodeApi.window.createTreeView('between.panel', { treeDataProvider: treeProvider }),
   )
@@ -32,31 +35,41 @@ export function activateBetween(context, vscodeApi, overrides = {}) {
       diagnosticsController.update(root, view.model)
       decorations.update(vscodeApi.window.activeTextEditor, root, view.model)
       treeProvider.update(view)
+      idePanel.update(view)
       return view
     } catch (error) {
       diagnosticsController.clear()
       decorations.clear(vscodeApi.window.activeTextEditor)
       treeProvider.fail(error)
+      idePanel.fail(error)
       vscodeApi.window.showWarningMessage(`Between refresh failed: ${messageOf(error)}`)
       return null
     }
   }
 
-  register(context, vscodeApi, 'between.refresh', async () => {
-    const view = await refresh()
-    if (view) vscodeApi.window.showInformationMessage('Between refreshed')
-  })
-  register(context, vscodeApi, 'between.requestSecondReview', async () => {
+  async function requestSecondReview() {
     await submitAction(rootOf(), { kind: 'request_second_review' })
     vscodeApi.window.showInformationMessage('Between review requested')
-  })
-  register(context, vscodeApi, 'between.askDeveloperToFix', async () => {
+    await refresh()
+  }
+
+  async function askDeveloperToFix() {
     const message = await vscodeApi.window.showInputBox({ prompt: 'Message for the developer' })
     if (!message) return
     await submitAction(rootOf(), { kind: 'ask_developer_to_fix', message })
     vscodeApi.window.showInformationMessage('Between developer fix requested')
-  })
-  register(context, vscodeApi, 'between.openEvidence', async () => {
+    await refresh()
+  }
+
+  async function submitBrokerInput(message) {
+    const text = String(message).trim()
+    if (!text) return
+    await submitAction(rootOf(), { kind: 'broker_input', message: text })
+    vscodeApi.window.showInformationMessage('Between broker command queued')
+    await refresh()
+  }
+
+  async function openEvidence() {
     const view = await refresh()
     if (!view) return
     const document = await vscodeApi.workspace.openTextDocument({
@@ -64,8 +77,9 @@ export function activateBetween(context, vscodeApi, overrides = {}) {
       language: 'markdown',
     })
     await vscodeApi.window.showTextDocument(document)
-  })
-  register(context, vscodeApi, 'between.approveExactBundle', async () => {
+  }
+
+  async function approveExactBundle() {
     const view = await refresh()
     if (!view) return
     if (!view.canApprove) {
@@ -78,10 +92,45 @@ export function activateBetween(context, vscodeApi, overrides = {}) {
         ? 'Between exact bundle approval queued unsigned'
         : 'Between exact bundle approval queued',
     )
+    await refresh()
+  }
+
+  async function configureTopology(input) {
+    await submitAction(rootOf(), {
+      kind: 'configure_topology',
+      builderAgentCount: input.builderAgentCount,
+      reviewerAgentCount: input.reviewerAgentCount,
+      permissionMode: input.permissionMode,
+      workingFolder: input.workingFolder,
+      followupMode: input.followupMode,
+    })
+    vscodeApi.window.showInformationMessage('Between IDE topology updated')
+    await refresh()
+  }
+
+  register(context, vscodeApi, 'between.refresh', async () => {
+    const view = await refresh()
+    if (view) vscodeApi.window.showInformationMessage('Between refreshed')
   })
+  register(context, vscodeApi, 'between.openIde', async () => {
+    const view = await refresh()
+    if (!view) return
+    idePanel.open(view, {
+      refresh,
+      submitBrokerInput,
+      requestSecondReview,
+      openEvidence,
+      approveExactBundle,
+      configureTopology,
+    })
+  })
+  register(context, vscodeApi, 'between.requestSecondReview', requestSecondReview)
+  register(context, vscodeApi, 'between.askDeveloperToFix', askDeveloperToFix)
+  register(context, vscodeApi, 'between.openEvidence', openEvidence)
+  register(context, vscodeApi, 'between.approveExactBundle', approveExactBundle)
 
   refresh()
-  return { refresh, diagnosticsController, decorations, treeProvider }
+  return { refresh, diagnosticsController, decorations, treeProvider, idePanel }
 }
 
 function register(context, vscodeApi, command, fn) {

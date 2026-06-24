@@ -32,10 +32,11 @@ describe('EmbeddedDashboard', () => {
     await new Promise((resolve) => setTimeout(resolve, 120))
 
     const frame = lastFrame() ?? ''
-    expect(frame).toContain('BROKER FIELD')
+    expect(frame).toContain('BETWEEN BROKER')
     expect(frame).toContain('DEVELOPER FIELD')
     expect(frame).toContain('REVIEWER FIELD')
-    expect(frame).toContain('> ')
+    expect(frame).toContain('STEER > _')
+    expect(frame).not.toContain('INPUT LIVE')
     for (const line of frame.split('\n')) {
       expect(line.length).toBeLessThanOrEqual(100)
     }

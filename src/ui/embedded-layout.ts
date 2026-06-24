@@ -12,6 +12,8 @@ export interface EmbeddedLayout {
   readonly agentDirection: 'row' | 'column'
 }
 
+export const EMBEDDED_INPUT_ROWS = 4
+
 export function computeEmbeddedLayout(
   size: EmbeddedTerminalSize,
   requestedAgentRows: number,
@@ -19,11 +21,24 @@ export function computeEmbeddedLayout(
   const width = clamp(size.columns, 60, 140)
   const rows = clamp(size.rows, 16, 80)
   const agentDirection = width < 84 ? 'column' : 'row'
-  const footerRows = 1
-  const usableRows = Math.max(12, rows - footerRows)
-  const minBrokerHeight = rows <= 18 ? 5 : 7
-  const minAgentHeight = rows <= 18 ? 5 : 6
+  const usableRows = Math.max(8, rows - EMBEDDED_INPUT_ROWS)
+  const minBrokerHeight = rows <= 18 ? 4 : 7
+  const minAgentHeight = rows <= 18 ? 4 : 6
   const agentSlots = agentDirection === 'column' ? 2 : 1
+  const absoluteMin = minBrokerHeight + minAgentHeight * agentSlots
+  if (usableRows <= absoluteMin) {
+    const agentHeight = Math.max(3, Math.floor((usableRows - minBrokerHeight) / agentSlots))
+    const brokerHeight = Math.max(3, usableRows - agentHeight * agentSlots)
+    const agentWidth = agentDirection === 'row' ? Math.floor(width / 2) : width
+    return {
+      width,
+      brokerHeight,
+      agentHeight,
+      agentWidth,
+      agentRows: Math.min(requestedAgentRows, Math.max(1, agentHeight - 4)),
+      agentDirection,
+    }
+  }
   const maxBrokerHeight = Math.max(minBrokerHeight, usableRows - minAgentHeight * agentSlots)
   const desiredBrokerHeight = Math.floor((usableRows * 2) / 3)
   const brokerHeight = Math.min(maxBrokerHeight, Math.max(minBrokerHeight, desiredBrokerHeight))

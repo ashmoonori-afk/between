@@ -18,12 +18,13 @@ policy engine, verification runner, evidence exporters, event store, cockpit, VS
 differentiation (defect benchmark, reviewer routing, metrics, plugin SDK).
 
 **Explicitly OUT of scope (per owner instruction): the chat gateway stays as-is.**
+
 - No gateway code changes; `between gateway`, transports, and `GatewaySession` are frozen.
 - Review finding **P0-1 (gateway has no sender allowlist; any DM-capable user can request
   `approve`, signed by the local secret) is therefore left OPEN.** See §7 Risks — this is a
   knowingly-accepted residual. The approval-core work in §3 (A2/A3) does **not** touch gateway
   code but does bind every approval (including gateway-issued ones) to the exact current bundle
-  and cycle, which *reduces but does not remove* the P0-1 blast radius.
+  and cycle, which _reduces but does not remove_ the P0-1 blast radius.
 
 **Positioning shift.** From "AI pair-development terminal broker" → **"Verifiable AI Change
 Control Plane"**: a local runtime that sits between the developer, the reviewer, and
@@ -58,48 +59,48 @@ Goal
 
 ### Current → target mapping
 
-| Today | Becomes |
-|---|---|
-| `adapters/git.ts` | `WorktreeProvider` + fail-closed diff/raw/untracked capture |
-| `adapters/snapshot-store.ts` | `ReviewObjectStore` (immutable bundle, content-addressed) |
-| `agents/real-agents.ts`, `adapters/*agent-host*` | `AgentRunner` with per-role capabilities |
-| (none) | `VerificationRunner`, `PolicyEngine` |
-| `core/approval.ts`, `adapters/approval-secret.ts` | `ApprovalAuthority` (scope+bundle+expiry) |
-| `adapters/events-log.ts` | `EventStore` (checksummed journal / SQLite) |
-| Obsidian writer (core path) | one `EvidenceExporter` among several |
-| `ui/` (TUI) | code-centric cockpit + VS Code extension |
-| `forge/*` (in core) | extracted to a plugin (§6) |
-| `gateway/*` | **frozen, unchanged** |
+| Today                                             | Becomes                                                     |
+| ------------------------------------------------- | ----------------------------------------------------------- |
+| `adapters/git.ts`                                 | `WorktreeProvider` + fail-closed diff/raw/untracked capture |
+| `adapters/snapshot-store.ts`                      | `ReviewObjectStore` (immutable bundle, content-addressed)   |
+| `agents/real-agents.ts`, `adapters/*agent-host*`  | `AgentRunner` with per-role capabilities                    |
+| (none)                                            | `VerificationRunner`, `PolicyEngine`                        |
+| `core/approval.ts`, `adapters/approval-secret.ts` | `ApprovalAuthority` (scope+bundle+expiry)                   |
+| `adapters/events-log.ts`                          | `EventStore` (checksummed journal / SQLite)                 |
+| Obsidian writer (core path)                       | one `EvidenceExporter` among several                        |
+| `ui/` (TUI)                                       | code-centric cockpit + VS Code extension                    |
+| `forge/*` (in core)                               | extracted to a plugin (§6)                                  |
+| `gateway/*`                                       | **frozen, unchanged**                                       |
 
 ## 2. Workstreams ↔ review findings
 
-| WS | Review finding | Summary |
-|---|---|---|
-| Immutable Review Object | P0-4 | bundle = hashed object = what reviewer reads |
-| Approval freshness/scope | P0-2, P0-3 | bind approval to bundle+cycle; separate scopes/gates |
-| Fail-closed IO | H ("Git error → empty diff") | git/record errors become `review_object_invalid`, never "no change" |
-| Fake-mode safety | P0-5 | simulation can never produce a signed approval |
-| Real agents | H ("Claude+Codex not the default path") | distinct `--developer` / `--reviewer` presets, reviewer read-only |
-| Token & config hygiene | H (env-vs-config, dead `binary_hash_max_bytes`) | secrets env/keychain only; remove/implement dead config |
-| Worktree isolation | review §6.4 | reviewer read-only, no push creds to agents, network deny |
-| Policy-as-code | review §6.3 | risk-routed gates as explicit decisions |
-| Verification runner | review 15–45d | standard test/lint/security outputs into the bundle |
-| Evidence + exporters | review §3 (Obsidian), §6.6 | Obsidian demoted to a port; add Checks/SARIF/JSON/OTel |
-| Event store | review 15–45d | checksummed/replayable journal |
-| Cockpit TUI | review §6.1 | inline diff↔finding, accept/dispute/waive, replay |
-| VS Code extension | review §6.2 | findings in Problems API, approve-exact-bundle |
-| Differentiation | review 46–90d | defect benchmark, reviewer routing, metrics, plugin SDK |
-| Platform/release | H ("not publishable", "docs drift") | publishable package; CI-generated badges/metrics |
+| WS                       | Review finding                                  | Summary                                                             |
+| ------------------------ | ----------------------------------------------- | ------------------------------------------------------------------- |
+| Immutable Review Object  | P0-4                                            | bundle = hashed object = what reviewer reads                        |
+| Approval freshness/scope | P0-2, P0-3                                      | bind approval to bundle+cycle; separate scopes/gates                |
+| Fail-closed IO           | H ("Git error → empty diff")                    | git/record errors become `review_object_invalid`, never "no change" |
+| Fake-mode safety         | P0-5                                            | simulation can never produce a signed approval                      |
+| Real agents              | H ("Claude+Codex not the default path")         | distinct `--developer` / `--reviewer` presets, reviewer read-only   |
+| Token & config hygiene   | H (env-vs-config, dead `binary_hash_max_bytes`) | secrets env/keychain only; remove/implement dead config             |
+| Worktree isolation       | review §6.4                                     | reviewer read-only, no push creds to agents, network deny           |
+| Policy-as-code           | review §6.3                                     | risk-routed gates as explicit decisions                             |
+| Verification runner      | review 15–45d                                   | standard test/lint/security outputs into the bundle                 |
+| Evidence + exporters     | review §3 (Obsidian), §6.6                      | Obsidian demoted to a port; add Checks/SARIF/JSON/OTel              |
+| Event store              | review 15–45d                                   | checksummed/replayable journal                                      |
+| Cockpit TUI              | review §6.1                                     | inline diff↔finding, accept/dispute/waive, replay                   |
+| VS Code extension        | review §6.2                                     | findings in Problems API, approve-exact-bundle                      |
+| Differentiation          | review 46–90d                                   | defect benchmark, reviewer routing, metrics, plugin SDK             |
+| Platform/release         | H ("not publishable", "docs drift")             | publishable package; CI-generated badges/metrics                    |
 
-## 3. Phase A — Trust Core  (target ≈0–3 weeks)
+## 3. Phase A — Trust Core (target ≈0–3 weeks)
 
 > The review's "0–14 day" block, minus the gateway items. This is the foundation; nothing in
 > Phase B/C is trustworthy until A is done.
 
 - **A1 — Immutable Review Bundle (P0-4).**
   Build a content-addressed bundle per cycle: `{ schema_version, bundle_id: sha256, repository:
-  {head_sha, branch, index_tree}, changes: {tracked.patch, tracked.raw (mode/OID), untracked
-  manifest, submodules, lfs}, environment: {between_version, git_version, attributes_hash} }`.
+{head_sha, branch, index_tree}, changes: {tracked.patch, tracked.raw (mode/OID), untracked
+manifest, submodules, lfs}, environment: {between_version, git_version, attributes_hash} }`.
   The reviewer reads a **read-only worktree built from the bundle**, not live `git diff HEAD`.
   Files: new `src/review/bundle.ts`, `adapters/git.ts` (raw+untracked capture), replace
   `snapshot-store` usage, update `docs/AGENT-CONTRACT.md`.
@@ -109,8 +110,8 @@ Goal
 - **A2 — Approval freshness + invalidation (P0-2).**
   Extend the approval claim to `{scope, diff_hash, cycle, bundle_hash, expires_at}`. `verify-push`
   must check `approval.scope==='merge' && approval.diff_hash===state.diff.hash &&
-  approval.cycle===state.workflow.cycle && approval.bundle_hash===state.bundle.hash &&
-  approval.expires_at>now`. The daemon **clears `state.approval`** on: new goal, diff-hash change,
+approval.cycle===state.workflow.cycle && approval.bundle_hash===state.bundle.hash &&
+approval.expires_at>now`. The daemon **clears `state.approval`** on: new goal, diff-hash change,
   new cycle, verification change, reviewer-verdict change, branch/HEAD change.
   Files: `core/approval.ts`, `core/types.ts`, `cli/broker-commands.ts` (verify-push),
   `daemon/commands.ts`, `daemon/phases.ts`.
@@ -119,8 +120,8 @@ Goal
 
 - **A3 — Scope-separated approvals & gates (P0-3).**
   Split events into `merge_approved | deploy_approved | rule_promotion_approved |
-  continue_requested | cancel_requested`, and gates into `review_gate | merge_gate | deploy_gate |
-  rule_promotion_gate`. A `promote_rule` approval must not end a dev cycle as `done`.
+continue_requested | cancel_requested`, and gates into `review_gate | merge_gate | deploy_gate |
+rule_promotion_gate`. A `promote_rule` approval must not end a dev cycle as `done`.
   Files: `core/types.ts`, `core/fsm.ts`, `daemon/commands.ts`.
   **Acceptance:** FSM test proving each approval event only satisfies its own gate.
 
@@ -156,10 +157,10 @@ Goal
   **Acceptance:** developer and reviewer can be different providers; reviewer wrapper is launched
   read-only; conformance smoke passes for at least one real pair.
 
-## 4. Phase B — Product Core  (target ≈3–7 weeks)
+## 4. Phase B — Product Core (target ≈3–7 weeks)
 
 - **B1 — Worktree/sandbox isolation.** `.between/worktrees/{developer, reviewer-readonly,
-  verifier}`; reviewer read-only; **no push credentials in agent env**; network default-deny;
+verifier}`; reviewer read-only; **no push credentials in agent env**; network default-deny;
   record an environment manifest per subprocess; changes move only as bundle/commit/tree objects.
   (`WorktreeProvider`.)
 - **B2 — PolicyEngine (policy-as-code).** `version`, `risk.{level}.paths`, `gates` (tests /
@@ -182,7 +183,7 @@ Goal
   API; line annotations; actions: ask-developer-to-fix, request-second-review, open-evidence,
   **approve-exact-bundle**; reuse the existing local daemon. (JetBrains deferred.)
 
-## 5. Phase C — Differentiation  (target ≈7–13 weeks)
+## 5. Phase C — Differentiation (target ≈7–13 weeks)
 
 - **C1** Seeded-defect benchmark; measure reviewer false-positive / false-negative rates.
 - **C2** Risk-based multi-reviewer routing (correctness / security / test / API-compat / perf):
@@ -193,15 +194,15 @@ Goal
 
 ## 6. Scope reductions (do early, in parallel with Phase A)
 
-| Feature | Action | Why |
-|---|---|---|
-| **Gateway** | **Keep as-is, frozen (owner instruction)** | out of scope this plan; P0-1 residual noted in §7 |
+| Feature                  | Action                                                | Why                                                                                                 |
+| ------------------------ | ----------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| **Gateway**              | **Keep as-is, frozen (owner instruction)**            | out of scope this plan; P0-1 residual noted in §7                                                   |
 | Forge (PWSForge in core) | Extract to a plugin/recipe behind the Plugin SDK (C4) | it's a PM methodology, not core differentiation; current gate only checks a status string + P0 flag |
-| Obsidian | Demote to one `EvidenceExporter` port | must not narrow the user base or be a core dependency |
-| PTY embedding | Keep as auxiliary observability only | nice-to-have; must never pollute the core state machine |
-| Fake agent | Demo-only; cannot sign/approve (A5) | prevents mistaking a simulation for a real review |
-| Auto rule promotion | Hold until labeled data exists | not enough signal to auto-harden rules |
-| Deploy orchestration | Defer until merge/change-control is proven | sequence value correctly |
+| Obsidian                 | Demote to one `EvidenceExporter` port                 | must not narrow the user base or be a core dependency                                               |
+| PTY embedding            | Keep as auxiliary observability only                  | nice-to-have; must never pollute the core state machine                                             |
+| Fake agent               | Demo-only; cannot sign/approve (A5)                   | prevents mistaking a simulation for a real review                                                   |
+| Auto rule promotion      | Hold until labeled data exists                        | not enough signal to auto-harden rules                                                              |
+| Deploy orchestration     | Defer until merge/change-control is proven            | sequence value correctly                                                                            |
 
 ## 7. Success metrics (track these, not feature count)
 
@@ -214,7 +215,7 @@ Goal
 - Seeded blocking-defect detection rate and false-positive rate published.
 - < 5 minutes from install to first real review completed.
 
-## 8. Decisions / risks  (locked 2026-06-20)
+## 8. Decisions / risks (locked 2026-06-20)
 
 - **DECIDED — single local developer is the near-term target; team features later.** → VS Code
   MVP (B7) is prioritized; RBAC (C5) and any multi-user concerns are **future** work.
@@ -236,14 +237,14 @@ Goal
 - **DECIDED — EventStore uses an append-only checksummed journal for B5.** SQLite remains a future
   scalability option only if cockpit query/replay needs outgrow the current journal.
 
-## 9. Platform / Release workstream  (now parallel to Phase A)
+## 9. Platform / Release workstream (now parallel to Phase A)
 
 - `package.json`: `private:false`, `bin`, `files`, `engines`, `exports`; publishable build.
 - Release CI: tag → build → SBOM (CycloneDX) → npm provenance → signed artifact → GitHub Release.
 - Platform smoke: install-from-pack on ubuntu/windows/macos; real-agent compat matrix.
 - **Docs as CI output:** badges + test counts generated from the test run, not hand-edited.
 
-## 10. Future — Local-App workstream (D)  (post-90-day; design now so ports fit)
+## 10. Future — Local-App workstream (D) (post-90-day; design now so ports fit)
 
 - Wrap the daemon + cockpit as a desktop app (Tauri preferred for size; Electron fallback) that
   **reuses the exact ports in §1** — the app is just another front-end over `EventStore` /
@@ -307,9 +308,9 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 - ✅ **B6** cockpit TUI — slices done: pure `renderCockpit` frame + `between cockpit`
   (state+evidence+policy+verify+journal, ASCII-safe, TTY-free testable); cockpit model links
   current findings to diff hunks and replay snapshots; `between cockpit --action
-  accept|dispute|waive --finding <id>` validates current/non-stale findings and queues an exact
+accept|dispute|waive --finding <id>` validates current/non-stale findings and queues an exact
   cycle+diff-bound daemon command, which the daemon records/rejects as durable events; `between
-  cockpit --replay-cycle <n>` now focuses a specific journal replay snapshot in the cockpit frame.
+cockpit --replay-cycle <n>` now focuses a specific journal replay snapshot in the cockpit frame.
   `between cockpit --rerun-checks` re-runs configured verification and refreshes the cockpit report.
   The focused replay drilldown shows the selected snapshot's diff stats and bundle hint. The live
   Ink dashboard and embedded 3-pane TUI now expose a phase-aware command palette for
@@ -323,9 +324,22 @@ Regression tests added (push-gate, fail-closed). Commits `2b77e02`, `ad1e429`.
 - DONE **B7** VS Code MVP. The local extension now contributes a Source Control `Between` view,
   reads real `.between/state.json` + sealed review bundles, publishes current non-stale findings to
   the VS Code Problems API, paints line annotations, exposes evidence/fix/re-review/approve actions,
-  and gates `approve-exact-bundle` on real evidence. Verified through `npm run test:vscode`
+  adds a broker-first IDE webview with a single broker command input and read-only developer/reviewer
+  status lanes, and gates `approve-exact-bundle` on real evidence. Verified through `npm run test:vscode`
   (extension source typecheck, Vitest runtime tests, and VS Code host smoke tests pinned to
   1.125.1).
+  Follow-up IDE topology slice: `between ide` now exposes project-local Builder/Reviewer counts,
+  target names (`builder:n`, `reviewer:n`), `ide_cli_rules_mode`, and `ide_cli_profile_dir`; the
+  VS Code webview can edit counts through the same project config path. Codex IDE invocations set
+  `CODEX_HOME=<repo>/.between/ide-profile/codex`, and the safety boundary is explicit: global
+  agent-rule injection may be bypassed for the IDE-local profile, but broker policy, approvals,
+  command bus, sandbox/worktree boundaries, evidence gates, and `verify-push` are still enforced.
   (Deferred refinement: CLI command-handler integration tests — a systematic gap across commands.)
+
+- ✅ **Aside-inspired IDE control-plane slice** — `between ide` and the VS Code webview now expose
+  project-local `ide_permission_mode`, `ide_working_folder`, and `ide_followup_mode` controls. The
+  values are passed to IDE-launched agents as `BETWEEN_IDE_*` environment hints while preserving
+  `bypasses_broker_policy: false`. This reflects Aside task terminology without adding a browser
+  task runner, MCP server, REPL, or policy bypass.
 
 Plus the Platform/Release workstream (§9: publishable package, CI-generated badges/test counts).

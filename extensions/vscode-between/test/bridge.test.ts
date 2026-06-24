@@ -12,11 +12,13 @@ describe('vscode-between scaffold', () => {
 
     expect(pkg.main).toBe('./src/extension.js')
     expect(pkg.activationEvents).toContain('onView:between.panel')
+    expect(pkg.activationEvents).toContain('onCommand:between.openIde')
     expect(pkg.activationEvents).toContain('onCommand:between.refresh')
     expect(pkg.scripts.check).toContain('test:host')
     expect(pkg.scripts['test:host']).toContain('vscode-test --label task-9-diagnostics')
     expect(pkg.contributes.views.scm).toEqual([{ id: 'between.panel', name: 'Between' }])
     expect(pkg.contributes.commands.map((command) => command.command)).toEqual([
+      'between.openIde',
       'between.refresh',
       'between.openEvidence',
       'between.requestSecondReview',

@@ -35,6 +35,21 @@ or requiring a native compiler on every host.
    mirrors `buildSignal`'s id format and the Ack/ReviewRecord/VerifyRecord shapes, so the whole
    embed is demoable on any host with zero native deps and no external CLIs.
 
+5. **IDE topology and local profile are project-owned.** The IDE surface names existing roles as
+   stable targets: `builder:n` maps to `developer_command`, and `reviewer:n` maps to
+   `reviewer_command`. The counts are stored in project config as `builder_agent_count` and
+   `reviewer_agent_count`. `ide_cli_rules_mode: project_only` isolates the IDE-launched local CLI
+   profile from global agent rules, while `ide_cli_profile_dir: .between/ide-profile` keeps
+   Codex-specific `CODEX_HOME` under the target repository. This is not a policy bypass:
+   broker commands, approval signatures, sandbox/worktree boundaries, and `verify-push` still
+   apply.
+
+6. **Aside-inspired IDE control hints stay local.** The IDE profile also records
+   `ide_permission_mode`, `ide_working_folder`, and `ide_followup_mode`. They are passed to
+   IDE-launched agents as `BETWEEN_IDE_PERMISSION_MODE`, `BETWEEN_IDE_WORKING_FOLDER`, and
+   `BETWEEN_IDE_FOLLOWUP_MODE`, but they do not grant access, self-approve work, or change the
+   broker's policy/push/sandbox enforcement path.
+
 ## Real CLI invocation (recorded for when the real agents are wired)
 
 The bundled fake-agent decouples the demo from the exact real-CLI flags. When wiring real agents,
@@ -42,6 +57,11 @@ set `developer_command` / `reviewer_command`, e.g. a non-interactive Claude Code
 (`claude -p` print mode reading the prompt from stdin) for `oneshot`, or a persistent session for
 `pty`. The transport contract (deliver a short pointer; the agent reads git diff + `.between`
 context itself and writes the ack/review files) is identical regardless of which CLI is used.
+
+For IDE launches, `between ide --print-cli builder:n|reviewer:n` prints the exact target, command,
+working directory, control-plane hints, and environment. Direct Codex commands and the generated
+`.between/agents/codex-agent.mjs` wrapper receive `CODEX_HOME=<repo>/.between/ide-profile/codex`
+so global Codex config is neither read nor mutated by the IDE profile.
 
 ## Consequences
 

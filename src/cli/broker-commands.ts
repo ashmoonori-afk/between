@@ -6,14 +6,15 @@ import { CommandBus } from '../adapters/command-bus'
 import { AckStore } from '../adapters/ack-store'
 import { buildSignal } from '../adapters/signal-transport'
 import type { Ack, ApprovalScope } from '../core/types'
-import { signApproval, verifyApproval, approvalFreshness, approvalExpiry } from '../core/approval'
+import { signApproval, approvalExpiry } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import { resolveApprovalSecret, APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
-import { loadConfig, runStart } from '../runtime'
-import { usesSimulatedEvidence } from '../core/evidence-trust'
+import { loadConfig } from '../runtime'
 import { print, printErr, printJson } from './output'
 import { parseInterval } from './args'
 import { fail, root } from './shared'
+import { runStartCommand } from './start-command'
+import { runVerifyPushCommand } from './verify-push-command'
 
 function enqueue(label: string, makeCmd: () => Parameters<CommandBus['submit']>[0]) {
   return async () => {
@@ -82,16 +83,7 @@ export function registerBrokerCommands(program: Command): void {
     )
     .action(async (opts: { embed?: boolean; headless?: boolean; maxTicks?: number }) => {
       try {
-        const cfg = await loadConfig(root()).catch(() => null)
-        const embed = Boolean(opts.embed) || (cfg !== null && cfg.agent_mode !== 'file')
-        if (embed) {
-          const { runStartEmbedded } = await import('../ui/start')
-          await runStartEmbedded(root(), { maxTicks: opts.maxTicks, headless: opts.headless })
-        } else {
-          print('between: broker started (headless file mode). Ctrl-C to stop.')
-          await runStart(root(), { maxTicks: opts.maxTicks })
-          print('between: broker stopped.')
-        }
+        await runStartCommand(root(), opts)
       } catch (e) {
         await fail(e)
       }
@@ -231,72 +223,7 @@ export function registerBrokerCommands(program: Command): void {
     .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
     .action(async () => {
       try {
-        const state = await new StateRepository(root()).read()
-        if (!state) return
-        const cfg = await loadConfig(root()).catch(() => null)
-        if (!cfg || usesSimulatedEvidence(state.evidence_trust, cfg)) {
-          printErr(
-            'between: refusing push — SIMULATION project (fake agent); reviews are not real verification. Run: between init --agent claude|codex.',
-          )
-          process.exitCode = 1
-          return
-        }
-        const secret = resolveApprovalSecret(root())
-        const ap = state.approval
-        if (ap) {
-          // F2: only a MERGE approval authorizes a push — deploy/promote_rule are separate gates.
-          if (ap.scope !== 'merge') {
-            printErr(
-              `between: refusing push — only a merge approval authorizes a push (got ${ap.scope})`,
-            )
-            process.exitCode = 1
-            return
-          }
-          const ok = verifyApproval(secret, ap.sig ?? '', {
-            scope: ap.scope,
-            diff_hash: ap.diff_hash,
-            cycle: ap.cycle,
-            bundle_id: ap.bundle_id,
-            expires_at: ap.expires_at,
-          })
-          if (!ok) {
-            printErr('between: recorded approval failed signature verification')
-            process.exitCode = 1
-            return
-          }
-          // A2: a valid signature isn't enough — the approval must still match the current
-          // diff/cycle/bundle and not be expired, or a stale approval could push new content.
-          const stale = approvalFreshness(ap, {
-            diff_hash: state.diff.hash,
-            cycle: state.workflow.cycle,
-            bundle_id: state.diff.bundle_id,
-            nowMs: Date.now(),
-          })
-          if (stale) {
-            printErr(
-              `between: approval is no longer valid — ${stale} (re-approve the current diff)`,
-            )
-            process.exitCode = 1
-            return
-          }
-          // #5: policy is a lifecycle gate — re-check it at push time (defense in depth: e.g. a new
-          // dependency CVE could surface after approval). A failing required gate blocks the push.
-          const { evaluateCyclePolicy } = await import('../policy/gate')
-          const gate = await evaluateCyclePolicy(root(), state, new SystemClock().nowIso())
-          if (!gate.evaluation.satisfied) {
-            printErr(`between: refusing push — policy gate failed: ${gate.reason}`)
-            process.exitCode = 1
-            return
-          }
-          print('between: approval verified')
-          return
-        }
-        if (state.workflow.phase === 'human_gate') {
-          printErr('between: human approval is pending (run `between approve merge`)')
-          process.exitCode = 1
-          return
-        }
-        print('between: no approval gate pending')
+        await runVerifyPushCommand(root())
       } catch (e) {
         await fail(e)
       }

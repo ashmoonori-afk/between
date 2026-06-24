@@ -8,7 +8,7 @@
 |____/|_____| |_|    \_/\_/  |_____|_____|_| \_|
 ```
 
-### A local broker cockpit for AI pair development.
+### A local IDE broker for AI pair development.
 
 Between watches the repository, not private agent chats. A developer agent and a
 reviewer agent coordinate through `git diff`, durable JSON state, review files,
@@ -41,11 +41,11 @@ human relay messages between them. Between takes a stricter shape:
   `promote_rule`.
 
 Think of it as a local, file-shaped protocol for controlled AI collaboration:
-terminal-native, restartable, inspectable, and conservative about trust.
+IDE-native, restartable, inspectable, and conservative about trust.
 
-## Actual TUI Capture
+## Legacy Terminal Diagnostic Capture
 
-Captured from the current built CLI with `node dist/cli.js dash --once` after
+Captured from the built CLI with `node dist/cli.js dash --once` after
 `between init --agent fake` in a temporary git repository.
 
 ```text
@@ -65,10 +65,64 @@ Captured from the current built CLI with `node dist/cli.js dash --once` after
 +------------------------------------------------------------------------------------------+
 ```
 
-The dashboard is intentionally broker-dominant. The top surface tells you the
-phase, cycle, waiting actor, diff hash, trust mode, and latest events; the lower
-surfaces expose developer and reviewer status without making the agents share a
-conversation.
+This terminal frame remains as a diagnostic and fallback surface. The product
+surface is the IDE cockpit below.
+
+## VS Code IDE Cockpit
+
+Between ships a local VS Code IDE surface as the primary operator view. It keeps
+the broker-first contract: the human types into the broker input, while developer
+and reviewer panes stay read-only status surfaces. Builder and Reviewer counts
+are project-local topology, stored in `.between/config.yaml`, and rendered as
+stable tmux-like targets such as `builder:1` and `reviewer:2`.
+
+```bash
+cd extensions/vscode-between
+npm run check
+```
+
+Open the command palette and run `Between: Open IDE`. The IDE reads the same
+`.between/state.json`, sealed bundles, review files, and command bus as the
+terminal workflow. It does not create a second conversation channel between
+agents.
+
+Use `between ide` to inspect or set the IDE control profile from the target
+project:
+
+```bash
+between ide
+between ide --builder-agents 3 --reviewer-agents 2
+between ide --rules-mode project_only --permission-mode guard --working-folder . --followup-mode steer --print-cli reviewer:1
+between ide --json
+```
+
+`ide_cli_rules_mode: project_only` is the default IDE-only local CLI profile. It
+isolates IDE-launched agent CLIs from global agent rules, but it does not bypass
+Between broker policy, evidence gates, approvals, or sandbox decisions.
+When the selected invocation is Codex-based, either direct `codex ...` or the
+generated `.between/agents/codex-agent.mjs` wrapper, `between ide --print-cli ...`
+includes `CODEX_HOME=<repo>/.between/ide-profile/codex` so the IDE profile is
+project-local and does not read or mutate the user's global Codex home.
+
+Aside-inspired task controls are project-local IDE defaults, not a new security
+boundary. `ide_permission_mode` names the IDE-launched agent intent
+(`read_only`, `guard`, or `full_access`), `ide_working_folder` is a
+project-local folder hint, and `ide_followup_mode` is the operator's follow-up
+intent (`steer` now, `queue` after the current run when a durable queue exists).
+They are exported to IDE-launched agents as `BETWEEN_IDE_*` environment values
+and never change `bypasses_broker_policy: false`.
+
+Relevant project-local config fields:
+
+```yaml
+builder_agent_count: 1
+reviewer_agent_count: 1
+ide_cli_rules_mode: project_only
+ide_cli_profile_dir: .between/ide-profile
+ide_permission_mode: guard
+ide_working_folder: .
+ide_followup_mode: steer
+```
 
 ## Why This Shape
 
@@ -158,11 +212,11 @@ Important cycle rules:
 
 Between exposes one `SignalTransport` interface with three operating modes.
 
-| Mode | What it does | Native dependency | Use when |
-| --- | --- | --- | --- |
-| `file` | Writes signal files; agents or scripts reply through `.between/`. | none | You want the most portable baseline. |
-| `oneshot` | Spawns `developer_command` or `reviewer_command` once per signal. | none | You want CLI automation without a live PTY. |
-| `pty` | Hosts live ConPTY/forkpty terminals through optional `@lydell/node-pty`. | optional | You want visible agent panes and live terminal control. |
+| Mode      | What it does                                                             | Native dependency | Use when                                                |
+| --------- | ------------------------------------------------------------------------ | ----------------- | ------------------------------------------------------- |
+| `file`    | Writes signal files; agents or scripts reply through `.between/`.        | none              | You want the most portable baseline.                    |
+| `oneshot` | Spawns `developer_command` or `reviewer_command` once per signal.        | none              | You want CLI automation without a live PTY.             |
+| `pty`     | Hosts live ConPTY/forkpty terminals through optional `@lydell/node-pty`. | optional          | You want visible agent panes and live terminal control. |
 
 All modes reuse the same ack-file gate, so `reviewing` only advances after a real
 acknowledgement.
@@ -172,14 +226,14 @@ acknowledgement.
 cmux is a terminal/session cockpit. Between is a broker workflow engine with a
 terminal cockpit. They overlap visually, but the product center is different.
 
-| Area | Where Between is stronger | Where cmux is stronger |
-| --- | --- | --- |
-| Workflow ownership | Diff-driven broker cycles, debounce, review state, approval gates, and evidence bundles are first-class. | General terminal multiplexing is broader and more mature. |
-| Agent separation | Developer and reviewer never share a transcript; the repo, diff, JSON state, and review files are the contract. | cmux is better when you primarily want multiple live terminal panes under direct human control. |
-| Restartability | `.between/state.json`, `.between/events.jsonl`, acks, reviews, and snapshots make the broker loop inspectable after a crash. | A multiplexer session is more ergonomic for long-running interactive shells. |
-| Human control | With `BETWEEN_APPROVAL_SECRET`, signed approvals and `verify-push` protect merge/deploy/promotion from forged local protocol writes. | cmux is not trying to be an approval or policy gate. |
-| Automation surface | `status`, `goal`, `steer`, `abort`, `review-now`, `evidence`, `policy`, `verify`, and chat gateways can drive the broker. | cmux has the advantage when the needed primitive is session navigation, split management, or shell ergonomics. |
-| Portability | The `file` and `oneshot` paths have no native dependency and can run headless. | cmux-style live pane richness depends on the terminal/session runtime. |
+| Area               | Where Between is stronger                                                                                                            | Where cmux is stronger                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------- |
+| Workflow ownership | Diff-driven broker cycles, debounce, review state, approval gates, and evidence bundles are first-class.                             | General terminal multiplexing is broader and more mature.                                                      |
+| Agent separation   | Developer and reviewer never share a transcript; the repo, diff, JSON state, and review files are the contract.                      | cmux is better when you primarily want multiple live terminal panes under direct human control.                |
+| Restartability     | `.between/state.json`, `.between/events.jsonl`, acks, reviews, and snapshots make the broker loop inspectable after a crash.         | A multiplexer session is more ergonomic for long-running interactive shells.                                   |
+| Human control      | With `BETWEEN_APPROVAL_SECRET`, signed approvals and `verify-push` protect merge/deploy/promotion from forged local protocol writes. | cmux is not trying to be an approval or policy gate.                                                           |
+| Automation surface | `status`, `goal`, `steer`, `abort`, `review-now`, `evidence`, `policy`, `verify`, and chat gateways can drive the broker.            | cmux has the advantage when the needed primitive is session navigation, split management, or shell ergonomics. |
+| Portability        | The `file` and `oneshot` paths have no native dependency and can run headless.                                                       | cmux-style live pane richness depends on the terminal/session runtime.                                         |
 
 Practical takeaway: run Between when you need a durable review protocol around
 AI coding work. Use cmux, tmux, or another multiplexer when the main job is rich
@@ -197,7 +251,8 @@ Between is alpha. It is useful now, but it is not pretending to be finished.
 - Abort and steer are broker-level controls; downstream agent compliance depends
   on the wrapper and hosted process behavior.
 - `.between/` is a cooperative local protocol, not a sandbox.
-- The dashboard is compact and operational by design; it is not a full IDE.
+- Terminal dashboards are compatibility and diagnostic surfaces; the VS Code IDE
+  cockpit is the primary app surface over the local protocol.
 
 ## Forward Vision
 
@@ -208,7 +263,8 @@ The long-term goal is a verifiable AI change cockpit:
 - Stronger agent-control adapters for abort, steer, interrupt, resume, and
   session recovery.
 - A real-agent compatibility matrix for Claude, Codex, and other CLI agents.
-- cmux-grade terminal comfort without giving up the broker's file protocol.
+- tmux-grade topology and target clarity without giving up the broker's file
+  protocol.
 - IDE and chat surfaces that drive the same command bus instead of inventing a
   second workflow.
 - Policy-as-code gates for risk, approvals, evidence bundles, and verification.
@@ -245,6 +301,7 @@ between verify
 between journal
 between replay
 between cockpit
+between ide [--builder-agents <n>] [--reviewer-agents <n>] [--rules-mode project_only|inherit_global] [--permission-mode read_only|guard|full_access] [--working-folder <relative-path>] [--followup-mode steer|queue] [--print-cli builder|reviewer|builder:n|reviewer:n] [--json]
 ```
 
 ## Forge Lifecycle
@@ -316,7 +373,8 @@ Source map:
   transports, agent hosts, and snapshots.
 - `src/daemon/`: tick loop, commands, phase transitions, context, reconciliation,
   and reviewer-signal recovery.
-- `src/ui/`: Ink dashboard, cockpit frame, agent panes, and terminal theme.
+- `src/ui/`: legacy terminal dashboard, cockpit frame, agent panes, and theme.
+- `src/ide/`: IDE bridge and project-local topology profile.
 - `src/gateway/`: echo, Telegram, and Discord chat transports.
 - `src/onboard/`: first-run wizard and credential smoke tests.
 - `src/forge/`: app-build phase machine and broker handoff.
@@ -356,22 +414,23 @@ Node 22/24, plus a non-blocking `node-pty` prebuilt probe.
 
 ## Documentation
 
-| File | Purpose |
-| --- | --- |
-| [`BETWEEN-BROKER-BLUEPRINT.md`](./BETWEEN-BROKER-BLUEPRINT.md) | Original product concept and broker architecture. |
-| [`DEVELOPMENT-PLAN.md`](./DEVELOPMENT-PLAN.md) | Node/TypeScript implementation plan and acceptance map. |
-| [`IMPROVEMENTS.md`](./IMPROVEMENTS.md) | Adversarial design review backlog. |
-| [`TASKS.md`](./TASKS.md) | Phase and task build tracker. |
-| [`DESIGN.md`](./DESIGN.md) | Compact TUI design rules. |
-| [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md) | Agent signal, ack, review, and wrapper contract. |
-| [`docs/adr/`](./docs/adr/) | Architecture decision records. |
+| File                                                             | Purpose                                                                 |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| [`BETWEEN-BROKER-BLUEPRINT.md`](./BETWEEN-BROKER-BLUEPRINT.md)   | Original product concept and broker architecture.                       |
+| [`DEVELOPMENT-PLAN.md`](./DEVELOPMENT-PLAN.md)                   | Node/TypeScript implementation plan and acceptance map.                 |
+| [`IMPROVEMENTS.md`](./IMPROVEMENTS.md)                           | Adversarial design review backlog.                                      |
+| [`TASKS.md`](./TASKS.md)                                         | Phase and task build tracker.                                           |
+| [`DESIGN.md`](./DESIGN.md)                                       | IDE-first cockpit design rules.                                         |
+| [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md)             | Agent signal, ack, review, and wrapper contract.                        |
+| [`docs/IDE-DOGFOOD-PIPELINE.md`](./docs/IDE-DOGFOOD-PIPELINE.md) | Repeatable IDE dogfood gate for CLI, VS Code webview, tests, and build. |
+| [`docs/adr/`](./docs/adr/)                                       | Architecture decision records.                                          |
 
 ## Status
 
-Between is alpha. The file-signal loop is the verified baseline. One-shot and
-PTY-hosted agent paths are additive and improving. The next meaningful frontier
-is not more spectacle; it is stronger evidence, stronger steering, and less
-room for invisible agent drift.
+Between is alpha. The file-signal loop is the verified baseline. The VS Code IDE
+surface is now the primary app path; one-shot, PTY, and terminal dashboards are
+additive compatibility paths. The next meaningful frontier is stronger evidence,
+stronger steering, and less room for invisible agent drift.
 
 ## License
 

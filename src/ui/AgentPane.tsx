@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Box, Text, useFocus, useInput } from 'ink'
+import { Box, Text } from 'ink'
 import { COLORS } from './theme'
 import type { AgentHost, AgentOutputBuffer } from '../adapters/agent-host'
 
@@ -12,12 +12,12 @@ interface AgentPaneProps {
   focusId: string
   width?: number
   height?: number
-  inputActive?: boolean
 }
 
 /**
  * Renders a bounded, ANSI-stripped TAIL of one agent's output. Source-agnostic: identical
- * for pipe (one-shot) and pty hosts. Draws a focus ring when selected (Tab cycles focus).
+ * for pipe (one-shot) and pty hosts. Agents are broker-controlled; humans type only into
+ * the broker command input.
  */
 export function AgentPane({
   host,
@@ -28,14 +28,9 @@ export function AgentPane({
   focusId,
   width,
   height,
-  inputActive,
 }: AgentPaneProps) {
-  const canInput = host?.kind === 'pty' && Boolean(host.snapshot().alive)
-  const { isFocused } = useFocus({ id: focusId, autoFocus: canInput })
-  const acceptsInput = inputActive ?? canInput
+  void focusId
   const [buf, setBuf] = useState<AgentOutputBuffer | null>(host ? host.snapshot() : null)
-  const [draft, setDraft] = useState('')
-  const [inputStatus, setInputStatus] = useState<string | null>(null)
 
   useEffect(() => {
     if (!host) return
@@ -49,50 +44,27 @@ export function AgentPane({
     buf?.exited === true &&
     !buf.alive &&
     (buf.kind === 'pty' || exitCode === null || exitCode !== 0)
+  const standby = buf?.kind === 'pty' && !buf.alive && !buf.exited
   const exitText = exitCode === null ? '' : ` (exit ${exitCode})`
-  const status = !host ? 'not hosted' : buf?.alive ? 'live' : dead ? `dead${exitText}` : 'idle'
+  const status = !host
+    ? 'not hosted'
+    : buf?.alive
+      ? 'live'
+      : dead
+        ? `dead${exitText}`
+        : standby
+          ? 'standby'
+          : 'idle'
   const statusColor = !host
     ? COLORS.textFaint
     : dead
       ? COLORS.error
       : buf?.alive
         ? COLORS.success
-        : COLORS.textMuted
-
-  useInput(
-    (input, key) => {
-      if (!host || !canInput) return
-      if (key.return) {
-        const body = draft.trim()
-        if (body.length === 0) return
-        setInputStatus('sent')
-        setDraft('')
-        void host.deliver(body).catch((e: unknown) => {
-          const message = e instanceof Error ? e.message : String(e)
-          setInputStatus(`send failed: ${message}`)
-        })
-        return
-      }
-      if (key.escape) {
-        setDraft('')
-        setInputStatus('cleared')
-        return
-      }
-      if (key.backspace || key.delete) {
-        setDraft((prev) => prev.slice(0, -1))
-        return
-      }
-      if (key.ctrl || key.meta || key.tab || key.upArrow || key.downArrow) return
-      if (key.leftArrow || key.rightArrow || key.pageDown || key.pageUp || key.home || key.end)
-        return
-      const clean = input.replace(/\r|\n/g, '')
-      if (clean.length > 0) {
-        setInputStatus(null)
-        setDraft((prev) => prev + clean)
-      }
-    },
-    { isActive: canInput && acceptsInput },
-  )
+        : standby
+          ? COLORS.warning
+          : COLORS.textMuted
+  const control = host?.kind === 'pty' ? 'broker-owned pty' : 'broker signal'
 
   return (
     <Box
@@ -100,8 +72,8 @@ export function AgentPane({
       flexGrow={1}
       width={width}
       height={height}
-      borderStyle="round"
-      borderColor={isFocused ? COLORS.focusRing : COLORS.border}
+      borderStyle="single"
+      borderColor={accent}
       paddingX={1}
     >
       <Box justifyContent="space-between">
@@ -110,6 +82,9 @@ export function AgentPane({
         </Text>
         <Text color={statusColor}>{status}</Text>
       </Box>
+      <Text color={COLORS.textFaint} dimColor wrap="truncate-end">
+        {control}
+      </Text>
       {host === null ? (
         <Text color={COLORS.textFaint} dimColor>
           (file mode - no embedded agent)
@@ -125,16 +100,6 @@ export function AgentPane({
           </Text>
         ))
       )}
-      <Box justifyContent="space-between">
-        <Text color={canInput ? COLORS.textPrimary : COLORS.textFaint} wrap="truncate-end">
-          {canInput ? `> ${draft}` : '> manual input disabled'}
-        </Text>
-        {inputStatus ? (
-          <Text color={inputStatus.startsWith('send failed') ? COLORS.error : COLORS.textMuted}>
-            {inputStatus}
-          </Text>
-        ) : null}
-      </Box>
     </Box>
   )
 }

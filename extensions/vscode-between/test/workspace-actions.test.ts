@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { createHmac } from 'node:crypto'
 import {
+  buildBrokerInputCommand,
   buildEvidenceMarkdown,
   readBetweenWorkspace,
   submitBetweenAction,
 } from '../src/workspace.js'
+import { readCommands, seedWorkspace } from './workspace-fixtures'
 
 describe('workspace actions', () => {
   it('reads current cockpit findings from .between state, review, and bundle', async () => {
@@ -20,6 +21,10 @@ describe('workspace actions', () => {
     expect(view.model.findings[0].linked).toBe(true)
     expect(view.model.findings[1].stale).toBe(true)
     expect(view.canApprove).toBe(true)
+    expect(view.ideProfile.panes.map((pane) => pane.target)).toEqual(['builder:1', 'reviewer:1'])
+    expect(view.ideProfile.permissionMode).toBe('guard')
+    expect(view.ideProfile.workingFolder).toBe('packages/app')
+    expect(view.ideProfile.followupMode).toBe('steer')
     expect(buildEvidenceMarkdown(view)).toMatch(/bundle_id: `b{64}`/)
   })
 
@@ -32,6 +37,15 @@ describe('workspace actions', () => {
     try {
       await submitBetweenAction(root, { kind: 'request_second_review' })
       await submitBetweenAction(root, { kind: 'ask_developer_to_fix', message: 'fix F1' })
+      await submitBetweenAction(root, {
+        kind: 'configure_topology',
+        builderAgentCount: 4,
+        reviewerAgentCount: 2,
+        permissionMode: 'full_access',
+        workingFolder: 'packages/worker',
+        followupMode: 'queue',
+      })
+      await submitBetweenAction(root, { kind: 'broker_input', message: 'keep broker-only IDE' })
       await submitBetweenAction(
         root,
         { kind: 'approve_exact_bundle' },
@@ -43,15 +57,47 @@ describe('workspace actions', () => {
     }
 
     const commands = await readCommands(root)
-    expect(commands.map((command) => command.kind)).toEqual(['review_now', 'goal', 'approve'])
+    expect(commands.map((command) => command.kind)).toEqual([
+      'review_now',
+      'goal',
+      'steer_goal',
+      'approve',
+    ])
     expect(commands[1]).toEqual({ kind: 'goal', goal: 'fix F1' })
-    expect(commands[2].bundle_id).toBe('b'.repeat(64))
-    expect(commands[2].expires_at).toBe(expiresAt)
-    expect(commands[2].sig).toBe(
+    expect(commands[2]).toEqual({ kind: 'steer_goal', goal: 'keep broker-only IDE' })
+    expect(commands[3].bundle_id).toBe('b'.repeat(64))
+    expect(commands[3].expires_at).toBe(expiresAt)
+    expect(commands[3].sig).toBe(
       createHmac('sha256', 'ide-secret')
         .update(`merge:${'d'.repeat(64)}:1:${'b'.repeat(64)}:${expiresAt}`)
         .digest('hex'),
     )
+    const config = await readFile(join(root, '.between', 'config.yaml'), 'utf8')
+    expect(config).toContain('builder_agent_count: 4')
+    expect(config).toContain('reviewer_agent_count: 2')
+    expect(config).toContain('ide_permission_mode: full_access')
+    expect(config).toContain('ide_working_folder: "packages/worker"')
+    expect(config).toContain('ide_followup_mode: queue')
+  })
+
+  it('rejects invalid topology values without changing config', async () => {
+    const root = await seedWorkspace()
+    await submitBetweenAction(root, {
+      kind: 'configure_topology',
+      builderAgentCount: 3,
+      reviewerAgentCount: 2,
+    })
+    const before = await readFile(join(root, '.between', 'config.yaml'), 'utf8')
+
+    await expect(
+      submitBetweenAction(root, {
+        kind: 'configure_topology',
+        builderAgentCount: 0,
+        reviewerAgentCount: 2,
+      }),
+    ).rejects.toThrow(/builderAgentCount/)
+
+    expect(await readFile(join(root, '.between', 'config.yaml'), 'utf8')).toBe(before)
   })
 
   it('refuses exact bundle approval in simulated evidence mode', async () => {
@@ -72,66 +118,22 @@ describe('workspace actions', () => {
       /requires the current sealed bundle/,
     )
   })
+
+  it('parses broker IDE input into command-bus messages', () => {
+    expect(buildBrokerInputCommand({ workflow: { phase: 'idle' } }, 'ship it')).toEqual({
+      kind: 'goal',
+      goal: 'ship it',
+    })
+    expect(buildBrokerInputCommand({ workflow: { phase: 'human_gate' } }, 'adjust it')).toEqual({
+      kind: 'steer_goal',
+      goal: 'adjust it',
+    })
+    expect(buildBrokerInputCommand({ workflow: { phase: 'human_gate' } }, '/review')).toEqual({
+      kind: 'review_now',
+    })
+    expect(buildBrokerInputCommand({ workflow: { phase: 'human_gate' } }, '/abort')).toEqual({
+      kind: 'interrupt',
+    })
+    expect(buildBrokerInputCommand({ workflow: { phase: 'human_gate' } }, '/q')).toBeNull()
+  })
 })
-
-async function readCommands(root: string): Promise<Array<Record<string, unknown>>> {
-  const dir = join(root, '.between', 'commands')
-  const names = (await import('node:fs/promises')).readdir(dir)
-  return Promise.all(
-    (await names).sort().map(async (name) => JSON.parse(await readFile(join(dir, name), 'utf8'))),
-  )
-}
-
-async function seedWorkspace(
-  options: { evidenceTrust?: 'real' | 'simulated'; writeBundle?: boolean } = {},
-): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'between-vscode-workspace-'))
-  await mkdir(join(root, '.git'), { recursive: true })
-  await mkdir(join(root, '.between', 'reviews'), { recursive: true })
-  await mkdir(join(root, '.between', 'bundles'), { recursive: true })
-  await writeFile(join(root, '.git', 'between-approval.key'), 'ide-secret\n')
-  await writeFile(join(root, 'app.ts'), 'const a = 1\nconst b = 2\n')
-  await writeFile(
-    join(root, '.between', 'state.json'),
-    JSON.stringify({
-      project: { name: 'demo', root, obsidian_project_path: null },
-      workflow: { phase: 'human_gate', cycle: 1 },
-      diff: { hash: 'd'.repeat(64), bundle_id: 'b'.repeat(64) },
-      evidence_trust: options.evidenceTrust ?? 'real',
-      developer: { name: 'claude' },
-      reviewer: { name: 'codex' },
-      approval: null,
-    }),
-  )
-  await writeFile(
-    join(root, '.between', 'reviews', 'cycle-0001.json'),
-    JSON.stringify({
-      cycle: 1,
-      diff_hash: 'd'.repeat(64),
-      complete: true,
-      findings: [
-        {
-          id: 'F1',
-          severity: 'blocking',
-          summary: '[app.ts:2] missing guard',
-          target_hash: 'd'.repeat(64),
-        },
-        { id: 'F2', severity: 'non-blocking', summary: '[app.ts:3] old note', target_hash: 'old' },
-      ],
-    }),
-  )
-  if (options.writeBundle !== false) {
-    await writeFile(
-      join(root, '.between', 'bundles', `${'b'.repeat(64)}.json`),
-      JSON.stringify({
-        bundle_id: 'b'.repeat(64),
-        diff_hash: 'd'.repeat(64),
-        repository: { head_sha: 'a'.repeat(40), branch: 'main' },
-        diff: {
-          tracked: 'diff --git a/app.ts b/app.ts\n@@ -1,1 +1,2 @@\n const a = 1\n+const b = 2\n',
-        },
-      }),
-    )
-  }
-  return root
-}

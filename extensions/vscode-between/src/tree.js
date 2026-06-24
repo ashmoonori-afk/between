@@ -27,6 +27,7 @@ export class BetweenTreeProvider {
       ? this.item('Approve exact bundle', 'verified', 'between.approveExactBundle')
       : this.item('Approval locked: real evidence required', 'lock')
     return [
+      this.item('Open Between IDE', 'layout', 'between.openIde'),
       this.item(
         `${this.view.project} | ${this.view.phase} | cycle ${this.view.cycle}`,
         'circuit-board',

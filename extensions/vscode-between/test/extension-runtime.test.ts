@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { activateBetween } from '../src/extension-core.js'
+import { fakeVscode } from './fake-vscode'
 
 describe('extension runtime wiring', () => {
   it('refresh reads workspace data, updates Problems, decorations, and tree view', async () => {
@@ -95,67 +96,148 @@ describe('extension runtime wiring', () => {
     expect(submitAction).not.toHaveBeenCalled()
     expect(warning).toHaveBeenCalledWith('Between exact bundle approval requires real evidence.')
   })
-})
 
-function fakeVscode(opts: {
-  diagnostics: { clear: () => void; set: (entries: unknown[]) => void; dispose: () => void }
-  commands: Map<string, () => Promise<void> | void>
-  activeEditor: { document: { uri: { fsPath: string } }; setDecorations: () => void }
-  treeProviderUpdates: unknown[]
-  showWarningMessage?: (message: string) => void
-}) {
-  return {
-    DiagnosticSeverity: { Error: 0, Warning: 1 },
-    Uri: { file: (fsPath: string) => ({ fsPath, toString: () => fsPath }) },
-    Range: class {
-      constructor(readonly startLine: number) {}
-    },
-    Diagnostic: class {
-      source = ''
-      code = ''
-      constructor(
-        readonly range: unknown,
-        readonly message: string,
-        readonly severity: number,
-      ) {}
-    },
-    EventEmitter: class {
-      event = vi.fn()
-      fire(value: unknown) {
-        opts.treeProviderUpdates.push(value)
-      }
-    },
-    TreeItem: class {
-      label
-      collapsibleState
-      constructor(label: string, collapsibleState?: number) {
-        this.label = label
-        this.collapsibleState = collapsibleState
-      }
-    },
-    TreeItemCollapsibleState: { None: 0, Expanded: 1 },
-    ThemeIcon: class {
-      constructor(readonly id: string) {}
-    },
-    languages: { createDiagnosticCollection: () => opts.diagnostics },
-    window: {
-      activeTextEditor: opts.activeEditor,
-      createTextEditorDecorationType: () => ({ dispose: vi.fn() }),
-      createTreeView: vi.fn(),
-      showInformationMessage: vi.fn(),
-      showWarningMessage: opts.showWarningMessage ?? vi.fn(),
-      showInputBox: vi.fn(async () => 'fix F1'),
-      showTextDocument: vi.fn(),
-    },
-    workspace: {
-      workspaceFolders: [{ uri: { fsPath: 'C:\\repo' } }],
-      openTextDocument: vi.fn(async () => ({})),
-    },
-    commands: {
-      registerCommand(command: string, fn: () => Promise<void> | void) {
-        opts.commands.set(command, fn)
-        return { dispose: vi.fn() }
+  it('opens the broker-only IDE webview and routes input through the broker action', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'between-extension-ide-'))
+    const diagnostics = { clear: vi.fn(), set: vi.fn(), dispose: vi.fn() }
+    const commands = new Map<string, () => Promise<void> | void>()
+    const webviewHandlers: Array<(message: unknown) => Promise<void> | void> = []
+    const panel = {
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+      onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+      webview: {
+        html: '',
+        onDidReceiveMessage: vi.fn((handler: (message: unknown) => Promise<void> | void) => {
+          webviewHandlers.push(handler)
+          return { dispose: vi.fn() }
+        }),
       },
-    },
-  }
-}
+    }
+    const submitAction = vi.fn(async () => {})
+    const vscode = fakeVscode({
+      diagnostics,
+      commands,
+      activeEditor: {
+        document: { uri: { fsPath: join(root, 'app.ts') } },
+        setDecorations: vi.fn(),
+      },
+      treeProviderUpdates: [],
+      webviewPanel: panel,
+    })
+    const context = { subscriptions: [] as unknown[] }
+
+    activateBetween(context, vscode, {
+      workspaceRoot: () => root,
+      readWorkspace: async () => ({
+        project: 'demo',
+        phase: 'human_gate',
+        cycle: 2,
+        cyclesThisGoal: 1,
+        bundleId: 'bundle',
+        diffHash: 'diff',
+        evidenceVerdict: 'blocked',
+        evidenceTrust: 'real',
+        canApprove: false,
+        developer: 'claude',
+        developerStatus: 'working',
+        reviewer: 'codex',
+        reviewerStatus: 'idle',
+        waitingOn: 'human',
+        changedFiles: 1,
+        model: { findings: [] },
+      }),
+      submitAction,
+      evidenceMarkdown: () => '# Evidence\n',
+    })
+
+    await commands.get('between.openIde')?.()
+    await webviewHandlers[0]?.({ type: 'brokerInput', message: 'keep broker-only' })
+    await webviewHandlers[0]?.({
+      type: 'configureTopology',
+      builderAgentCount: 4,
+      reviewerAgentCount: 2,
+      permissionMode: 'guard',
+      workingFolder: 'packages/app',
+      followupMode: 'queue',
+    })
+
+    expect(vscode.window.createWebviewPanel).toHaveBeenCalledWith('between.ide', 'Between IDE', 1, {
+      enableScripts: true,
+      retainContextWhenHidden: true,
+    })
+    expect(panel.webview.html).toContain('data-between-ide')
+    expect(submitAction).toHaveBeenCalledWith(root, {
+      kind: 'broker_input',
+      message: 'keep broker-only',
+    })
+    expect(submitAction).toHaveBeenCalledWith(root, {
+      kind: 'configure_topology',
+      builderAgentCount: 4,
+      reviewerAgentCount: 2,
+      permissionMode: 'guard',
+      workingFolder: 'packages/app',
+      followupMode: 'queue',
+    })
+  })
+
+  it('surfaces IDE topology action failures through VS Code warnings', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'between-extension-ide-warning-'))
+    const diagnostics = { clear: vi.fn(), set: vi.fn(), dispose: vi.fn() }
+    const commands = new Map<string, () => Promise<void> | void>()
+    const warning = vi.fn()
+    const webviewHandlers: Array<(message: unknown) => Promise<void> | void> = []
+    const panel = {
+      reveal: vi.fn(),
+      dispose: vi.fn(),
+      onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+      webview: {
+        html: '',
+        onDidReceiveMessage: vi.fn((handler: (message: unknown) => Promise<void> | void) => {
+          webviewHandlers.push(handler)
+          return { dispose: vi.fn() }
+        }),
+      },
+    }
+    const submitAction = vi.fn(async () => {
+      throw new Error('builderAgentCount must be an integer from 1 to 16')
+    })
+    const vscode = fakeVscode({
+      diagnostics,
+      commands,
+      activeEditor: {
+        document: { uri: { fsPath: join(root, 'app.ts') } },
+        setDecorations: vi.fn(),
+      },
+      treeProviderUpdates: [],
+      showWarningMessage: warning,
+      webviewPanel: panel,
+    })
+    const context = { subscriptions: [] as unknown[] }
+
+    activateBetween(context, vscode, {
+      workspaceRoot: () => root,
+      readWorkspace: async () => ({
+        project: 'demo',
+        phase: 'human_gate',
+        cycle: 2,
+        evidenceVerdict: 'blocked',
+        canApprove: false,
+        model: { findings: [] },
+      }),
+      submitAction,
+      evidenceMarkdown: () => '# Evidence\n',
+    })
+
+    await commands.get('between.openIde')?.()
+    await webviewHandlers[0]?.({
+      type: 'configureTopology',
+      builderAgentCount: 0,
+      reviewerAgentCount: 2,
+    })
+
+    expect(warning).toHaveBeenCalledWith(
+      'Between IDE action failed: builderAgentCount must be an integer from 1 to 16',
+    )
+  })
+})

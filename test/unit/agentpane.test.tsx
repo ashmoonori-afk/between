@@ -7,19 +7,23 @@ import type {
   AgentHostListener,
   AgentExitListener,
   AgentOutputBuffer,
+  AgentRole,
 } from '../../src/adapters/agent-host'
 
 class InteractiveHost implements AgentHost {
-  readonly role = 'developer'
   readonly kind = 'pty'
   readonly delivered: string[] = []
-  private readonly buffer: AgentOutputBuffer = {
-    role: 'developer',
-    kind: 'pty',
-    lines: ['codex ready'],
-    alive: true,
-    exited: false,
-    exitCode: null,
+  private readonly buffer: AgentOutputBuffer
+
+  constructor(readonly role: AgentRole = 'developer') {
+    this.buffer = {
+      role,
+      kind: 'pty',
+      lines: ['agent ready'],
+      alive: true,
+      exited: false,
+      exitCode: null,
+    }
   }
 
   async start(): Promise<void> {}
@@ -42,6 +46,12 @@ class InteractiveHost implements AgentHost {
     this.buffer.alive = false
     this.buffer.exited = true
     this.buffer.exitCode = code
+  }
+
+  markStandby(): void {
+    this.buffer.alive = false
+    this.buffer.exited = false
+    this.buffer.exitCode = null
   }
 
   snapshot(): AgentOutputBuffer {
@@ -70,7 +80,7 @@ describe('AgentPane', () => {
       <AgentPane
         host={host}
         title="REVIEWER"
-        glyph="◎"
+        glyph="R"
         accent="#80F4FF"
         rows={10}
         focusId="reviewer"
@@ -88,7 +98,7 @@ describe('AgentPane', () => {
       <AgentPane
         host={null}
         title="DEVELOPER"
-        glyph="⚒"
+        glyph="D"
         accent="#FFCF99"
         rows={10}
         focusId="developer"
@@ -99,14 +109,14 @@ describe('AgentPane', () => {
     expect(frame).toContain('not hosted')
   })
 
-  it('bounds the rendered tail to `rows`', () => {
+  it('bounds the rendered tail to rows', () => {
     const host = new PipeAgentHost('reviewer', 100)
     for (let i = 0; i < 20; i++) host.feed(`row${i}\n`)
     const { lastFrame } = render(
       <AgentPane
         host={host}
         title="REVIEWER"
-        glyph="◎"
+        glyph="R"
         accent="#80F4FF"
         rows={3}
         focusId="reviewer"
@@ -127,7 +137,7 @@ describe('AgentPane', () => {
       <AgentPane
         host={host}
         title="DEVELOPER"
-        glyph="*"
+        glyph="D"
         accent="#FFCF99"
         rows={10}
         focusId="dev"
@@ -151,7 +161,7 @@ describe('AgentPane', () => {
       <AgentPane
         host={host}
         title="REVIEWER"
-        glyph="*"
+        glyph="R"
         accent="#80F4FF"
         rows={10}
         focusId="reviewer-idle"
@@ -165,37 +175,36 @@ describe('AgentPane', () => {
     expect(frame).not.toContain('dead')
   })
 
-  it('renders an input prompt and submits typed text to an interactive PTY host', async () => {
+  it('keeps agent panes broker-controlled instead of human-input surfaces', () => {
     const host = new InteractiveHost()
-    const { lastFrame, stdin } = render(
+    host.feed('tail output')
+    const { lastFrame } = render(
       <AgentPane
         host={host}
         title="DEVELOPER"
-        glyph="*"
+        glyph="D"
         accent="#FFCF99"
-        rows={6}
-        focusId="developer-input"
+        rows={2}
+        focusId="developer-visible-input"
+        width={64}
+        height={6}
       />,
     )
 
-    expect(lastFrame() ?? '').toContain('> ')
-
-    stdin.write('fix docs')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(lastFrame() ?? '').toContain('> fix docs')
-
-    stdin.write('\r')
-    await new Promise((resolve) => setTimeout(resolve, 0))
-    expect(host.delivered).toEqual(['fix docs'])
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('broker-owned pty')
+    expect(frame).toContain('tail output')
+    expect(frame).not.toContain('INPUT LIVE')
+    expect(frame).not.toContain('> _')
   })
 
-  it('shows manual input as disabled for passive pipe hosts', () => {
+  it('shows passive pipe hosts as broker-signal surfaces', () => {
     const host = new PipeAgentHost('reviewer', 100)
     const { lastFrame } = render(
       <AgentPane
         host={host}
         title="REVIEWER"
-        glyph="*"
+        glyph="R"
         accent="#80F4FF"
         rows={6}
         focusId="reviewer-pipe"
@@ -203,18 +212,18 @@ describe('AgentPane', () => {
     )
 
     const frame = lastFrame() ?? ''
-    expect(frame).toContain('> ')
-    expect(frame).toContain('manual input disabled')
+    expect(frame).toContain('broker signal')
+    expect(frame).not.toContain('INPUT OFF')
   })
 
-  it('does not accept manual input for an inactive PTY host', () => {
+  it('does not show a manual input affordance for an inactive PTY host', () => {
     const host = new InteractiveHost()
     host.markExit(null)
     const { lastFrame } = render(
       <AgentPane
         host={host}
         title="DEVELOPER"
-        glyph="*"
+        glyph="D"
         accent="#FFCF99"
         rows={6}
         focusId="developer-dead"
@@ -222,7 +231,29 @@ describe('AgentPane', () => {
     )
 
     const frame = lastFrame() ?? ''
-    expect(frame).toContain('> ')
-    expect(frame).toContain('manual input disabled')
+    expect(frame).toContain('dead')
+    expect(frame).not.toContain('INPUT OFF')
+    expect(frame).not.toContain('> _')
+  })
+
+  it('shows broker-owned reviewer slots as standby before a sealed bundle exists', () => {
+    const host = new InteractiveHost('reviewer')
+    host.markStandby()
+    host.feed('[between] reviewer waiting for a sealed review bundle')
+    const { lastFrame } = render(
+      <AgentPane
+        host={host}
+        title="REVIEWER"
+        glyph="R"
+        accent="#80F4FF"
+        rows={6}
+        focusId="reviewer-standby"
+      />,
+    )
+
+    const frame = lastFrame() ?? ''
+    expect(frame).toContain('standby')
+    expect(frame).toContain('sealed review bundle')
+    expect(frame).toContain('broker-owned pty')
   })
 })

@@ -11,6 +11,7 @@ import { registerCockpitCommand } from './cockpit-command'
 import { registerForgeCommands } from './forge-commands'
 import { registerGatewayCommand } from './gateway-command'
 import { registerSetupCommands } from './setup-commands'
+import { registerIdeCommand } from './ide-command'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -29,6 +30,7 @@ export function buildProgram(): Command {
   registerReplayCommand(program)
   registerCockpitCommand(program)
   registerGatewayCommand(program)
+  registerIdeCommand(program)
   registerForgeCommands(program)
 
   return program

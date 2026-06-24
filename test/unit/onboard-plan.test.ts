@@ -65,6 +65,15 @@ describe('setYamlScalar', () => {
     expect(out).toBe('gateway_channel: telegram            # echo | telegram | discord')
   })
 
+  it('keeps hash characters inside quoted scalars out of the trailing comment', () => {
+    const out = setYamlScalar(
+      'ide_working_folder: "packages/#old" # keep working-folder comment\n',
+      'ide_working_folder',
+      '"packages/#app"',
+    )
+    expect(out).toBe('ide_working_folder: "packages/#app" # keep working-folder comment\n')
+  })
+
   it('replaces without a comment', () => {
     expect(setYamlScalar('vault_path: ', 'vault_path', '"/tmp/v"')).toBe('vault_path: "/tmp/v"')
   })
