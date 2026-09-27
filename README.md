@@ -143,6 +143,21 @@ Between is designed around a few non-negotiables:
 
 Requires Node.js `>=22.12` and git.
 
+Run it with `npx` (the npm package is `between-dev`; the command is `between`):
+
+```bash
+cd path/to/target-repo
+npx -y between-dev init --agent fake
+npx -y between-dev status
+
+# before the package is published to npm, run straight from GitHub (builds on install)
+npx -y github:ashmoonori-afk/between status
+```
+
+Or install it: `npm install -g between-dev`, then use `between ...`.
+
+From source:
+
 ```bash
 git clone https://github.com/ashmoonori-afk/between
 cd between
@@ -301,8 +316,40 @@ between verify
 between journal
 between replay
 between cockpit
+between mcp [--root <path>] [--allow-control] [--allow-exec]
 between ide [--builder-agents <n>] [--reviewer-agents <n>] [--rules-mode project_only|inherit_global] [--permission-mode read_only|guard|full_access] [--working-folder <relative-path>] [--followup-mode steer|queue] [--print-cli builder|reviewer|builder:n|reviewer:n] [--json]
 ```
+
+## MCP Server
+
+Between also runs as a stdio MCP server, so MCP clients (Claude Code, Claude Desktop,
+Codex CLI, Cursor) can read broker state and, when a human allows it, steer the broker.
+It is a second thin front end over the same core API as the CLI.
+
+```bash
+# Claude Code, from the target repository
+claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
+```
+
+Other clients use the same command in their MCP config, for example:
+
+```json
+{
+  "mcpServers": {
+    "between": {
+      "command": "npx",
+      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+    }
+  }
+}
+```
+
+By default only read tools are exposed (`between_status`, `between_summarize`,
+`between_doctor`, `between_journal`, `between_replay`, `between_evidence`).
+`--allow-exec` adds `between_verify` and `between_policy`, and `--allow-control` adds
+pause, resume, interrupt, review-now, stop, goal, and steer. Approval, ack, init, and
+verify-push are never exposed. Tool reference, security notes, and per-client configs
+(including Codex CLI and Cursor) are in [`docs/MCP.md`](./docs/MCP.md).
 
 ## Forge Lifecycle
 
@@ -367,6 +414,12 @@ flowchart LR
 
 Source map:
 
+- `src/api/`: the shared core API used by both front ends (status, broker
+  control, checks, journal, evidence). No printing; typed results and errors.
+  Also the library entry (`import ... from 'between-dev'`); human-only approval
+  lives in `between-dev/human`.
+- `src/cli/`: CLI front end (commander wiring and output formatting).
+- `src/mcp/`: MCP front end (stdio server, tool registration).
 - `src/core/`: pure broker logic, FSM, diff hashing, debounce, findings,
   redaction, and state projection.
 - `src/adapters/`: git, atomic state, event log, locks, command bus, signal
@@ -393,6 +446,12 @@ hook through `between verify-push`, which re-checks the recorded approval before
 push. Without the env secret, local unsigned approvals can move the demo
 workflow, but push verification remains blocked.
 
+The MCP server never exposes approval. It scrubs `BETWEEN_APPROVAL_SECRET` and
+other credential-looking variables from its own environment, is pinned to one
+project root, and only registers command-running or broker-steering tools when a
+human starts it with `--allow-exec` or `--allow-control`. See
+[`docs/MCP.md`](./docs/MCP.md).
+
 Do not run Between with untrusted agents in a repository where unapproved merge
 or deploy would be harmful.
 
@@ -405,6 +464,7 @@ npm run typecheck
 npm run lint
 npm test
 npm run build
+npm run smoke:pack   # packs the package, runs it via npx (CLI + MCP stdio) and as a library
 npm run test:vscode
 npm audit --omit=dev
 ```
@@ -422,6 +482,7 @@ Node 22/24, plus a non-blocking `node-pty` prebuilt probe.
 | [`TASKS.md`](./TASKS.md)                                         | Phase and task build tracker.                                           |
 | [`DESIGN.md`](./DESIGN.md)                                       | IDE-first cockpit design rules.                                         |
 | [`docs/AGENT-CONTRACT.md`](./docs/AGENT-CONTRACT.md)             | Agent signal, ack, review, and wrapper contract.                        |
+| [`docs/MCP.md`](./docs/MCP.md)                                   | MCP server: tools, flags, security notes, client configs.               |
 | [`docs/IDE-DOGFOOD-PIPELINE.md`](./docs/IDE-DOGFOOD-PIPELINE.md) | Repeatable IDE dogfood gate for CLI, VS Code webview, tests, and build. |
 | [`docs/adr/`](./docs/adr/)                                       | Architecture decision records.                                          |
 
