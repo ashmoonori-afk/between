@@ -49,6 +49,16 @@ export class BrokerLock {
     }
   }
 
+  /** True while a live broker holds the lock (a stale lock from a dead process counts as free). */
+  async isHeld(): Promise<boolean> {
+    if (!existsSync(this.p.lock)) return false
+    try {
+      return await lockfile.check(this.p.lock, { stale: 30_000, realpath: true })
+    } catch {
+      return false
+    }
+  }
+
   async readOwner(): Promise<OwnerInfo | null> {
     try {
       const raw = JSON.parse(await readFile(this.p.owner, 'utf8')) as Record<string, unknown>

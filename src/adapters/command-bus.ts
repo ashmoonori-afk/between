@@ -78,6 +78,15 @@ export class CommandBus {
     return name.slice(0, -'.json'.length)
   }
 
+  /** Number of queued command files not yet drained. */
+  async pendingCount(): Promise<number> {
+    try {
+      return (await readdir(this.p.commands)).filter((n) => n.endsWith('.json')).length
+    } catch {
+      return 0
+    }
+  }
+
   /** Read pending commands in submission order. Caller deletes each after applying. */
   async drain(): Promise<DrainedCommand[]> {
     let names: string[]
