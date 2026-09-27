@@ -5,7 +5,7 @@ import { fail, root } from './shared'
 export function registerVerifyCommand(program: Command): void {
   program
     .command('verify')
-    .description('Run the configured verification checks and emit a structured report (B3)')
+    .description('Run the configured verification checks and emit a structured report')
     .option('--json', 'emit JSON instead of a summary')
     .action(async (opts: { json?: boolean }) => {
       try {
