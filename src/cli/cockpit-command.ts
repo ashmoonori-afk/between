@@ -117,7 +117,7 @@ function parseReplayCycle(value: string): number | null {
 }
 
 async function rerunConfiguredVerification(rootDir: string) {
-  const { runConfiguredVerification } = await import('./verify-command')
+  const { runConfiguredVerification } = await import('../api/checks')
   return runConfiguredVerification(rootDir)
 }
 

@@ -4,6 +4,13 @@
   "private": true,
   "description": "A local terminal broker for AI pair development — observe a developer (Claude) and reviewer (Codex) terminal and coordinate a diff-driven review loop.",
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "between": "dist/cli.js"
   },

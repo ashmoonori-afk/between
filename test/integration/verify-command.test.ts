@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { betweenPaths } from '../../src/adapters/paths'
-import { runConfiguredVerification } from '../../src/cli/verify-command'
+import { runConfiguredVerification } from '../../src/api/checks'
 
 let dir = ''
 

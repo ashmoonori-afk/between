@@ -1,11 +1,6 @@
 import * as readline from 'node:readline/promises'
-import { execa } from 'execa'
 import type { Command } from 'commander'
-import { SystemClock } from '../core/clock'
-import { initProject } from '../adapters/init-project'
-import { GitAdapter } from '../adapters/git'
-import { loadConfig } from '../runtime'
-import { AGENT_PRESETS, type AgentPreset } from '../core/constants'
+import { initWorkspace, parseAgentPreset, runDoctor } from '../api/setup'
 import { print } from './output'
 import { ASCII, fail, root } from './shared'
 
@@ -20,20 +15,12 @@ export function registerSetupCommands(program: Command): void {
     .action(
       async (opts: { vault?: string; agent?: string; developer?: string; reviewer?: string }) => {
         try {
-          const validate = (v: string | undefined, flag: string): AgentPreset | undefined => {
-            if (v && !AGENT_PRESETS.includes(v as AgentPreset)) {
-              throw new Error(`${flag} must be one of: ${AGENT_PRESETS.join(', ')}`)
-            }
-            return v as AgentPreset | undefined
-          }
-          const agent = validate(opts.agent, '--agent')
-          const developer = validate(opts.developer, '--developer')
-          const reviewer = validate(opts.reviewer, '--reviewer')
-          const res = await initProject(
-            root(),
-            { vaultPath: opts.vault, agent, developer, reviewer },
-            new SystemClock(),
-          )
+          const res = await initWorkspace(root(), {
+            vaultPath: opts.vault,
+            agent: parseAgentPreset(opts.agent, '--agent'),
+            developer: parseAgentPreset(opts.developer, '--developer'),
+            reviewer: parseAgentPreset(opts.reviewer, '--reviewer'),
+          })
           print(
             res.alreadyExisted
               ? 'between: already initialized (refreshed missing files)'
@@ -103,53 +90,8 @@ export function registerSetupCommands(program: Command): void {
     .description('Diagnose the environment and repo for Between')
     .option('--strict', 'also fail on policy violations (secrets in config, etc.)')
     .action(async (opts: { strict?: boolean }) => {
-      const checks: Array<{ ok: boolean | 'warn'; label: string }> = []
-      const git = new GitAdapter(root())
-      try {
-        const v = await execa('git', ['--version'], { reject: false })
-        checks.push({ ok: v.exitCode === 0, label: `git: ${v.stdout.trim() || 'not found'}` })
-      } catch {
-        checks.push({ ok: false, label: 'git: not found' })
-      }
-      checks.push({ ok: await git.isRepo(), label: 'inside a git work tree' })
-      try {
-        const cfg = await loadConfig(root())
-        checks.push({ ok: true, label: 'between initialized (config valid)' })
-        checks.push({
-          ok: cfg.vault_path ? true : 'warn',
-          label: cfg.vault_path
-            ? `vault: ${cfg.vault_path}`
-            : 'vault: not set (Obsidian memory disabled)',
-        })
-        if (opts.strict) {
-          // A6: bot tokens must live in env, never in config.yaml — fail strict if one leaked in.
-          const secretInConfig = Boolean(cfg.telegram_bot_token) || Boolean(cfg.discord_bot_token)
-          checks.push({
-            ok: secretInConfig ? false : true,
-            label: secretInConfig
-              ? 'SECRET in config.yaml — move telegram_bot_token/discord_bot_token to BETWEEN_*_TOKEN env'
-              : 'no literal bot tokens in config.yaml (env-only policy)',
-          })
-        }
-      } catch {
-        checks.push({ ok: false, label: 'between initialized (run `between init`)' })
-      }
-      let ptyOk = false
-      try {
-        const ptyModule = '@lydell/node-pty'
-        await import(ptyModule)
-        ptyOk = true
-      } catch {
-        ptyOk = false
-      }
-      checks.push({
-        ok: ptyOk ? true : 'warn',
-        label: ptyOk
-          ? '@lydell/node-pty available (terminal mode ready)'
-          : 'node-pty unavailable (headless file-signal mode only)',
-      })
-
-      for (const c of checks) {
+      const report = await runDoctor(root(), { strict: opts.strict })
+      for (const c of report.checks) {
         const mark = ASCII
           ? c.ok === true
             ? '[ok]'
@@ -163,6 +105,6 @@ export function registerSetupCommands(program: Command): void {
               : '✗'
         print(`  ${mark} ${c.label}`)
       }
-      if (checks.some((c) => c.ok === false)) process.exitCode = 1
+      if (!report.ok) process.exitCode = 1
     })
 }
