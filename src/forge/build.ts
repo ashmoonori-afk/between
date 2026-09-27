@@ -77,7 +77,7 @@ export async function delegateBuild(
   root: string,
   state: ForgeState,
   task: string,
-  submit: (goal: string) => Promise<void>,
+  submit: (goal: string) => Promise<unknown>,
 ): Promise<DelegateResult> {
   const { slug, goal, brief } = buildTaskBrief(state, task)
 
