@@ -55,7 +55,9 @@ function wrapper(cli: string, exampleCmd: string): string {
     cli +
     "', " +
     spawnArgs(cli) +
-    ", { cwd: agentCwd, input: prompt, stdio: ['pipe','inherit','inherit'] })\n" +
+    // npm installs agent CLIs on Windows as .cmd shims, which only run through a shell; the
+    // arguments are fixed literals and the prompt goes over stdin, so this adds no injection path
+    ", { cwd: agentCwd, input: prompt, stdio: ['pipe','inherit','inherit'], shell: process.platform === 'win32' })\n" +
     "if (r.error && r.error.code === 'ENOENT') {\n" +
     "  process.stderr.write('[' + role + '] " +
     cli +
@@ -72,7 +74,8 @@ function spawnArgs(cli: string): string {
   // claude: print mode reads the prompt from stdin; codex: non-interactive exec subcommand.
   return cli === 'claude'
     ? "['-p', '--output-format', 'text']"
-    : "['exec', '--ask-for-approval', 'never']"
+    : // --ask-for-approval is a top-level codex flag; after `exec` codex rejects it (exit 2)
+      "['--ask-for-approval', 'never', 'exec']"
 }
 
 export const CLAUDE_AGENT_SOURCE = wrapper(
