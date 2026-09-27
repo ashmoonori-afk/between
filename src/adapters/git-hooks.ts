@@ -1,5 +1,13 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
+import { join, resolve } from 'node:path'
 
 const MARKER = 'between-verify-push'
 
@@ -105,8 +113,33 @@ process.exit(0)
 
 const HOOK = `#!/bin/sh
 # ${MARKER} (installed by 'between init'). Remove this file to disable the push gate.
-exec node "$(git rev-parse --git-dir)/${MARKER}.mjs"
+exec node "$(git rev-parse --git-common-dir)/${MARKER}.mjs"
 `
+
+/**
+ * Where git actually looks for this checkout's hooks, and the repository's common git dir.
+ * `--git-path hooks` honors `core.hooksPath` and linked worktrees (where `.git` is a file);
+ * the common dir is shared by all worktrees, so one gate script serves every checkout.
+ * Null when `root` is not the top of a git work tree.
+ */
+function gitHookLocations(root: string): { hooksDir: string; commonDir: string } | null {
+  const git = (...args: string[]) =>
+    execFileSync('git', ['-C', root, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim()
+  try {
+    if (realpathSync.native(git('rev-parse', '--show-toplevel')) !== realpathSync.native(root)) {
+      return null
+    }
+    return {
+      hooksDir: resolve(root, git('rev-parse', '--git-path', 'hooks')),
+      commonDir: resolve(root, git('rev-parse', '--git-common-dir')),
+    }
+  } catch {
+    return null
+  }
+}
 
 export type PrePushHookInstallResult =
   | { kind: 'installed'; path: string }
@@ -116,12 +149,12 @@ export type PrePushHookInstallResult =
   | { kind: 'failed'; reason: string }
 
 export function installPrePushHookDetailed(root: string): PrePushHookInstallResult {
-  const gitDir = join(root, '.git')
-  const hooksDir = join(gitDir, 'hooks')
-  if (!existsSync(gitDir)) return { kind: 'not_git_repo' }
+  const locations = gitHookLocations(root)
+  if (!locations) return { kind: 'not_git_repo' }
+  const { hooksDir, commonDir } = locations
   try {
     mkdirSync(hooksDir, { recursive: true })
-    writeFileSync(join(gitDir, `${MARKER}.mjs`), VERIFY_PUSH_SCRIPT, 'utf8')
+    writeFileSync(join(commonDir, `${MARKER}.mjs`), VERIFY_PUSH_SCRIPT, 'utf8')
     const hookPath = join(hooksDir, 'pre-push')
     let alreadyInstalled = false
     if (existsSync(hookPath)) {
