@@ -40,6 +40,13 @@ try {
   check('npx between --help', npx('--help'), 'Usage: between')
   check('npx between init', npx('init', '--agent', 'fake'), 'between: initialized')
   check('npx between status', npx('status'), 'phase:      idle')
+  // `npx <package> <cmd>` with no explicit bin: with several bins, npx runs the one named after
+  // the package. `file:` makes npx treat the tarball as a package spec, like `npx between-dev`.
+  check(
+    `npx ${name} status (default bin)`,
+    run('npx', ['--yes', `file:${tarball}`, 'status'], project),
+    'phase:      idle',
+  )
 
   mkdirSync(consumer)
   writeFileSync(
