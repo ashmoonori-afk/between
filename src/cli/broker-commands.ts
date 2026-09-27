@@ -16,7 +16,7 @@ function enqueue(label: string, command: BrokerControl) {
   return async () => {
     try {
       const res = await submitBrokerCommand(root(), command)
-      print(`between: ${label} requested`)
+      print(`between: ${label} queued (${res.command_id})`)
       if (!res.broker_running) print(NOT_RUNNING_NOTE)
     } catch (e) {
       await fail(e)
@@ -110,7 +110,7 @@ export function registerBrokerCommands(program: Command): void {
     .action(async (text: string[]) => {
       try {
         const res = await submitBrokerCommand(root(), { kind: 'goal', goal: text.join(' ') })
-        print('between: goal locked')
+        print(`between: goal queued (${res.command_id})`)
         if (!res.broker_running) print(NOT_RUNNING_NOTE)
       } catch (e) {
         await fail(e)
@@ -123,7 +123,7 @@ export function registerBrokerCommands(program: Command): void {
     .action(async (text: string[]) => {
       try {
         const res = await submitBrokerCommand(root(), { kind: 'steer_goal', goal: text.join(' ') })
-        print('between: goal steered')
+        print(`between: steer queued (${res.command_id})`)
         if (!res.broker_running) print(NOT_RUNNING_NOTE)
       } catch (e) {
         await fail(e)

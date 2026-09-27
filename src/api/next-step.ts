@@ -25,7 +25,7 @@ export function nextStep(s: NextStepInput): string | null {
   }
   if (!s.broker_running) return 'no broker is running; run `between start` to continue'
   if (s.agent_mode === 'file' && (s.waiting_on === 'reviewer' || s.waiting_on === 'developer')) {
-    return `file mode: run the ${s.waiting_on} agent yourself (see docs/AGENT-CONTRACT.md), or restart with \`between start --embed\` to host the agents`
+    return `file mode: run the ${s.waiting_on} agent yourself (see docs/AGENT-CONTRACT.md), or set \`agent_mode: oneshot\` in .between/config.yaml and restart \`between start\` so Between runs the agents`
   }
   return null
 }

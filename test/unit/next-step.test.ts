@@ -36,7 +36,9 @@ describe('nextStep', () => {
       broker_running: true,
     })
     expect(step).toMatch(/run the reviewer agent yourself/)
-    expect(step).toMatch(/between start --embed/)
+    // --embed alone does not run file-mode agents; oneshot mode does
+    expect(step).toMatch(/agent_mode: oneshot/)
+    expect(step).not.toMatch(/--embed/)
   })
 
   it('stays quiet while hosted agents are working', () => {
