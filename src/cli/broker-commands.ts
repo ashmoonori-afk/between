@@ -158,7 +158,6 @@ export function registerBrokerCommands(program: Command): void {
         const summary = await summarizeEvents(root())
         print(`Between - ${summary.total} events`)
         for (const { event, count } of summary.counts) print(`  ${event}: ${count}`)
-        print('(full cycle analytics + Obsidian summary land in M7)')
       } catch (e) {
         await fail(e)
       }
@@ -177,7 +176,7 @@ export function registerBrokerCommands(program: Command): void {
 
   program
     .command('dash')
-    .description('Live broker dashboard (cmux/Kiro-inspired TUI)')
+    .description('Live broker dashboard in the terminal')
     .option('--once', 'render a single frame and exit (non-interactive)')
     .option('--interval <ms>', 'refresh interval in milliseconds (integer >= 250)', parseInterval)
     .action(async (opts: { once?: boolean; interval?: number }) => {

@@ -9,7 +9,7 @@ export function registerCockpitCommand(program: Command): void {
   program
     .command('cockpit')
     .description(
-      'Render a single code-centric cockpit frame (state+evidence+policy+verify+journal, B6)',
+      'Render a single code-centric cockpit frame (state, evidence, policy, verify, journal)',
     )
     .option('--once', 'render one frame and exit (default; interactive mode is future)')
     .option('--action <action>', 'submit finding action: accept | dispute | waive')

@@ -12,7 +12,7 @@ interface ReplayOptions {
 export function registerReplayCommand(program: Command): void {
   program
     .command('replay')
-    .description('Reconstruct state from the verified append-only event journal (B5)')
+    .description('Reconstruct state from the verified append-only event journal')
     .option('--verify', 'verify the journal hash chain and pinned head before output')
     .option('--out <path>', 'write reconstructed state JSON to a file instead of stdout')
     .action(async (opts: ReplayOptions) => {

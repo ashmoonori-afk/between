@@ -5,7 +5,7 @@ import { fail, root } from './shared'
 export function registerReviewCommand(program: Command): void {
   program
     .command('review-worktree')
-    .description("Materialize a read-only reviewer worktree from the current cycle's bundle (B1)")
+    .description("Materialize a read-only reviewer worktree from the current cycle's bundle")
     .action(async () => {
       try {
         const { materializeReviewWorktree } = await import('../api/records')
