@@ -29,6 +29,8 @@ jobs:
         run: npm run test:cov
       - name: Build
         run: npm run build
+      - name: Pack smoke (npx + library entry)
+        run: npm run smoke:pack
 
   # node-pty is an OPTIONAL native dep (terminal mode). It must NOT gate the headless
   # build: this job records whether it builds on each runner, but is allowed to fail.

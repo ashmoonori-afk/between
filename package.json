@@ -1,8 +1,26 @@
 {
-  "name": "between",
+  "name": "between-dev",
   "version": "0.1.0",
-  "private": true,
   "description": "A local terminal broker for AI pair development — observe a developer (Claude) and reviewer (Codex) terminal and coordinate a diff-driven review loop.",
+  "keywords": [
+    "ai",
+    "pair-programming",
+    "code-review",
+    "agents",
+    "cli",
+    "broker"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ashmoonori-afk/between.git"
+  },
+  "homepage": "https://github.com/ashmoonori-afk/between#readme",
+  "bugs": {
+    "url": "https://github.com/ashmoonori-afk/between/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "exports": {
     ".": {
@@ -16,7 +34,9 @@
     "./package.json": "./package.json"
   },
   "bin": {
-    "between": "dist/cli.js"
+    "between": "dist/cli.js",
+    "between-dev": "dist/cli.js",
+    "between-mcp": "dist/mcp.js"
   },
   "engines": {
     "node": ">=22.12.0"
@@ -26,6 +46,8 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
+    "smoke:pack": "node scripts/smoke-pack.mjs",
     "dev": "tsx src/cli.ts",
     "between": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
@@ -38,6 +60,7 @@
   },
   "license": "MIT",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.1",
     "chokidar": "^5.0.0",
     "commander": "^15.0.0",
     "execa": "^9.6.1",
