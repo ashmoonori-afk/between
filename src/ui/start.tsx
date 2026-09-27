@@ -91,7 +91,7 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
 
     const daemon = await buildDaemon(absRoot, clock, transport, agentControl)
     await daemon.load()
-    stopDeathWiring = wirePtyDeaths(hosts, daemon)
+    stopDeathWiring = wireAgentDeaths(hosts, daemon)
 
     const useUi = Boolean(process.stdout.isTTY) && !opts.headless
     if (useUi) {
@@ -130,16 +130,24 @@ export function reviewerOneShotCommand(root: string, command: string): string {
     : command
 }
 
-function wirePtyDeaths(hosts: Hosts, daemon: Daemon): Array<() => void> {
+/**
+ * Route agent exits to the daemon. A pty agent is long-lived, so any exit is a death (except a
+ * deliberate stop while paused). A oneshot (pipe) agent exits after every signal, so only a
+ * non-zero exit code is a failure; exit 0 is normal and a null code means it was aborted.
+ */
+export function wireAgentDeaths(
+  hosts: Hosts,
+  daemon: Pick<Daemon, 'reportAgentDied' | 'state'>,
+): Array<() => void> {
   if (!hosts) return []
-  return (['developer', 'reviewer'] as const).flatMap((role: AgentRole) => {
-    const host = hosts[role]
-    if (host.kind !== 'pty') return []
-    return [
-      host.subscribeExit((event) => {
+  return (['developer', 'reviewer'] as const).map((role: AgentRole) =>
+    hosts[role].subscribeExit((event) => {
+      if (event.kind === 'pty') {
         if (event.exitCode === null && daemon.state.workflow.phase === 'paused') return
-        void daemon.reportAgentDied(event.role, event.exitCode)
-      }),
-    ]
-  })
+      } else if (event.exitCode === null || event.exitCode === 0) {
+        return
+      }
+      void daemon.reportAgentDied(event.role, event.exitCode)
+    }),
+  )
 }
