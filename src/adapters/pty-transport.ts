@@ -54,6 +54,9 @@ export class OneShotTransport implements SignalTransport, AgentControl {
       input: signal.body,
       reject: false,
       env: launch.env,
+      // execa merges process.env by default, which would hand the stripped secrets
+      // (BETWEEN_APPROVAL_SECRET, git/cloud tokens) straight back to the agent
+      extendEnv: false,
       forceKillAfterDelay: 1_000,
     })
     this.active.set(role, sub)
