@@ -2,7 +2,7 @@
 // Pack-and-run smoke test: proves the packed artifact works through `npx` and as a library,
 // independent of the source tree. Usage: `npm run build && npm run smoke:pack`.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -28,10 +28,10 @@ function check(label, output, expected) {
 }
 
 try {
-  const packed = JSON.parse(
-    run('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', work], repo),
-  )
-  const tarball = join(work, packed[0].filename)
+  // npm 10 still runs `prepare` on pack and its build log shares stdout, so locate the tarball
+  // on disk instead of parsing `npm pack --json`.
+  run('npm', ['pack', '--pack-destination', work], repo)
+  const tarball = join(work, readdirSync(work).find((f) => f.endsWith('.tgz')))
   const npx = (...args) => run('npx', ['--yes', '--package', tarball, 'between', ...args], project)
 
   mkdirSync(project)
