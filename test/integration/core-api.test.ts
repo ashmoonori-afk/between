@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../src/core/clock'
 import { betweenPaths } from '../../src/adapters/paths'
+import { BrokerLock } from '../../src/adapters/lock'
 import {
   BetweenApiError,
   ackReview,
@@ -52,6 +53,25 @@ describe('core api', () => {
     expect(status.evidence_trust).toBe('simulated')
     expect(status.developer.name).toBeTruthy()
     expect(typeof status.max_cycles_per_goal).toBe('number')
+  })
+
+  it('reports whether a broker is running and what to do next', async () => {
+    await freshWorkspace()
+    const idle = await getStatus(dir)
+    expect(idle.broker_running).toBe(false)
+    expect(idle.simulated).toBe(true)
+    expect(idle.next_step).toMatch(/between start/)
+    expect((await submitBrokerCommand(dir, { kind: 'pause' })).broker_running).toBe(false)
+
+    const lock = new BrokerLock(dir)
+    await lock.acquire(new FakeClock(0))
+    try {
+      expect((await getStatus(dir)).broker_running).toBe(true)
+      expect((await submitBrokerCommand(dir, { kind: 'resume' })).broker_running).toBe(true)
+    } finally {
+      await lock.releaseLock()
+    }
+    expect((await getStatus(dir)).broker_running).toBe(false)
   })
 
   it('fails status with no_state outside a workspace', async () => {
