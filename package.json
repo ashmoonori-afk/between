@@ -26,6 +26,8 @@
   ],
   "scripts": {
     "build": "tsup",
+    "prepare": "tsup",
+    "smoke:pack": "node scripts/smoke-pack.mjs",
     "dev": "tsx src/cli.ts",
     "between": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
