@@ -180,15 +180,21 @@ between status
 between dash --once
 ```
 
-Demo the full loop with the bundled fake agent:
+Demo the full loop with the bundled fake agent. The default `agent_mode: file`
+waits for you to run the agents yourself, so switch the demo to `oneshot` and
+Between runs the fake developer and reviewer for you:
 
 ```bash
 between init --agent fake
+# in .between/config.yaml set:  agent_mode: oneshot
+between goal "demo change"
 # edit a file in the target repo
-between start --embed
+between start          # the loop reaches human_gate; see `between status`
 ```
 
-Wire real agents later with explicit roles:
+For real agents, initialize with explicit roles (they use `oneshot` mode). Re-running
+`init` does not change the agents of an existing workspace; to switch, delete
+`.between/` first:
 
 ```bash
 between init --developer claude --reviewer codex
@@ -306,7 +312,7 @@ between steer "<text>"
 between stop
 between ack
 between approve merge|deploy|promote_rule
-between verify-push
+between verify-push [--stdin]
 between doctor
 between summarize
 between evidence
@@ -441,10 +447,18 @@ verify files.
 
 Approval has stronger protection when `BETWEEN_APPROVAL_SECRET` is configured:
 `between approve` signs approval records with that human-owned secret, and the
-daemon requires a valid signature. `between init` also installs a `pre-push`
-hook through `between verify-push`, which re-checks the recorded approval before
-push. Without the env secret, local unsigned approvals can move the demo
-workflow, but push verification remains blocked.
+daemon requires a valid signature. The signature also covers the git tree of the
+approved working tree.
+
+`between init` installs a `pre-push` hook. Pushes to **protected branches**
+(`protected_branches` in `.between/config.yaml`, default `[main]`) need a
+signed, fresh merge approval whose tree equals the pushed commit's tree:
+approve, commit exactly that tree, then push. Deleting a protected branch is
+refused. Pushes to any other branch are not gated. `between verify-push`
+checks the current branch the same way (`--stdin` reads git's pre-push lines).
+Without the env secret, protected pushes stay blocked. The hook is client-side
+(`git push --no-verify` skips it), so pair it with server-side branch
+protection.
 
 The MCP server never exposes approval. It scrubs `BETWEEN_APPROVAL_SECRET` and
 other credential-looking variables from its own environment, is pinned to one

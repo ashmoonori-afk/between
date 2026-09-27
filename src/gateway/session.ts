@@ -1,6 +1,7 @@
 import { CommandBus } from '../adapters/command-bus'
 import { StateRepository } from '../adapters/state-repository'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
+import { GitAdapter } from '../adapters/git'
 import { signApproval, approvalExpiry } from '../core/approval'
 import { APPROVAL_SCOPES } from '../core/constants'
 import type { ApprovalScope, Phase } from '../core/types'
@@ -109,6 +110,8 @@ export class GatewaySession {
     // F1: sign the bundle binding + expiry too, consistently with the CLI/daemon/hook.
     const bundleId = state?.diff.bundle_id ?? null
     const expiresAt = approvalExpiry(Date.now())
+    // bind the approval to the exact working tree, like the CLI (protected-branch push gate)
+    const tree = await new GitAdapter(this.root).worktreeTree()
     const sig = secret
       ? signApproval(secret, {
           scope,
@@ -116,6 +119,7 @@ export class GatewaySession {
           cycle: state?.workflow.cycle ?? 0,
           bundle_id: bundleId,
           expires_at: expiresAt,
+          tree,
         })
       : undefined
     await this.bus.submit({
@@ -124,6 +128,7 @@ export class GatewaySession {
       sig,
       bundle_id: bundleId,
       expires_at: expiresAt,
+      tree,
     })
     return secret
       ? `${scope} approval signed + submitted`

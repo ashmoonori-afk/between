@@ -30,14 +30,18 @@ describe('A5 — fake-mode safety', () => {
     await rm(real, { recursive: true, force: true }).catch(() => {})
   })
 
-  it('the installed pre-push verifier refuses to push a SIMULATION project', async () => {
+  it('the installed pre-push verifier refuses to push a SIMULATION project to main', async () => {
     await initProject(dir, { agent: 'fake' }, new FakeClock(0))
-    const res = await execa('node', ['.git/between-verify-push.mjs'], {
-      cwd: dir,
-      reject: false,
-    })
+    const push = (branch: string) =>
+      execa('node', ['.git/between-verify-push.mjs'], {
+        cwd: dir,
+        reject: false,
+        input: `refs/heads/x ${'a'.repeat(40)} refs/heads/${branch} ${'0'.repeat(40)}\n`,
+      })
+    const res = await push('main')
     expect(res.exitCode).toBe(1)
     expect(res.stderr).toMatch(/SIMULATION/)
+    expect((await push('feature/demo')).exitCode).toBe(0)
   })
 
   it('A7: distinct developer/reviewer presets wire each role independently + mark real', async () => {

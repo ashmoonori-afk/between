@@ -6,9 +6,7 @@ import { fail, root } from './shared'
 export function registerJournalCommand(program: Command): void {
   program
     .command('journal')
-    .description(
-      'Inspect the append-only event journal; --verify checks the tamper-evident chain (B5)',
-    )
+    .description('Inspect the append-only event journal; --verify checks the tamper-evident chain')
     .option('--verify', 'walk the hash chain and report any tampering/truncation')
     .action(async (opts: { verify?: boolean }) => {
       try {

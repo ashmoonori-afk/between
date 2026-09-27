@@ -1,8 +1,54 @@
 import * as readline from 'node:readline/promises'
 import type { Command } from 'commander'
 import { initWorkspace, parseAgentPreset, runDoctor } from '../api/setup'
+import type { InitResult } from '../adapters/init-project'
 import { print } from './output'
 import { ASCII, fail, root } from './shared'
+
+export function formatInitResult(res: InitResult, opts: { verbose?: boolean } = {}): string[] {
+  const lines = [
+    res.alreadyExisted
+      ? `between: already initialized ${res.project.name} (refreshed ${res.created.length} missing file(s))`
+      : `between: initialized ${res.project.name} (${res.created.length} paths created)`,
+  ]
+  if (opts.verbose) for (const c of res.created) lines.push(`  + ${c}`)
+  lines.push(`  agents:  developer ${res.developer}, reviewer ${res.reviewer}`)
+  if (res.simulated) {
+    lines.push(
+      '  mode:    SIMULATION - the fake agent does not really review; merge approvals and protected pushes are refused',
+    )
+  }
+  const hook = res.hook
+  if (hook.kind === 'installed' || hook.kind === 'already_installed') {
+    lines.push('  hook:    pre-push gate installed')
+  } else if (hook.kind === 'not_git_repo') {
+    lines.push(
+      '  warning: this is not a git repository, so the pre-push gate was not installed. Between reviews git diffs: run `git init`, then `between init` again.',
+    )
+  } else if (hook.kind === 'conflict') {
+    lines.push(
+      `  warning: an existing pre-push hook was kept (${hook.path}), so the push gate is NOT active`,
+    )
+  } else {
+    lines.push(`  warning: the pre-push gate could not be installed: ${hook.reason}`)
+  }
+  if (res.project.obsidian_project_path)
+    lines.push(`  vault:   ${res.project.obsidian_project_path}`)
+  if (!res.alreadyExisted) {
+    lines.push('  next:    between goal "<what to build>", edit code, then `between start`')
+    if (res.simulated) {
+      lines.push(
+        '  demo:    file mode waits for you to run the agents; to watch the fake agents run the loop, set `agent_mode: oneshot` in .between/config.yaml first',
+      )
+      lines.push(
+        '  real agents: start over with `between init --developer claude --reviewer codex` (delete .between/ first)',
+      )
+    } else {
+      lines.push('           `between start` runs the developer and reviewer agents for you')
+    }
+  }
+  return lines
+}
 
 export function registerSetupCommands(program: Command): void {
   program
@@ -12,8 +58,15 @@ export function registerSetupCommands(program: Command): void {
     .option('--agent <preset>', 'shorthand: wrap both roles — fake | claude | codex (default fake)')
     .option('--developer <preset>', 'developer-role wrapper: fake | claude | codex')
     .option('--reviewer <preset>', 'reviewer-role wrapper: fake | claude | codex')
+    .option('--verbose', 'list every created file')
     .action(
-      async (opts: { vault?: string; agent?: string; developer?: string; reviewer?: string }) => {
+      async (opts: {
+        vault?: string
+        agent?: string
+        developer?: string
+        reviewer?: string
+        verbose?: boolean
+      }) => {
         try {
           const res = await initWorkspace(root(), {
             vaultPath: opts.vault,
@@ -21,16 +74,7 @@ export function registerSetupCommands(program: Command): void {
             developer: parseAgentPreset(opts.developer, '--developer'),
             reviewer: parseAgentPreset(opts.reviewer, '--reviewer'),
           })
-          print(
-            res.alreadyExisted
-              ? 'between: already initialized (refreshed missing files)'
-              : 'between: initialized',
-          )
-          for (const c of res.created) print(`  + ${c}`)
-          print(`  project: ${res.project.name}`)
-          if (res.project.obsidian_project_path)
-            print(`  vault:   ${res.project.obsidian_project_path}`)
-          if (!res.alreadyExisted) print('  next:    run `between onboard` to wire a chat gateway')
+          for (const line of formatInitResult(res, { verbose: opts.verbose })) print(line)
         } catch (e) {
           await fail(e)
         }

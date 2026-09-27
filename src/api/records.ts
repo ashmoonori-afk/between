@@ -27,8 +27,9 @@ export async function inspectJournal(
 ): Promise<JournalReport> {
   const log = new EventsLog(root)
   const events = await log.read()
-  if (!opts.verify) return { entries: events.length }
   const state = await new StateRepository(root).read()
+  if (!state && events.length === 0) throw noStateError()
+  if (!opts.verify) return { entries: events.length }
   const result = await log.verifyAll(state?.journal ?? null)
   if (result.valid) return { entries: events.length, integrity: { status: 'verified' } }
   if (!result.chain.valid) {
@@ -54,7 +55,9 @@ export async function replayState(
 ): Promise<ReturnType<typeof replayStateFromEvents>> {
   const log = new EventsLog(root)
   const state = await new StateRepository(root).read()
-  return replayStateFromEvents(await log.read(), opts.verify ? state?.journal : null)
+  const events = await log.read()
+  if (!state && events.length === 0) throw noStateError()
+  return replayStateFromEvents(events, opts.verify ? state?.journal : null)
 }
 
 /** Portable evidence manifest for the current cycle (bundle + review + verification + approval). */

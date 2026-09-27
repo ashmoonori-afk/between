@@ -5,7 +5,7 @@ import { fail, root } from './shared'
 export function registerPolicyCommand(program: Command): void {
   program
     .command('policy')
-    .description('Evaluate the current cycle against policy-as-code (risk, gates, approvals) (B2)')
+    .description('Evaluate the current cycle against policy-as-code (risk, gates, approvals)')
     .option('--init', 'write a default .between/policy.yaml')
     .action(async (opts: { init?: boolean }) => {
       try {

@@ -160,6 +160,8 @@ export interface ApprovalToken {
   bundle_id: string | null
   /** ISO expiry; the approval is rejected after this even if still in state (A2). */
   expires_at: string
+  /** signed git tree OID of the approved working tree; required for protected-branch pushes. */
+  tree?: string | null
 }
 
 export interface ProjectRef {

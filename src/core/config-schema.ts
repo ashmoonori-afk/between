@@ -80,6 +80,10 @@ export const ConfigSchema = z
     discord_mode: z.enum(['gateway', 'poll']).default('gateway'),
     discord_poll_interval_ms: z.number().int().positive().default(4000),
 
+    // --- push gate: pushes to these branches need a signed merge approval bound to the pushed
+    // tree; pushes to any other branch are not gated.
+    protected_branches: z.array(z.string().min(1)).default(['main']),
+
     // --- verification runner (`between verify`, B3) ---
     verification_checks: z.array(z.object({ name: z.string(), command: z.string() })).default([
       { name: 'typecheck', command: 'npm run typecheck' },
@@ -159,6 +163,9 @@ ide_cli_profile_dir: .between/ide-profile # local CLI profile root for IDE-launc
 ide_permission_mode: guard       # read_only | guard | full_access, IDE-local intent only
 ide_working_folder: .            # project-local folder hint for IDE-launched agents
 ide_followup_mode: steer         # steer | queue, follow-up intent for IDE broker input
+
+# --- push gate (pre-push hook / between verify-push) ---
+protected_branches: [main]       # pushes here need a signed merge approval of the exact pushed tree
 
 # --- gateway (between gateway: chat <-> broker bridge) ---
 gateway_channel: echo            # echo | telegram | discord

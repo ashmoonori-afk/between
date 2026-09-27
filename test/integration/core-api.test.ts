@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../src/core/clock'
 import { betweenPaths } from '../../src/adapters/paths'
+import { BrokerLock } from '../../src/adapters/lock'
 import {
   BetweenApiError,
   ackReview,
@@ -52,6 +53,37 @@ describe('core api', () => {
     expect(status.evidence_trust).toBe('simulated')
     expect(status.developer.name).toBeTruthy()
     expect(typeof status.max_cycles_per_goal).toBe('number')
+  })
+
+  it('refuses to silently keep the old agents when init is re-run with different ones', async () => {
+    await freshWorkspace()
+    await expectApiError(
+      initWorkspace(dir, { developer: 'claude', reviewer: 'codex' }, new FakeClock(0)),
+      'invalid_argument',
+    )
+    expect((await initWorkspace(dir, {}, new FakeClock(0))).alreadyExisted).toBe(true)
+    expect((await initWorkspace(dir, { agent: 'fake' }, new FakeClock(0))).alreadyExisted).toBe(
+      true,
+    )
+  })
+
+  it('reports whether a broker is running and what to do next', async () => {
+    await freshWorkspace()
+    const idle = await getStatus(dir)
+    expect(idle.broker_running).toBe(false)
+    expect(idle.simulated).toBe(true)
+    expect(idle.next_step).toMatch(/between start/)
+    expect((await submitBrokerCommand(dir, { kind: 'pause' })).broker_running).toBe(false)
+
+    const lock = new BrokerLock(dir)
+    await lock.acquire(new FakeClock(0))
+    try {
+      expect((await getStatus(dir)).broker_running).toBe(true)
+      expect((await submitBrokerCommand(dir, { kind: 'resume' })).broker_running).toBe(true)
+    } finally {
+      await lock.releaseLock()
+    }
+    expect((await getStatus(dir)).broker_running).toBe(false)
   })
 
   it('fails status with no_state outside a workspace', async () => {
@@ -116,11 +148,21 @@ describe('core api', () => {
     await expectApiError(ackReview(dir), 'not_found')
   })
 
-  it('blocks push for a simulated (fake agent) project', async () => {
+  it('blocks a protected push for a simulated (fake agent) project', async () => {
     await freshWorkspace()
-    const verdict = await verifyPush(dir)
+    const push = (branch: string) =>
+      verifyPush(dir, [
+        {
+          localRef: 'refs/heads/x',
+          localSha: 'a'.repeat(40),
+          remoteRef: `refs/heads/${branch}`,
+          remoteSha: '0'.repeat(40),
+        },
+      ])
+    const verdict = await push('main')
     expect(verdict.allowed).toBe(false)
     expect(verdict.message).toContain('SIMULATION')
+    expect((await push('feature/demo')).allowed).toBe(true)
   })
 
   it('writes the default policy once', async () => {

@@ -91,7 +91,7 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
 
     const daemon = await buildDaemon(absRoot, clock, transport, agentControl)
     await daemon.load()
-    stopDeathWiring = wirePtyDeaths(hosts, daemon)
+    stopDeathWiring = wireAgentDeaths(hosts, daemon)
 
     const useUi = Boolean(process.stdout.isTTY) && !opts.headless
     if (useUi) {
@@ -112,12 +112,26 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
     }
   } finally {
     for (const stop of stopDeathWiring) stop()
-    if (hosts) {
-      await hosts.developer.stop().catch(() => {})
-      await hosts.reviewer.stop().catch(() => {})
-    }
-    await lock.releaseLock()
+    await shutdownEmbedded({ agentControl, hosts, lock })
   }
+}
+
+/**
+ * Stop order matters: oneshot agent processes are owned by the transport (the pipe hosts are
+ * passive), so abort them and wait for them to exit before stopping the hosts and releasing the
+ * lock. Otherwise a new broker could start while the old broker's agents keep writing.
+ */
+export async function shutdownEmbedded(parts: {
+  agentControl?: AgentControl
+  hosts: Hosts
+  lock: Pick<BrokerLock, 'releaseLock'>
+}): Promise<void> {
+  await parts.agentControl?.abortActive('broker stopping').catch(() => {})
+  if (parts.hosts) {
+    await parts.hosts.developer.stop().catch(() => {})
+    await parts.hosts.reviewer.stop().catch(() => {})
+  }
+  await parts.lock.releaseLock()
 }
 
 export function reviewerOneShotCommand(root: string, command: string): string {
@@ -130,16 +144,24 @@ export function reviewerOneShotCommand(root: string, command: string): string {
     : command
 }
 
-function wirePtyDeaths(hosts: Hosts, daemon: Daemon): Array<() => void> {
+/**
+ * Route agent exits to the daemon. A pty agent is long-lived, so any exit is a death (except a
+ * deliberate stop while paused). A oneshot (pipe) agent exits after every signal, so only a
+ * non-zero exit code is a failure; exit 0 is normal and a null code means it was aborted.
+ */
+export function wireAgentDeaths(
+  hosts: Hosts,
+  daemon: Pick<Daemon, 'reportAgentDied' | 'state'>,
+): Array<() => void> {
   if (!hosts) return []
-  return (['developer', 'reviewer'] as const).flatMap((role: AgentRole) => {
-    const host = hosts[role]
-    if (host.kind !== 'pty') return []
-    return [
-      host.subscribeExit((event) => {
+  return (['developer', 'reviewer'] as const).map((role: AgentRole) =>
+    hosts[role].subscribeExit((event) => {
+      if (event.kind === 'pty') {
         if (event.exitCode === null && daemon.state.workflow.phase === 'paused') return
-        void daemon.reportAgentDied(event.role, event.exitCode)
-      }),
-    ]
-  })
+      } else if (event.exitCode === null || event.exitCode === 0) {
+        return
+      }
+      void daemon.reportAgentDied(event.role, event.exitCode)
+    }),
+  )
 }
