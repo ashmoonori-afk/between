@@ -116,11 +116,21 @@ describe('core api', () => {
     await expectApiError(ackReview(dir), 'not_found')
   })
 
-  it('blocks push for a simulated (fake agent) project', async () => {
+  it('blocks a protected push for a simulated (fake agent) project', async () => {
     await freshWorkspace()
-    const verdict = await verifyPush(dir)
+    const push = (branch: string) =>
+      verifyPush(dir, [
+        {
+          localRef: 'refs/heads/x',
+          localSha: 'a'.repeat(40),
+          remoteRef: `refs/heads/${branch}`,
+          remoteSha: '0'.repeat(40),
+        },
+      ])
+    const verdict = await push('main')
     expect(verdict.allowed).toBe(false)
     expect(verdict.message).toContain('SIMULATION')
+    expect((await push('feature/demo')).allowed).toBe(true)
   })
 
   it('writes the default policy once', async () => {

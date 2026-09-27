@@ -26,10 +26,17 @@ export interface ApprovalClaim {
   bundle_id: string | null
   /** ISO expiry, set + signed by the approver (F1) so a state writer can't extend it. */
   expires_at: string
+  /**
+   * git tree OID of the approved working tree. A push to a protected branch is only authorized
+   * when the pushed commit's tree equals this. Optional so approvals without a tree keep their
+   * signature format; such approvals cannot authorize a protected push.
+   */
+  tree?: string | null
 }
 
 function payload(claim: ApprovalClaim): string {
-  return `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}:${claim.bundle_id ?? ''}:${claim.expires_at}`
+  const base = `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}:${claim.bundle_id ?? ''}:${claim.expires_at}`
+  return claim.tree ? `${base}:tree=${claim.tree}` : base
 }
 
 export function signApproval(secret: string, claim: ApprovalClaim): string {

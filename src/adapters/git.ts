@@ -1,6 +1,7 @@
 import { execa } from 'execa'
 import { existsSync } from 'node:fs'
-import { readFile } from 'node:fs/promises'
+import { copyFile, readFile, rm } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
 import { isAbsolute, join } from 'node:path'
 import type { DiffInput, DiffSummary, UntrackedEntry } from '../core/types'
 import { isDeniedUntrackedPath, normalizeRepoRelativePath } from '../core/untracked-policy'
@@ -205,6 +206,34 @@ export class GitAdapter {
   async indexTree(): Promise<string> {
     const r = await this.run(['write-tree'])
     return r.exitCode === 0 ? r.stdout.trim() : ''
+  }
+
+  /**
+   * Tree OID of the whole working tree as `git add -A` would commit it (tracked + untracked,
+   * honoring .gitignore), built in a throwaway index so the real index is never touched.
+   * This is what a human approval binds to; null when it cannot be computed.
+   */
+  async worktreeTree(): Promise<string | null> {
+    const gitDir = await this.gitDir()
+    const tempIndex = join(gitDir, `between-approval-index-${randomUUID()}`)
+    const env = { ...PINNED_ENV, GIT_INDEX_FILE: tempIndex }
+    const git = (args: string[]) =>
+      execa('git', [...PIN, ...args], { cwd: this.root, reject: false, env })
+    try {
+      const realIndex = join(gitDir, 'index')
+      if (existsSync(realIndex)) await copyFile(realIndex, tempIndex)
+      if ((await git(['add', '-A'])).exitCode !== 0) return null
+      const tree = await git(['write-tree'])
+      return tree.exitCode === 0 && tree.stdout.trim() ? tree.stdout.trim() : null
+    } finally {
+      await rm(tempIndex, { force: true })
+    }
+  }
+
+  /** Tree OID of a commit (`<sha>^{tree}`), or null when the object is unknown. */
+  async treeOf(commit: string): Promise<string | null> {
+    const r = await this.run(['rev-parse', '--verify', '-q', `${commit}^{tree}`])
+    return r.exitCode === 0 && r.stdout.trim() ? r.stdout.trim() : null
   }
 
   /** `git --version` string. */
