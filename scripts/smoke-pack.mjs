@@ -101,6 +101,11 @@ try {
     '{"name":"smoke-consumer","private":true,"type":"module"}\n',
   )
   run('npm', ['install', '--no-audit', '--no-fund', tarball], consumer)
+  check(
+    'LICENSE shipped in package',
+    readFileSync(join(consumer, 'node_modules', name, 'LICENSE'), 'utf8'),
+    'MIT License',
+  )
   writeFileSync(
     join(consumer, 'consumer.mjs'),
     `import { getStatus } from '${name}'\n` +
