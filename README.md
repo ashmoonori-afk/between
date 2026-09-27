@@ -495,4 +495,4 @@ stronger steering, and less room for invisible agent drift.
 
 ## License
 
-MIT.
+MIT. See [`LICENSE`](./LICENSE).
