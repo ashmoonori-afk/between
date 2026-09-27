@@ -166,10 +166,13 @@ export function registerBrokerCommands(program: Command): void {
 
   program
     .command('verify-push')
-    .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
-    .action(async () => {
+    .description(
+      'Push gate: pushes to protected branches need a signed merge approval of the pushed tree',
+    )
+    .option('--stdin', 'read git pre-push ref lines from stdin (default: check the current branch)')
+    .action(async (opts: { stdin?: boolean }) => {
       try {
-        await runVerifyPushCommand(root())
+        await runVerifyPushCommand(root(), opts)
       } catch (e) {
         await fail(e)
       }

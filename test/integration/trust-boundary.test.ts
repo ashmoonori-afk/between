@@ -14,6 +14,8 @@ import { buildSignal } from '../../src/adapters/signal-transport'
 import { reviewPath, verifyPath, betweenPaths } from '../../src/adapters/paths'
 import { signApproval, approvalExpiry } from '../../src/core/approval'
 import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { approve } from '../../src/api/approval'
+import { parsePrePushInput, verifyPush } from '../../src/api/checks'
 
 let dir: string
 const INTEGRATION_TIMEOUT_MS = 90_000
@@ -238,6 +240,54 @@ describe('approval trust boundary (P1-5)', () => {
         (e) => e.event === 'approval_rejected',
       )
       expect(rejects.some((e) => JSON.stringify(e).includes('simulated evidence'))).toBe(true)
+    },
+    INTEGRATION_TIMEOUT_MS,
+  )
+
+  it(
+    'binds a human approval to the working tree: approve -> commit -> protected push passes',
+    async () => {
+      const fc = new FakeClock(Date.UTC(2026, 5, 19, 0, 0, 0))
+      await initProject(dir, { developer: 'claude', reviewer: 'codex' }, fc)
+      const d = await buildDaemon(dir, fc)
+      await d.load()
+      await toHumanGate(d, fc)
+
+      const res = await approve(dir, 'merge')
+      expect(res.signed).toBe(true)
+      expect(res.tree).toMatch(/^[0-9a-f]{40}$/)
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('done')
+      expect(d.state.approval?.tree).toBe(res.tree)
+
+      // the human commits exactly the approved working tree, then pushes it to main
+      await git(['add', '-A'])
+      await git(['commit', '-m', 'approved change'])
+      const head = (await execa('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim()
+      const line = `refs/heads/main ${head} refs/heads/main ${'0'.repeat(40)}`
+      expect((await verifyPush(dir, parsePrePushInput(line))).allowed).toBe(true)
+      const hook = await execa('node', ['.git/between-verify-push.mjs'], {
+        cwd: dir,
+        reject: false,
+        input: `${line}\n`,
+      })
+      expect(hook.exitCode).toBe(0)
+
+      // a different tree (one more edit, committed) is refused by both gates
+      await writeFile(join(dir, 'app.txt'), 'unreviewed\n')
+      await git(['commit', '-am', 'unreviewed change'])
+      const head2 = (await execa('git', ['rev-parse', 'HEAD'], { cwd: dir })).stdout.trim()
+      const line2 = `refs/heads/main ${head2} refs/heads/main ${'0'.repeat(40)}`
+      const api2 = await verifyPush(dir, parsePrePushInput(line2))
+      expect(api2.allowed).toBe(false)
+      expect(api2.message).toMatch(/does not match the approved tree/)
+      const hook2 = await execa('node', ['.git/between-verify-push.mjs'], {
+        cwd: dir,
+        reject: false,
+        input: `${line2}\n`,
+      })
+      expect(hook2.exitCode).toBe(1)
+      expect(hook2.stderr).toMatch(/does not match the approved tree/)
     },
     INTEGRATION_TIMEOUT_MS,
   )

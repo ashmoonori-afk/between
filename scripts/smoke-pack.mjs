@@ -125,5 +125,6 @@ try {
     'human=function core-approve=false',
   )
 } finally {
-  rmSync(work, { recursive: true, force: true })
+  // Windows keeps a just-exited child's cwd locked briefly (EBUSY); rmSync retries those errors.
+  rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
 }
