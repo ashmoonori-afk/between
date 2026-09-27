@@ -55,6 +55,18 @@ describe('core api', () => {
     expect(typeof status.max_cycles_per_goal).toBe('number')
   })
 
+  it('refuses to silently keep the old agents when init is re-run with different ones', async () => {
+    await freshWorkspace()
+    await expectApiError(
+      initWorkspace(dir, { developer: 'claude', reviewer: 'codex' }, new FakeClock(0)),
+      'invalid_argument',
+    )
+    expect((await initWorkspace(dir, {}, new FakeClock(0))).alreadyExisted).toBe(true)
+    expect((await initWorkspace(dir, { agent: 'fake' }, new FakeClock(0))).alreadyExisted).toBe(
+      true,
+    )
+  })
+
   it('reports whether a broker is running and what to do next', async () => {
     await freshWorkspace()
     const idle = await getStatus(dir)

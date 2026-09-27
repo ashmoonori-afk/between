@@ -9,7 +9,7 @@ import { betweenPaths, betweenSubdirs } from './paths'
 import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
 import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE } from '../agents/real-agents'
 import { PRESET_SCRIPT, type AgentPreset } from '../core/constants'
-import { installPrePushHook } from './git-hooks'
+import { installPrePushHookDetailed, type PrePushHookInstallResult } from './git-hooks'
 
 export interface InitOptions {
   vaultPath?: string
@@ -25,6 +25,12 @@ export interface InitResult {
   created: string[]
   alreadyExisted: boolean
   project: ProjectRef
+  developer: AgentPreset
+  reviewer: AgentPreset
+  /** a fake agent in either role: reviews are not real verification */
+  simulated: boolean
+  /** outcome of installing the pre-push gate (not_git_repo / conflict mean it is NOT active) */
+  hook: PrePushHookInstallResult
 }
 
 /** Create `.between/` scaffolding, config, initial state, and a `.gitignore` entry (idempotent). */
@@ -118,10 +124,18 @@ export async function initProject(
 
   await ensureGitignore(absRoot)
 
-  const hook = installPrePushHook(absRoot)
-  if (hook && !existedBefore) created.push(hook)
+  const hook = installPrePushHookDetailed(absRoot)
+  if (hook.kind === 'installed' && !existedBefore) created.push(hook.path)
 
-  return { created, alreadyExisted: existedBefore, project }
+  return {
+    created,
+    alreadyExisted: existedBefore,
+    project,
+    developer,
+    reviewer,
+    simulated: developer === 'fake' || reviewer === 'fake',
+    hook,
+  }
 }
 
 /** Ensure `.between/` is gitignored so the broker's own writes can't self-trigger the loop (I22). */

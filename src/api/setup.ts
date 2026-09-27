@@ -4,6 +4,7 @@ import { SystemClock } from '../core/clock'
 import { AGENT_PRESETS, type AgentPreset } from '../core/constants'
 import { initProject, type InitResult } from '../adapters/init-project'
 import { GitAdapter } from '../adapters/git'
+import { StateRepository } from '../adapters/state-repository'
 import { loadConfig } from '../runtime'
 import { BetweenApiError } from './errors'
 
@@ -33,6 +34,23 @@ export async function initWorkspace(
   opts: InitWorkspaceOptions = {},
   clock: Clock = new SystemClock(),
 ): Promise<InitResult> {
+  const existing = await new StateRepository(root).read()
+  if (existing) {
+    const wantDeveloper = opts.developer ?? opts.agent
+    const wantReviewer = opts.reviewer ?? opts.agent
+    const current = { developer: existing.developer.name, reviewer: existing.reviewer.name }
+    if (
+      (wantDeveloper && wantDeveloper !== current.developer) ||
+      (wantReviewer && wantReviewer !== current.reviewer)
+    ) {
+      // init never rewrites an existing config/state, so silently ignoring the flags would leave
+      // the user in the old (often SIMULATION) mode
+      throw new BetweenApiError(
+        'invalid_argument',
+        `this workspace already uses developer ${current.developer} and reviewer ${current.reviewer}; re-running init does not change agents. To switch, delete .between/ (this discards Between's state and history) and run init again with the new flags.`,
+      )
+    }
+  }
   return initProject(root, opts, clock)
 }
 
