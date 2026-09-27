@@ -1,6 +1,6 @@
 {
   "name": "between-dev",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A local terminal broker for AI pair development — observe a developer (Claude) and reviewer (Codex) terminal and coordinate a diff-driven review loop.",
   "keywords": [
     "ai",
