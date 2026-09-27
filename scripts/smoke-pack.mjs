@@ -61,6 +61,17 @@ try {
       `console.log('phase=' + status.workflow.phase)\n`,
   )
   check('library import', run('node', ['consumer.mjs'], consumer), 'phase=idle')
+  writeFileSync(
+    join(consumer, 'human.mjs'),
+    `import * as core from '${name}'\n` +
+      `import { approve } from '${name}/human'\n` +
+      `console.log('human=' + typeof approve + ' core-approve=' + ('approve' in core))\n`,
+  )
+  check(
+    'human-only entry',
+    run('node', ['human.mjs'], consumer),
+    'human=function core-approve=false',
+  )
 } finally {
   rmSync(work, { recursive: true, force: true })
 }
