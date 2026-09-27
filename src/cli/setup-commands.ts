@@ -35,14 +35,16 @@ export function formatInitResult(res: InitResult, opts: { verbose?: boolean } = 
   if (res.project.obsidian_project_path)
     lines.push(`  vault:   ${res.project.obsidian_project_path}`)
   if (!res.alreadyExisted) {
-    lines.push('  next:    between goal "<what to build>"')
-    lines.push(
-      res.simulated
-        ? '           between start --embed   (runs the loop with the fake agents)'
-        : '           between start --embed   (hosts the developer and reviewer agents)',
-    )
+    lines.push('  next:    between goal "<what to build>", edit code, then `between start`')
     if (res.simulated) {
-      lines.push('  real agents: between init --developer claude --reviewer codex')
+      lines.push(
+        '  demo:    file mode waits for you to run the agents; to watch the fake agents run the loop, set `agent_mode: oneshot` in .between/config.yaml first',
+      )
+      lines.push(
+        '  real agents: start over with `between init --developer claude --reviewer codex` (delete .between/ first)',
+      )
+    } else {
+      lines.push('           `between start` runs the developer and reviewer agents for you')
     }
   }
   return lines

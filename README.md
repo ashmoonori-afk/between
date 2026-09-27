@@ -180,15 +180,21 @@ between status
 between dash --once
 ```
 
-Demo the full loop with the bundled fake agent:
+Demo the full loop with the bundled fake agent. The default `agent_mode: file`
+waits for you to run the agents yourself, so switch the demo to `oneshot` and
+Between runs the fake developer and reviewer for you:
 
 ```bash
 between init --agent fake
+# in .between/config.yaml set:  agent_mode: oneshot
+between goal "demo change"
 # edit a file in the target repo
-between start --embed
+between start          # the loop reaches human_gate; see `between status`
 ```
 
-Wire real agents later with explicit roles:
+For real agents, initialize with explicit roles (they use `oneshot` mode). Re-running
+`init` does not change the agents of an existing workspace; to switch, delete
+`.between/` first:
 
 ```bash
 between init --developer claude --reviewer codex

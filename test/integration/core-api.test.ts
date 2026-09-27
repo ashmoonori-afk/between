@@ -54,6 +54,18 @@ describe('core api', () => {
     expect(typeof status.max_cycles_per_goal).toBe('number')
   })
 
+  it('refuses to silently keep the old agents when init is re-run with different ones', async () => {
+    await freshWorkspace()
+    await expectApiError(
+      initWorkspace(dir, { developer: 'claude', reviewer: 'codex' }, new FakeClock(0)),
+      'invalid_argument',
+    )
+    expect((await initWorkspace(dir, {}, new FakeClock(0))).alreadyExisted).toBe(true)
+    expect((await initWorkspace(dir, { agent: 'fake' }, new FakeClock(0))).alreadyExisted).toBe(
+      true,
+    )
+  })
+
   it('fails status with no_state outside a workspace', async () => {
     dir = await mkdtemp(join(tmpdir(), 'between-core-api-empty-'))
     await expectApiError(getStatus(dir), 'no_state')

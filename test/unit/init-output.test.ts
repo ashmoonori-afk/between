@@ -19,8 +19,9 @@ describe('formatInitResult', () => {
     expect(out).not.toContain('/r/.between/config.yaml')
     expect(out).toMatch(/SIMULATION/)
     expect(out).toMatch(/next: {4}between goal/)
-    expect(out).toMatch(/between init --developer claude --reviewer codex/)
-    expect(out).not.toMatch(/onboard/)
+    expect(out).toMatch(/agent_mode: oneshot/)
+    expect(out).toMatch(/between init --developer claude --reviewer codex.*delete \.between/)
+    expect(out).not.toMatch(/onboard|--embed/)
   })
 
   it('lists created paths with --verbose', () => {
@@ -35,7 +36,7 @@ describe('formatInitResult', () => {
       simulated: false,
     }).join('\n')
     expect(out).not.toMatch(/SIMULATION|real agents:/)
-    expect(out).toMatch(/hosts the developer and reviewer agents/)
+    expect(out).toMatch(/runs the developer and reviewer agents for you/)
   })
 
   it('warns when the pre-push gate is not active', () => {
