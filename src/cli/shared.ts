@@ -1,6 +1,6 @@
 import { printErr } from './output'
 
-export const VERSION = '0.1.0'
+export const VERSION = '0.2.0'
 
 export const ASCII =
   !process.stdout.isTTY || Boolean(process.env.NO_COLOR) || Boolean(process.env.BETWEEN_ASCII)
