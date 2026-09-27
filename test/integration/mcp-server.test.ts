@@ -135,6 +135,17 @@ describe('between MCP server', () => {
     const { body, isError } = await call(await connect({ root }), 'between_status')
     expect(isError).toBe(true)
     expect(body).toMatchObject({ ok: false, error: { code: 'no_state' } })
+    // the agent cannot init over MCP, so the message sends it to the human
+    expect(body.error!.message).toContain('npx between-dev init')
+  })
+
+  it('reports no_state (not a verified empty journal) before init', async () => {
+    const client = await connect({ root: await tempDir('between-mcp-empty-') })
+    for (const tool of ['between_journal', 'between_replay']) {
+      const { body, isError } = await call(client, tool)
+      expect(isError).toBe(true)
+      expect(body).toMatchObject({ ok: false, error: { code: 'no_state' } })
+    }
   })
 
   it('rejects a per-call root (tools are pinned to the server root)', async () => {

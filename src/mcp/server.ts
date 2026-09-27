@@ -131,7 +131,12 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
         } catch (e) {
           const err = toApiError(e)
           if (err.code === 'internal') log(`${name} failed: ${e instanceof Error ? e.stack : e}`)
-          return envelope({ ok: false, error: { code: err.code, message: err.message } }, true)
+          // agents cannot run `between init` through MCP, so point them at the human
+          const message =
+            err.code === 'no_state'
+              ? `Between is not initialized in ${root}. Ask the human to run \`npx between-dev init\` there.`
+              : err.message
+          return envelope({ ok: false, error: { code: err.code, message } }, true)
         }
       },
     )
