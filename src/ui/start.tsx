@@ -112,12 +112,26 @@ export async function runStartEmbedded(root: string, opts: EmbedStartOptions = {
     }
   } finally {
     for (const stop of stopDeathWiring) stop()
-    if (hosts) {
-      await hosts.developer.stop().catch(() => {})
-      await hosts.reviewer.stop().catch(() => {})
-    }
-    await lock.releaseLock()
+    await shutdownEmbedded({ agentControl, hosts, lock })
   }
+}
+
+/**
+ * Stop order matters: oneshot agent processes are owned by the transport (the pipe hosts are
+ * passive), so abort them and wait for them to exit before stopping the hosts and releasing the
+ * lock. Otherwise a new broker could start while the old broker's agents keep writing.
+ */
+export async function shutdownEmbedded(parts: {
+  agentControl?: AgentControl
+  hosts: Hosts
+  lock: Pick<BrokerLock, 'releaseLock'>
+}): Promise<void> {
+  await parts.agentControl?.abortActive('broker stopping').catch(() => {})
+  if (parts.hosts) {
+    await parts.hosts.developer.stop().catch(() => {})
+    await parts.hosts.reviewer.stop().catch(() => {})
+  }
+  await parts.lock.releaseLock()
 }
 
 export function reviewerOneShotCommand(root: string, command: string): string {
