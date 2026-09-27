@@ -76,12 +76,28 @@ const EXACT_DENY = new Set([
   'AZURE_FEDERATED_TOKEN_FILE',
 ])
 
+/**
+ * Credentials the agent CLIs themselves need to reach their model provider. They are always
+ * allowed through; every other credential-looking variable is stripped.
+ */
+export const PROVIDER_AUTH_ENV = [
+  'ANTHROPIC_API_KEY',
+  'ANTHROPIC_AUTH_TOKEN',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'OPENAI_API_KEY',
+  'CODEX_API_KEY',
+] as const
+
 export function buildAgentSandboxEnv(
   extra: Record<string, string | undefined>,
   opts: AgentSandboxEnvOptions = {},
 ): AgentSandboxEnv {
   const merged: Record<string, string | undefined> = { ...(opts.baseEnv ?? process.env), ...extra }
-  const allowlist = new Set((opts.allowlist ?? []).map((name) => name.toUpperCase()))
+  const allowlist = new Set(
+    [...PROVIDER_AUTH_ENV, ...(opts.allowlist ?? [])].map((name) => name.toUpperCase()),
+  )
+  // the human approval secret can never be allowlisted into an agent process
+  allowlist.delete(APPROVAL_SECRET_ENV_NAME)
   const env: Record<string, string | undefined> = {}
   const stripped: AgentEnvEntry[] = []
   const allowlisted: AgentEnvEntry[] = []

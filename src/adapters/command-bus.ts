@@ -30,6 +30,12 @@ const CommandSchema = z.discriminatedUnion('kind', [
     // the approver stamps + signs these so a state writer can't tamper the bundle binding / expiry.
     bundle_id: z.string().nullable().optional(),
     expires_at: z.string().optional(),
+    // signed tree OID of the approved working tree (protected-branch push binding).
+    tree: z
+      .string()
+      .regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/)
+      .nullable()
+      .optional(),
   }),
   z.object({
     kind: z.literal('finding_action'),
@@ -70,6 +76,15 @@ export class CommandBus {
     // atomic temp+rename so the daemon can never drain a half-written command (P2-6)
     await writeFileAtomic(join(this.p.commands, name), JSON.stringify(command))
     return name.slice(0, -'.json'.length)
+  }
+
+  /** Number of queued command files not yet drained. */
+  async pendingCount(): Promise<number> {
+    try {
+      return (await readdir(this.p.commands)).filter((n) => n.endsWith('.json')).length
+    } catch {
+      return 0
+    }
   }
 
   /** Read pending commands in submission order. Caller deletes each after applying. */

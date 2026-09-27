@@ -1,6 +1,6 @@
 import { gzipSync } from 'node:zlib'
 import { writeFile, readdir, stat, rm, mkdir } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { betweenPaths, snapshotPath, type BetweenPaths } from './paths'
 
 /**
@@ -28,12 +28,17 @@ export class SnapshotStore {
     await mkdir(this.p.snapshots, { recursive: true })
     const file = snapshotPath(this.p, cycle)
     await writeFile(file, gzipSync(Buffer.from(redactedContent, 'utf8')))
-    await this.prune(retentionCycles, maxTotalMb)
+    // the returned path is recorded in state, so the snapshot just written always survives,
+    // even if it alone exceeds the size cap
+    await this.prune(retentionCycles, maxTotalMb, basename(file))
     return file
   }
 
-  /** Keep the newest `retentionCycles` snapshots and stay within the size cap. */
-  async prune(retentionCycles: number, maxTotalMb: number): Promise<void> {
+  /**
+   * Keep the newest `retentionCycles` snapshots and stay within the size cap. `protect` names a
+   * snapshot that is never deleted (the one the current cycle points at).
+   */
+  async prune(retentionCycles: number, maxTotalMb: number, protect?: string): Promise<void> {
     let entries: string[]
     try {
       entries = (await readdir(this.p.snapshots)).filter((f) => f.endsWith('.diff.gz'))
@@ -46,8 +51,16 @@ export class SnapshotStore {
     const keep = new Set(sorted.slice(0, retentionCycles))
     const maxBytes = maxTotalMb * 1024 * 1024
     let total = 0
+    if (protect && entries.includes(protect)) {
+      keep.add(protect)
+      try {
+        total += (await stat(join(this.p.snapshots, protect))).size
+      } catch {
+        // unreadable size: still kept; the cap applies to the others
+      }
+    }
     for (const name of sorted) {
-      if (!keep.has(name)) continue
+      if (!keep.has(name) || name === protect) continue
       try {
         const s = await stat(join(this.p.snapshots, name))
         if (total + s.size > maxBytes) {

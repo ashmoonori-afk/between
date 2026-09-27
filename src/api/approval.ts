@@ -4,6 +4,7 @@ import { APPROVAL_SCOPES } from '../core/constants'
 import { StateRepository } from '../adapters/state-repository'
 import { CommandBus } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
+import { GitAdapter } from '../adapters/git'
 import { loadConfig } from '../runtime'
 import { BetweenApiError } from './errors'
 
@@ -21,6 +22,8 @@ export interface ApprovalResult {
   scope: ApprovalScope
   /** false when BETWEEN_APPROVAL_SECRET is unset, so the approval boundary is not enforced. */
   signed: boolean
+  /** approved working-tree OID; a protected-branch push must carry exactly this tree. */
+  tree: string | null
 }
 
 /**
@@ -38,12 +41,14 @@ export async function approve(
   const secret = resolveApprovalSecret(root)
   const bundleId = state?.diff.bundle_id ?? null
   const expiresAt = approvalExpiry(nowMs)
+  const tree = await new GitAdapter(root).worktreeTree()
   const claim = {
     scope,
     diff_hash: state?.diff.hash ?? null,
     cycle: state?.workflow.cycle ?? 0,
     bundle_id: bundleId,
     expires_at: expiresAt,
+    tree,
   }
   const sig = secret ? signApproval(secret, claim) : undefined
   await new CommandBus(root).submit({
@@ -52,6 +57,7 @@ export async function approve(
     sig,
     bundle_id: bundleId,
     expires_at: expiresAt,
+    tree,
   })
-  return { scope, signed: Boolean(secret) }
+  return { scope, signed: Boolean(secret), tree }
 }

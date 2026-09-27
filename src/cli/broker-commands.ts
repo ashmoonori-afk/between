@@ -3,17 +3,21 @@ import { APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
 import { getStatus, summarizeEvents } from '../api/status'
 import { ackReview, submitBrokerCommand, type BrokerControl } from '../api/broker'
 import { approve, parseApprovalScope } from '../api/approval'
-import { print, printJson } from './output'
+import { print, printErr, printJson } from './output'
 import { parseInterval } from './args'
 import { fail, root } from './shared'
 import { runStartCommand } from './start-command'
 import { runVerifyPushCommand } from './verify-push-command'
 
+const NOT_RUNNING_NOTE =
+  '  note: no broker is running, so this stays queued until you run `between start`'
+
 function enqueue(label: string, command: BrokerControl) {
   return async () => {
     try {
-      await submitBrokerCommand(root(), command)
-      print(`between: ${label} requested`)
+      const res = await submitBrokerCommand(root(), command)
+      print(`between: ${label} queued (${res.command_id})`)
+      if (!res.broker_running) print(NOT_RUNNING_NOTE)
     } catch (e) {
       await fail(e)
     }
@@ -34,6 +38,8 @@ export function registerBrokerCommands(program: Command): void {
             diff: s.diff,
             broker: s.broker,
             last_event: s.last_event,
+            broker_running: s.broker_running,
+            next_step: s.next_step,
           })
           return
         }
@@ -53,6 +59,8 @@ export function registerBrokerCommands(program: Command): void {
         print(`  reviewer:   ${s.reviewer.name} (${s.reviewer.status})`)
         if (wf.error) print(`  error:      ${wf.error.code} - ${wf.error.message}`)
         print(`  last event: ${last ? `${last.event} @ ${last.ts}` : '-'}`)
+        print(`  broker:     ${s.broker_running ? 'running' : 'not running'}`)
+        if (s.next_step) print(`  next:       ${s.next_step}`)
       } catch (e) {
         await fail(e)
       }
@@ -101,8 +109,9 @@ export function registerBrokerCommands(program: Command): void {
     .description('Lock a new goal for the developer')
     .action(async (text: string[]) => {
       try {
-        await submitBrokerCommand(root(), { kind: 'goal', goal: text.join(' ') })
-        print('between: goal locked')
+        const res = await submitBrokerCommand(root(), { kind: 'goal', goal: text.join(' ') })
+        print(`between: goal queued (${res.command_id})`)
+        if (!res.broker_running) print(NOT_RUNNING_NOTE)
       } catch (e) {
         await fail(e)
       }
@@ -113,8 +122,9 @@ export function registerBrokerCommands(program: Command): void {
     .description('Steer active hosted agents and clear stale approval')
     .action(async (text: string[]) => {
       try {
-        await submitBrokerCommand(root(), { kind: 'steer_goal', goal: text.join(' ') })
-        print('between: goal steered')
+        const res = await submitBrokerCommand(root(), { kind: 'steer_goal', goal: text.join(' ') })
+        print(`between: steer queued (${res.command_id})`)
+        if (!res.broker_running) print(NOT_RUNNING_NOTE)
       } catch (e) {
         await fail(e)
       }
@@ -131,6 +141,13 @@ export function registerBrokerCommands(program: Command): void {
             ? `between: ${res.scope} approval submitted (signed)`
             : `between: ${res.scope} approval submitted (UNSIGNED - set ${APPROVAL_SECRET_ENV} to enable the approval boundary)`,
         )
+        const s = await getStatus(root()).catch(() => null)
+        if (s?.simulated && res.scope === 'merge') {
+          printErr(
+            'between: warning - SIMULATION project (fake agent): the broker rejects merge approvals. Use real agents: between init --developer claude --reviewer codex',
+          )
+        }
+        if (s && !s.broker_running) print(NOT_RUNNING_NOTE)
       } catch (e) {
         await fail(e)
       }
@@ -166,10 +183,13 @@ export function registerBrokerCommands(program: Command): void {
 
   program
     .command('verify-push')
-    .description('Approval gate used by the pre-push hook: blocks a forged/unapproved push (P1-5)')
-    .action(async () => {
+    .description(
+      'Push gate: pushes to protected branches need a signed merge approval of the pushed tree',
+    )
+    .option('--stdin', 'read git pre-push ref lines from stdin (default: check the current branch)')
+    .action(async (opts: { stdin?: boolean }) => {
       try {
-        await runVerifyPushCommand(root())
+        await runVerifyPushCommand(root(), opts)
       } catch (e) {
         await fail(e)
       }

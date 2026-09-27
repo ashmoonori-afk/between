@@ -3,6 +3,7 @@ import type { Ack, Clock } from '../core/types'
 import { SystemClock } from '../core/clock'
 import { StateRepository } from '../adapters/state-repository'
 import { CommandBus, MAX_COMMAND_BYTES } from '../adapters/command-bus'
+import { BrokerLock } from '../adapters/lock'
 import { AckStore } from '../adapters/ack-store'
 import { buildSignal } from '../adapters/signal-transport'
 import { loadConfig } from '../runtime'
@@ -24,6 +25,8 @@ export interface QueuedCommand {
   command_id: string
   /** accepted onto the bus; the running broker applies it on a later tick (or never, if stopped). */
   status: 'queued'
+  /** false when no broker holds the lock, so the command waits until `between start`. */
+  broker_running: boolean
 }
 
 /**
@@ -48,7 +51,7 @@ export async function submitBrokerCommand(root: string, command: unknown): Promi
   }
   await loadConfig(root)
   const command_id = await new CommandBus(root).submit(parsed.data)
-  return { command_id, status: 'queued' }
+  return { command_id, status: 'queued', broker_running: await new BrokerLock(root).isHeld() }
 }
 
 /** Reviewer helper: acknowledge the outstanding review signal for the current cycle. */

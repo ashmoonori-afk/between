@@ -39,7 +39,24 @@ export class BrokerLock {
       throw new Error(`Another Between broker is already running for this repo${who}.`)
     }
     const owner: OwnerInfo = { pid: process.pid, host: hostname(), acquired_at: clock.nowIso() }
-    await writeFile(this.p.owner, JSON.stringify(owner, null, 2))
+    try {
+      await writeFile(this.p.owner, JSON.stringify(owner, null, 2))
+    } catch (e) {
+      // the caller never reaches its release path when acquire throws, so release here or the
+      // lock stays held until it goes stale
+      await this.releaseLock()
+      throw e
+    }
+  }
+
+  /** True while a live broker holds the lock (a stale lock from a dead process counts as free). */
+  async isHeld(): Promise<boolean> {
+    if (!existsSync(this.p.lock)) return false
+    try {
+      return await lockfile.check(this.p.lock, { stale: 30_000, realpath: true })
+    } catch {
+      return false
+    }
   }
 
   async readOwner(): Promise<OwnerInfo | null> {

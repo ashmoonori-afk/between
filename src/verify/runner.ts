@@ -1,5 +1,4 @@
 import { execa } from 'execa'
-import { tokenizeCommand } from '../adapters/agent-host'
 
 export interface CheckSpec {
   name: string
@@ -24,11 +23,17 @@ export type CommandRunner = (
   command: string,
 ) => Promise<{ exitCode: number; stdout: string; stderr: string }>
 
-/** Last non-empty line of stderr (else stdout), capped — the human-meaningful one-liner. */
-function summarize(stdout: string, stderr: string): string {
+// npm's trailing boilerplate hides the real cause (e.g. "Missing script: typecheck")
+const NOISE = /A complete log of this run can be found in|^npm (?:error|ERR!)\s*$/
+
+/** Last meaningful line of stderr (else stdout), capped — the human-meaningful one-liner. */
+export function summarize(stdout: string, stderr: string): string {
   const text = stderr.trim() || stdout.trim()
-  const lines = text.split('\n').filter((l) => l.trim().length > 0)
-  return (lines.at(-1) ?? '').trim().slice(0, 200)
+  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0)
+  const meaningful = lines.filter((l) => !NOISE.test(l.trim()))
+  // an npm error block states its cause on the first line; other tools summarize at the end
+  const npmError = meaningful.find((l) => /^npm (?:error|ERR!)/.test(l.trim()))
+  return (npmError ?? meaningful.at(-1) ?? lines.at(-1) ?? '').trim().slice(0, 200)
 }
 
 /**
@@ -70,16 +75,19 @@ export async function runChecks(
 }
 
 /**
- * Real runner: execute the command line via the shell in `cwd` (for the CLI). An optional
- * `timeoutMs` bounds the subprocess so a hung command (e.g. `npm audit` against an unreachable
- * registry) can't stall the gate (review MEDIUM); on timeout execa rejects and the caller decides.
+ * Real runner: execute the command line through the platform shell (`/bin/sh` on POSIX,
+ * `cmd.exe` on Windows) in `cwd`, so `&&`, `||`, pipes, and env expansion behave as written in
+ * config. Previously the line was tokenized and run without a shell, so `a && b` passed `&&`
+ * and `b` as arguments to `a` and could report PASS when `b` failed. An optional `timeoutMs`
+ * bounds the subprocess so a hung command can't stall the gate; on timeout execa rejects and the
+ * caller decides.
  */
 export function shellRunner(cwd: string, timeoutMs?: number): CommandRunner {
   return async (command) => {
-    const { file, args } = tokenizeCommand(command)
-    if (!file) return { exitCode: 1, stdout: '', stderr: 'empty command' }
-    const r = await execa(file, args, {
+    if (!command.trim()) return { exitCode: 1, stdout: '', stderr: 'empty command' }
+    const r = await execa(command, {
       cwd,
+      shell: true,
       reject: false,
       ...(timeoutMs ? { timeout: timeoutMs } : {}),
     })

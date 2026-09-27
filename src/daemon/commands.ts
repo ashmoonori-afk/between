@@ -57,7 +57,14 @@ export async function applyCommand(ctx: DaemonContext, command: Command): Promis
       await forceReview(ctx)
       break
     case 'approve':
-      await approve(ctx, command.scope, command.sig, command.bundle_id ?? null, command.expires_at)
+      await approve(
+        ctx,
+        command.scope,
+        command.sig,
+        command.bundle_id ?? null,
+        command.expires_at,
+        command.tree ?? null,
+      )
       break
     case 'finding_action':
       await recordFindingAction(ctx, command)
@@ -181,6 +188,7 @@ export async function approve(
   sig?: string,
   bundleId?: string | null,
   expiresAt?: string,
+  tree: string | null = null,
 ): Promise<void> {
   const cur = ctx.current()
   // F1: bundle_id + expires_at are part of the SIGNED claim — use the approver's values (what was
@@ -200,6 +208,7 @@ export async function approve(
     cycle: cur.workflow.cycle,
     bundle_id,
     expires_at,
+    tree,
   }
   const secret = resolveApprovalSecret(ctx.deps.root)
   if (secret) {
@@ -247,6 +256,7 @@ export async function approve(
       sig: sig ?? null,
       bundle_id,
       expires_at,
+      tree,
     },
   }
   await ctx.persist(touch(next, ctx.deps.clock))
