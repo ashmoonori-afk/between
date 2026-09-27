@@ -12,6 +12,7 @@ import { registerForgeCommands } from './forge-commands'
 import { registerGatewayCommand } from './gateway-command'
 import { registerSetupCommands } from './setup-commands'
 import { registerIdeCommand } from './ide-command'
+import { registerMcpCommand } from './mcp-command'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -32,6 +33,7 @@ export function buildProgram(): Command {
   registerGatewayCommand(program)
   registerIdeCommand(program)
   registerForgeCommands(program)
+  registerMcpCommand(program)
 
   return program
 }

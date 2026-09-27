@@ -3,7 +3,7 @@ import { defineConfig } from 'tsup'
 export default defineConfig({
   // `index` is the shared core library entry; `cli` is the thin commander front end.
   // `human` holds human-only operations (approve) that agent-facing front ends must not import.
-  entry: { cli: 'src/cli.ts', index: 'src/index.ts', human: 'src/human.ts' },
+  entry: { cli: 'src/cli.ts', mcp: 'src/mcp.ts', index: 'src/index.ts', human: 'src/human.ts' },
   format: ['esm'],
   target: 'node22',
   platform: 'node',
