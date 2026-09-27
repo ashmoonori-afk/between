@@ -50,7 +50,7 @@ export interface DrainedCommand {
 }
 
 const MAX_DRAIN_PER_TICK = 64
-const MAX_COMMAND_BYTES = 8192
+export const MAX_COMMAND_BYTES = 8192
 
 export class CommandBus {
   private readonly p: BetweenPaths
@@ -59,7 +59,8 @@ export class CommandBus {
     this.p = betweenPaths(root)
   }
 
-  async submit(command: Command): Promise<void> {
+  /** Enqueue a command; returns its id (the queue file name without `.json`). */
+  async submit(command: Command): Promise<string> {
     await mkdir(this.p.commands, { recursive: true })
     // ms timestamp (cross-process order) + high-res monotonic counter (tie-break within a
     // process so same-millisecond submissions keep submission order, HIGH-6) + uuid.
@@ -68,6 +69,7 @@ export class CommandBus {
     const name = `${ms}-${hr}-${randomUUID()}.json`
     // atomic temp+rename so the daemon can never drain a half-written command (P2-6)
     await writeFileAtomic(join(this.p.commands, name), JSON.stringify(command))
+    return name.slice(0, -'.json'.length)
   }
 
   /** Read pending commands in submission order. Caller deletes each after applying. */

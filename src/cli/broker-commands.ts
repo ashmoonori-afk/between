@@ -1,13 +1,8 @@
 import type { Command } from 'commander'
 import { APPROVAL_SECRET_ENV } from '../adapters/approval-secret'
 import { getStatus, summarizeEvents } from '../api/status'
-import {
-  ackReview,
-  approve,
-  parseApprovalScope,
-  submitBrokerCommand,
-  type BrokerControl,
-} from '../api/broker'
+import { ackReview, submitBrokerCommand, type BrokerControl } from '../api/broker'
+import { approve, parseApprovalScope } from '../api/approval'
 import { print, printJson } from './output'
 import { parseInterval } from './args'
 import { fail, root } from './shared'

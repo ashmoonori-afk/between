@@ -1,13 +1,6 @@
-export { BetweenApiError, type BetweenApiErrorCode } from './errors'
+export { BetweenApiError, toApiError, type BetweenApiErrorCode } from './errors'
 export { getStatus, summarizeEvents, type StatusReport, type EventSummary } from './status'
-export {
-  submitBrokerCommand,
-  parseApprovalScope,
-  approve,
-  ackReview,
-  type BrokerControl,
-  type ApprovalResult,
-} from './broker'
+export { submitBrokerCommand, ackReview, type BrokerControl, type QueuedCommand } from './broker'
 export {
   parseAgentPreset,
   initWorkspace,

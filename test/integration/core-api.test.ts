@@ -11,12 +11,16 @@ import {
   initPolicy,
   initWorkspace,
   inspectJournal,
+  NotInitializedError,
   parseAgentPreset,
-  parseApprovalScope,
   submitBrokerCommand,
   summarizeEvents,
+  toApiError,
   verifyPush,
 } from '../../src/index'
+import * as publicApi from '../../src/index'
+import { parseApprovalScope } from '../../src/human'
+import { ReplayError } from '../../src/core/replay'
 
 let dir = ''
 
@@ -57,12 +61,46 @@ describe('core api', () => {
 
   it('enqueues broker control commands on the command bus', async () => {
     await freshWorkspace()
-    await submitBrokerCommand(dir, { kind: 'goal', goal: 'ship the api layer' })
+    const res = await submitBrokerCommand(dir, { kind: 'goal', goal: 'ship the api layer' })
+    expect(res.status).toBe('queued')
     const commandsDir = betweenPaths(dir).commands
     const files = await readdir(commandsDir)
-    expect(files).toHaveLength(1)
+    expect(files).toEqual([`${res.command_id}.json`])
     const queued = JSON.parse(await readFile(join(commandsDir, files[0]!), 'utf8'))
     expect(queued).toMatchObject({ kind: 'goal', goal: 'ship the api layer' })
+  })
+
+  it('rejects non-control kinds, blank goals, and commands the broker would drop', async () => {
+    await freshWorkspace()
+    await expectApiError(
+      submitBrokerCommand(dir, { kind: 'approve', scope: 'merge' }),
+      'invalid_argument',
+    )
+    await expectApiError(
+      submitBrokerCommand(dir, { kind: 'steer_goal', goal: '  ' }),
+      'invalid_argument',
+    )
+    await expectApiError(
+      submitBrokerCommand(dir, { kind: 'goal', goal: 'x'.repeat(8192) }),
+      'invalid_argument',
+    )
+    expect(await readdir(betweenPaths(dir).commands)).toEqual([])
+  })
+
+  it('keeps human approval out of the agent-facing library entry', () => {
+    expect('approve' in publicApi).toBe(false)
+    expect('parseApprovalScope' in publicApi).toBe(false)
+  })
+
+  it('normalizes thrown values into stable api error codes', () => {
+    expect(toApiError(new NotInitializedError('/x')).code).toBe('no_state')
+    expect(toApiError(new ReplayError('journal_tampered', 'bad chain')).code).toBe(
+      'integrity_error',
+    )
+    expect(toApiError(new Error('Invalid config.yaml:\n  - x: bad')).code).toBe('invalid_config')
+    const internal = toApiError(new Error('stderr: secret-ish subprocess output'))
+    expect(internal.code).toBe('internal')
+    expect(internal.message).not.toContain('secret-ish')
   })
 
   it('validates approval scopes and agent presets at the boundary', () => {

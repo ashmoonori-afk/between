@@ -9,6 +9,10 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
     },
+    "./human": {
+      "types": "./dist/human.d.ts",
+      "import": "./dist/human.js"
+    },
     "./package.json": "./package.json"
   },
   "bin": {

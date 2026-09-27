@@ -1,76 +1,54 @@
-import type { Ack, ApprovalScope, Clock } from '../core/types'
+import { z } from 'zod'
+import type { Ack, Clock } from '../core/types'
 import { SystemClock } from '../core/clock'
-import { signApproval, approvalExpiry } from '../core/approval'
-import { APPROVAL_SCOPES } from '../core/constants'
 import { StateRepository } from '../adapters/state-repository'
-import { CommandBus } from '../adapters/command-bus'
+import { CommandBus, MAX_COMMAND_BYTES } from '../adapters/command-bus'
 import { AckStore } from '../adapters/ack-store'
 import { buildSignal } from '../adapters/signal-transport'
-import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { loadConfig } from '../runtime'
 import { BetweenApiError } from './errors'
 
-export type BrokerControl =
-  | { kind: 'pause' }
-  | { kind: 'resume' }
-  | { kind: 'interrupt' }
-  | { kind: 'review_now' }
-  | { kind: 'stop' }
-  | { kind: 'goal'; goal: string }
-  | { kind: 'steer_goal'; goal: string }
+const BrokerControlSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('pause') }).strict(),
+  z.object({ kind: z.literal('resume') }).strict(),
+  z.object({ kind: z.literal('interrupt') }).strict(),
+  z.object({ kind: z.literal('review_now') }).strict(),
+  z.object({ kind: z.literal('stop') }).strict(),
+  z.object({ kind: z.literal('goal'), goal: z.string().trim().min(1) }).strict(),
+  z.object({ kind: z.literal('steer_goal'), goal: z.string().trim().min(1) }).strict(),
+])
+
+export type BrokerControl = z.infer<typeof BrokerControlSchema>
+
+export interface QueuedCommand {
+  command_id: string
+  /** accepted onto the bus; the running broker applies it on a later tick (or never, if stopped). */
+  status: 'queued'
+}
 
 /**
- * Enqueue a control command for the running broker (it drains the bus on its next tick).
- * `approve` is deliberately not a BrokerControl: human approval goes through `approve()`.
+ * Enqueue a control command for the running broker. Validated at runtime, so untyped callers
+ * cannot smuggle other kinds (e.g. `approve`) through this path; human approval lives in the
+ * separate `between-dev/human` entry.
  */
-export async function submitBrokerCommand(root: string, command: BrokerControl): Promise<void> {
-  await loadConfig(root)
-  await new CommandBus(root).submit(command)
-}
-
-export function parseApprovalScope(scope: string): ApprovalScope {
-  if (!APPROVAL_SCOPES.includes(scope as ApprovalScope)) {
+export async function submitBrokerCommand(root: string, command: unknown): Promise<QueuedCommand> {
+  const parsed = BrokerControlSchema.safeParse(command)
+  if (!parsed.success) {
     throw new BetweenApiError(
       'invalid_argument',
-      `scope must be one of: ${APPROVAL_SCOPES.join(', ')}`,
+      `invalid broker command: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
     )
   }
-  return scope as ApprovalScope
-}
-
-export interface ApprovalResult {
-  scope: ApprovalScope
-  /** false when BETWEEN_APPROVAL_SECRET is unset, so the approval boundary is not enforced. */
-  signed: boolean
-}
-
-/** Submit a signed human approval bound to the current diff, cycle, bundle, and expiry. */
-export async function approve(
-  root: string,
-  scope: ApprovalScope,
-  nowMs: number = Date.now(),
-): Promise<ApprovalResult> {
-  await loadConfig(root)
-  const state = await new StateRepository(root).read()
-  const secret = resolveApprovalSecret(root)
-  const bundleId = state?.diff.bundle_id ?? null
-  const expiresAt = approvalExpiry(nowMs)
-  const claim = {
-    scope,
-    diff_hash: state?.diff.hash ?? null,
-    cycle: state?.workflow.cycle ?? 0,
-    bundle_id: bundleId,
-    expires_at: expiresAt,
+  const bytes = Buffer.byteLength(JSON.stringify(parsed.data), 'utf8')
+  if (bytes > MAX_COMMAND_BYTES) {
+    throw new BetweenApiError(
+      'invalid_argument',
+      `command is ${bytes} bytes; the broker drops commands over ${MAX_COMMAND_BYTES} bytes`,
+    )
   }
-  const sig = secret ? signApproval(secret, claim) : undefined
-  await new CommandBus(root).submit({
-    kind: 'approve',
-    scope,
-    sig,
-    bundle_id: bundleId,
-    expires_at: expiresAt,
-  })
-  return { scope, signed: Boolean(secret) }
+  await loadConfig(root)
+  const command_id = await new CommandBus(root).submit(parsed.data)
+  return { command_id, status: 'queued' }
 }
 
 /** Reviewer helper: acknowledge the outstanding review signal for the current cycle. */
