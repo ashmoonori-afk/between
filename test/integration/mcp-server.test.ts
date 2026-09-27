@@ -43,7 +43,8 @@ afterEach(async () => {
 })
 
 async function tempDir(prefix: string): Promise<string> {
-  const dir = realpathSync(await mkdtemp(join(tmpdir(), prefix)))
+  // native realpath matches fs.promises.realpath (expands Windows 8.3 names like RUNNER~1)
+  const dir = realpathSync.native(await mkdtemp(join(tmpdir(), prefix)))
   dirs.push(dir)
   return dir
 }
