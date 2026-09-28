@@ -299,18 +299,33 @@ export function resolveReviewer(opts: {
 }
 
 /**
- * Codex features that give the model a way to read the disk or reach out (shell, exec, image
- * viewing, apps/plugins/browser/computer use, hooks). The read-only sandbox blocks writes only,
- * so every one of them is disabled for a review.
+ * Every model-visible codex capability that can read local content, reach out, run code, or
+ * delegate (codex-cli 0.155 enables these by default). The read-only sandbox blocks writes only,
+ * so all of them are disabled for a review; the reviewer needs nothing but the prompt.
  */
 export const CODEX_DISABLED_FEATURES = [
   'shell_tool',
   'unified_exec',
+  'unified_exec_tty',
+  'code_mode_host',
   'view_image',
+  'image_generation',
   'apps',
   'plugins',
+  'remote_plugin',
+  'plugin_sharing',
+  'skill_search',
+  'skill_mcp_dependency_install',
+  'tool_suggest',
+  'multi_agent',
   'browser_use',
+  'browser_use_external',
+  'browser_use_full_cdp_access',
+  'in_app_browser',
+  'in_app_local_automation',
   'computer_use',
+  'workspace_dependencies',
+  'goals',
   'hooks',
 ] as const
 
@@ -327,7 +342,18 @@ export function reviewerInvocation(
   if (preset === 'claude') {
     return {
       file: 'claude',
-      args: ['-p', '--output-format', 'text', '--tools', '', '--strict-mcp-config'],
+      // --safe-mode: no hooks, plugins, skills, MCP servers, CLAUDE.md, or custom commands, while
+      // sign-in still works (unlike --bare); --tools "": no built-in tools either
+      args: [
+        '-p',
+        '--output-format',
+        'text',
+        '--safe-mode',
+        '--tools',
+        '',
+        '--strict-mcp-config',
+        '--disable-slash-commands',
+      ],
     }
   }
   // --ask-for-approval is a top-level codex flag; `exec -` reads the prompt from stdin

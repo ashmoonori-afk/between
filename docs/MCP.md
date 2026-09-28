@@ -17,10 +17,10 @@ The package is `between-dev`. It has three bins:
 
 ```bash
 # recommended for MCP clients: name the package and the MCP bin explicitly, pin the version
-npx -y --package=between-dev@0.1.0 between-mcp
+npx -y --package=between-dev@0.2.0 between-mcp
 
 # equivalent convenience form (same server start function)
-npx -y between-dev@0.1.0 mcp
+npx -y between-dev@0.2.0 mcp
 
 # before the package is on the npm registry, run straight from GitHub (builds on install)
 npx -y --package=github:ashmoonori-afk/between between-mcp
@@ -82,10 +82,15 @@ Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_comman
 `.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
 The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
 started in an empty temporary directory, never the project, with no way to read the disk:
-`claude -p --tools "" --strict-mcp-config` (no tools, no MCP servers), or `codex exec --sandbox
-read-only --ignore-user-config --ignore-rules -c mcp_servers={}` with the shell, exec, image,
-apps, plugins, browser, computer-use, and hooks features disabled. The subject is entirely in
-the prompt, so an injection inside it finds no tool to read or change anything with. The
+`claude -p --safe-mode --tools "" --strict-mcp-config --disable-slash-commands` (no built-in
+tools, and no hooks, plugins, skills, MCP servers, or CLAUDE.md, while sign-in still works), or
+`codex exec --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers={}` with every
+model-visible capability feature disabled (shell, exec, code mode, image viewing and generation,
+apps, plugins, skills, multi-agent, browser, computer use, hooks). The subject is entirely in the
+prompt, so an injection inside it finds no tool to read or change anything with. The reviewer
+binary is looked up on the filtered `PATH` by Between itself and refused if its canonical path is
+inside the project, and the temporary directory must resolve outside the project (a `TMPDIR`
+inside it fails closed). The
 environment is an allowlist: runtime variables plus that reviewer's own provider credentials
 (Claude gets only Anthropic credentials, Codex only OpenAI/Codex ones); every other credential
 and anything pointing into the project (`BETWEEN_ROOT`, `INIT_CWD`, project entries on `PATH`,
@@ -168,7 +173,7 @@ Replace `/abs/path/to/repo` with the repository Between manages. Add `--allow-co
 Run from the repository (Claude Code starts the server in the project directory):
 
 ```bash
-claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
+claude mcp add between -- npx -y --package=between-dev@0.2.0 between-mcp
 ```
 
 ### Claude Desktop
@@ -181,14 +186,14 @@ claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
   "mcpServers": {
     "between": {
       "command": "npx",
-      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+      "args": ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
     }
   }
 }
 ```
 
 On Windows, launch through `cmd`:
-`"command": "cmd", "args": ["/c", "npx", "-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "C:\\path\\to\\repo"]`.
+`"command": "cmd", "args": ["/c", "npx", "-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "C:\\path\\to\\repo"]`.
 
 ### Codex CLI
 
@@ -197,7 +202,7 @@ On Windows, launch through `cmd`:
 ```toml
 [mcp_servers.between]
 command = "npx"
-args = ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+args = ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
 ```
 
 ### Cursor
@@ -209,7 +214,7 @@ args = ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path
   "mcpServers": {
     "between": {
       "command": "npx",
-      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp"],
+      "args": ["-y", "--package=between-dev@0.2.0", "between-mcp"],
       "env": { "BETWEEN_ROOT": "/abs/path/to/repo" }
     }
   }

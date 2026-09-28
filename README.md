@@ -336,7 +336,7 @@ It is a second thin front end over the same core API as the CLI.
 
 ```bash
 # Claude Code, from the target repository
-claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
+claude mcp add between -- npx -y --package=between-dev@0.2.0 between-mcp
 ```
 
 Other clients use the same command in their MCP config, for example:
@@ -346,7 +346,7 @@ Other clients use the same command in their MCP config, for example:
   "mcpServers": {
     "between": {
       "command": "npx",
-      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+      "args": ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
     }
   }
 }
@@ -374,6 +374,11 @@ it can be an agent's answer or a plan/spec.
 
 The result is structured: summary, findings with severity (`critical`, `major`, `minor`,
 `nit`), questions, and a verdict `APPROVE` or `REQUEST_CHANGES`.
+
+> Direct review ships in the release after `between-dev@0.2.0`. Until that release is on npm,
+> use the GitHub build in the commands below: replace `--package=between-dev` with
+> `--package=github:ashmoonori-afk/between`, and `npx -y between-dev` with
+> `npx -y github:ashmoonori-afk/between`.
 
 Routing reuses the pair: when Claude Code asks, Codex reviews; when Codex asks, Claude reviews.
 An agent cannot pick itself as the reviewer. Between runs the reviewer CLI with your existing

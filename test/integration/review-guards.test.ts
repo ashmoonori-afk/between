@@ -3,8 +3,10 @@ import { createServer, type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
+import { realpathSync } from 'node:fs'
+import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { fetchSubjectText, isPublicAddress } from '../../src/review/fetch-subject'
-import { reviewerEnv } from '../../src/api/review'
+import { makeReviewerWorkdir, resolveReviewerBinary, reviewerEnv } from '../../src/api/review'
 
 const servers: Server[] = []
 
@@ -142,5 +144,70 @@ describe('reviewerEnv', () => {
       SOME_APP_SETTING: 'x',
     })
     expect(env).toEqual({ PATH: '/usr/bin', HOME: '/home/u' })
+  })
+})
+
+describe('reviewer isolation from the project (canonical paths)', () => {
+  const made: string[] = []
+  afterEach(async () => {
+    await Promise.all(made.splice(0).map((d) => rm(d, { recursive: true, force: true })))
+  })
+
+  async function dir(prefix: string): Promise<string> {
+    const d = realpathSync.native(await mkdtemp(join(tmpdir(), prefix)))
+    made.push(d)
+    return d
+  }
+
+  async function fakeCli(binDir: string, name: string): Promise<void> {
+    await mkdir(binDir, { recursive: true })
+    const file = join(binDir, process.platform === 'win32' ? `${name}.cmd` : name)
+    await writeFile(file, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+    await chmod(file, 0o755)
+  }
+
+  it('drops env paths that reach the project through a symlink alias', async () => {
+    const root = await dir('between-iso-root-')
+    const aliasParent = await dir('between-iso-alias-')
+    const alias = join(aliasParent, 'link')
+    await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    await mkdir(join(root, 'bin'))
+    await mkdir(join(root, '.claude'))
+    const env = reviewerEnv('claude', root, {
+      PATH: [join(alias, 'bin'), '/usr/bin'].join(delimiter),
+      CLAUDE_CONFIG_DIR: join(alias, '.claude'),
+      HOME: '/home/u',
+    })
+    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/home/u' })
+  })
+
+  it('never resolves a reviewer binary that lives inside the project', async () => {
+    const root = await dir('between-iso-root-')
+    const outside = await dir('between-iso-outside-')
+    await fakeCli(join(root, 'bin'), 'codex')
+    await fakeCli(join(outside, 'bin'), 'codex')
+    const aliasParent = await dir('between-iso-alias-')
+    const alias = join(aliasParent, 'link')
+    await symlink(root, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    // the project copy comes first on PATH, once directly and once through an alias
+    const PATH = [join(alias, 'bin'), join(root, 'bin'), join(outside, 'bin')].join(delimiter)
+    const found = await resolveReviewerBinary('codex', { PATH }, root)
+    expect(found && realpathSync.native(found)).toBe(
+      realpathSync.native(
+        join(outside, 'bin', process.platform === 'win32' ? 'codex.cmd' : 'codex'),
+      ),
+    )
+    expect(await resolveReviewerBinary('codex', { PATH: join(root, 'bin') }, root)).toBeNull()
+  })
+
+  it('fails closed when the temp base is inside the project, and cleans up', async () => {
+    const root = await dir('between-iso-root-')
+    await expect(makeReviewerWorkdir(root, root)).rejects.toMatchObject({
+      code: 'reviewer_failed',
+    })
+    expect((await readdir(root)).filter((n) => n.startsWith('between-review-'))).toEqual([])
+    const ok = await makeReviewerWorkdir(root)
+    made.push(ok.created)
+    expect(ok.workdir.startsWith(root)).toBe(false)
   })
 })

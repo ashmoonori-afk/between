@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
+import { constants as fsConstants, existsSync, realpathSync } from 'node:fs'
+import { access, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
@@ -297,7 +297,7 @@ export function reviewerEnv(
   baseEnv: NodeJS.ProcessEnv = process.env,
 ): Record<string, string> {
   const own = new Set(PROVIDER_AUTH_BY_PRESET[preset])
-  const root = resolve(projectRoot)
+  const roots = projectRoots(projectRoot)
   const env: Record<string, string> = {}
   for (const [name, value] of Object.entries(baseEnv)) {
     if (value === undefined) continue
@@ -307,18 +307,113 @@ export function reviewerEnv(
     } else if (upper === 'PATH') {
       env[name] = value
         .split(delimiter)
-        .filter((entry) => entry && !isInside(root, entry))
+        .filter((entry) => entry && !pointsInto(roots, entry))
         .join(delimiter)
-    } else if (REVIEWER_RUNTIME_ENV.has(upper) && !value.includes(root)) {
+    } else if (REVIEWER_RUNTIME_ENV.has(upper) && !pointsInto(roots, value)) {
       env[name] = value
     }
   }
   return env
 }
 
+/** The project root as given and canonical (symlinks and aliases like /var -> /private/var). */
+function projectRoots(projectRoot: string): string[] {
+  const lexical = resolve(projectRoot)
+  let canonical = lexical
+  try {
+    canonical = realpathSync.native(lexical)
+  } catch {
+    // a missing root has no aliases to resolve
+  }
+  return [...new Set([lexical, canonical])]
+}
+
+/** Whether a value names, contains, or resolves (through symlinks) to a path inside the project. */
+function pointsInto(roots: readonly string[], value: string): boolean {
+  if (roots.some((root) => value.includes(root))) return true
+  if (!isAbsolute(value)) return false
+  let canonical = resolve(value)
+  try {
+    canonical = realpathSync.native(canonical)
+  } catch {
+    // not an existing path: the lexical checks above are all we can do
+  }
+  return roots.some((root) => isInside(root, resolve(value)) || isInside(root, canonical))
+}
+
 function isInside(root: string, path: string): boolean {
-  const rel = relative(root, resolve(path))
+  const rel = relative(root, path)
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+/**
+ * Find the reviewer CLI on the (already filtered) PATH ourselves and refuse any candidate whose
+ * canonical path lies inside the project, so a repository-controlled `claude`/`codex` binary can
+ * never receive the prompt or the provider credential.
+ */
+export async function resolveReviewerBinary(
+  name: string,
+  env: Record<string, string>,
+  projectRoot: string,
+): Promise<string | null> {
+  const roots = projectRoots(projectRoot)
+  const pathValue = Object.entries(env).find(([k]) => k.toUpperCase() === 'PATH')?.[1] ?? ''
+  const extValue = Object.entries(env).find(([k]) => k.toUpperCase() === 'PATHEXT')?.[1]
+  const exts =
+    process.platform === 'win32'
+      ? (extValue ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
+      : ['']
+  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+    for (const ext of exts) {
+      const candidate = join(dir, name + ext)
+      let canonical: string
+      try {
+        canonical = await realpath(candidate)
+        if (!(await stat(canonical)).isFile()) continue
+        if (process.platform !== 'win32') await access(canonical, fsConstants.X_OK)
+      } catch {
+        continue
+      }
+      if (roots.some((root) => isInside(root, canonical) || isInside(root, resolve(candidate)))) {
+        continue
+      }
+      return candidate
+    }
+  }
+  return null
+}
+
+/**
+ * Create the reviewer's empty working directory and fail closed if TMPDIR/TEMP/TMP put it inside
+ * the project, where the reviewer could rediscover project settings, hooks, or instructions.
+ */
+export async function makeReviewerWorkdir(
+  projectRoot: string,
+  base: string = tmpdir(),
+): Promise<{ created: string; workdir: string }> {
+  const created = await mkdtemp(join(base, 'between-review-'))
+  const workdir = await realpath(created)
+  const roots = projectRoots(projectRoot)
+  if (roots.some((root) => isInside(root, workdir) || isInside(root, resolve(created)))) {
+    await removeWorkdir(created)
+    throw new BetweenApiError(
+      'reviewer_failed',
+      `the temporary directory (${base}) is inside the project; point TMPDIR/TEMP/TMP outside it`,
+    )
+  }
+  return { created, workdir }
+}
+
+async function removeWorkdir(created: string): Promise<void> {
+  // Windows may hold the dir briefly after the child exits; retry, and never let a cleanup
+  // failure replace the review result or the reviewer's own error
+  await rm(created, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
+    (e: unknown) => {
+      process.stderr.write(
+        `between: could not remove reviewer temp dir ${created}: ${e instanceof Error ? e.message : String(e)}\n`,
+      )
+    },
+  )
 }
 
 /**
@@ -331,19 +426,11 @@ async function runReviewerCli(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   if (preset === 'fake') return fakeReviewerOutput(prompt)
-  const created = await mkdtemp(join(tmpdir(), 'between-review-'))
+  const { created, workdir } = await makeReviewerWorkdir(opts.projectRoot)
   try {
-    return await spawnReviewer(preset, prompt, await realpath(created), opts)
+    return await spawnReviewer(preset, prompt, workdir, opts)
   } finally {
-    // Windows may hold the dir briefly after the child exits; retry, and never let a cleanup
-    // failure replace the review result or the reviewer's own error
-    await rm(created, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
-      (e: unknown) => {
-        process.stderr.write(
-          `between: could not remove reviewer temp dir ${created}: ${e instanceof Error ? e.message : String(e)}\n`,
-        )
-      },
-    )
+    await removeWorkdir(created)
   }
 }
 
@@ -354,10 +441,18 @@ async function spawnReviewer(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   const { file, args } = reviewerInvocation(preset, workdir)
-  const r = await execa(file, args, {
+  const env = reviewerEnv(preset, opts.projectRoot)
+  const binary = await resolveReviewerBinary(file, env, opts.projectRoot)
+  if (!binary) {
+    throw new BetweenApiError(
+      'reviewer_failed',
+      `${preset} CLI not found on PATH outside the project; install it and sign in, or pick another reviewer`,
+    )
+  }
+  const r = await execa(binary, args, {
     cwd: workdir,
     input: prompt,
-    env: reviewerEnv(preset, opts.projectRoot),
+    env,
     extendEnv: false,
     timeout: opts.timeoutMs,
     reject: false,

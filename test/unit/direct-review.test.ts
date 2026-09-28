@@ -140,12 +140,30 @@ describe('reviewer routing', () => {
     expect(args.join(' ')).toContain(
       '--sandbox read-only --cd /tmp/w --ignore-user-config --ignore-rules -c mcp_servers={}',
     )
-    for (const feature of ['shell_tool', 'unified_exec', 'view_image', 'hooks']) {
+    for (const feature of [
+      'shell_tool',
+      'unified_exec',
+      'view_image',
+      'image_generation',
+      'multi_agent',
+      'skill_search',
+      'browser_use',
+      'hooks',
+    ]) {
       expect(args[args.indexOf(feature) - 1], feature).toBe('--disable')
     }
     expect(reviewerInvocation('claude', '/tmp/w')).toEqual({
       file: 'claude',
-      args: ['-p', '--output-format', 'text', '--tools', '', '--strict-mcp-config'],
+      args: [
+        '-p',
+        '--output-format',
+        'text',
+        '--safe-mode',
+        '--tools',
+        '',
+        '--strict-mcp-config',
+        '--disable-slash-commands',
+      ],
     })
   })
 })
