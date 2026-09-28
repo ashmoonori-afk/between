@@ -134,13 +134,13 @@ describe('reviewer routing', () => {
   })
 
   it('invokes codex read-only and non-interactive', () => {
-    const { file, args } = reviewerInvocation('codex')
+    const { file, args } = reviewerInvocation('codex', '/tmp/w')
     expect(file).toBe('codex')
     expect(args.slice(0, 3)).toEqual(['--ask-for-approval', 'never', 'exec'])
-    expect(args).toEqual(expect.arrayContaining(['--sandbox', 'read-only']))
-    expect(reviewerInvocation('claude')).toEqual({
+    expect(args.join(' ')).toContain('--sandbox read-only --cd /tmp/w -c mcp_servers={}')
+    expect(reviewerInvocation('claude', '/tmp/w')).toEqual({
       file: 'claude',
-      args: ['-p', '--output-format', 'text'],
+      args: ['-p', '--output-format', 'text', '--tools', '', '--strict-mcp-config'],
     })
   })
 })

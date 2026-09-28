@@ -35,6 +35,7 @@ Do not use `npx between-mcp`. npx would look up a separate npm package called `b
 | `--root <path>` | `$BETWEEN_ROOT`, then the working directory | Project the server is pinned to. Resolved to a real path at startup. |
 | `--allow-control` | off | Register the broker control tools (pause, resume, interrupt, review now, stop, goal, steer). |
 | `--allow-exec` | off | Register tools that run repo-configured commands (`between_verify`, `between_policy`). |
+| `--allow-review` | off | Register `between_review`, which runs the claude/codex CLI and sends the subject to that provider. |
 
 The project must already be initialized with `between init` (a human step; see below).
 
@@ -63,24 +64,29 @@ its next tick. "Queued" is not "applied". Check `between_status` afterwards.
 ### Direct review (`between_review`)
 
 Asks the other agent of the pair for an independent review, from inside a running session and
-outside the broker cycle. It is registered by default: it does not touch the repository or the
-broker, but it does send the subject to the reviewer agent's model provider.
+outside the broker cycle. It is registered only with `--allow-review`. It does not touch the
+repository or the broker, but it runs a model CLI, costs a model call, and sends the subject (and
+a fetched URL body) to the reviewer agent's model provider, so it is not annotated read-only.
 
 | Field | Meaning |
 | --- | --- |
 | `kind` | `diff` (code change), `answer` (an agent's reply), or `plan` (plan, spec, design) |
-| `text` / `file` / `url` | The subject; at most one. `file` must resolve inside the project root and not under `.between/`, `.git/`, or `.env*`. `url` is http(s) only. |
+| `text` / `file` / `url` | The subject; at most one. `file` must resolve inside the project root and not under `.between/`, `.git/`, or `.env*`. `url` is http(s) only, fetched from public addresses only: loopback, private, link-local (cloud metadata), and reserved ranges are refused at DNS-lookup time on every redirect hop, and the body is aborted past 256 KiB. |
 | `base` | `diff` with no subject: commit to diff the working tree against (default `HEAD`, tracked files) |
 | `context` | For `answer`, the user's question verbatim; otherwise background |
 | `focus`, `criteria` | What to look at hardest; up to 10 extra criteria |
-| `reviewer` | Force `claude` or `codex` |
+| `reviewer` | Force `claude` or `codex`; refused when it equals the caller (no self-review) |
 | `from` | The calling agent. The other one reviews. Inferred from the MCP client name when omitted (Claude Code -> `codex` reviews; Codex -> `claude` reviews). |
 
 Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_command` of
 `.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
-The reviewer is the same CLI the broker wrappers use (`claude -p`, or
-`codex exec --sandbox read-only`), started in the project root with the broker's sandboxed agent
-environment: provider sign-in passes through, other credentials are stripped. No new keys.
+The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
+started in an empty temporary directory, never the project: `claude -p --tools ""
+--strict-mcp-config` (no tools, no MCP servers) or `codex exec --sandbox read-only -c
+mcp_servers={}`. The subject is entirely in the prompt, so an injection inside it finds no
+repository to read or change. The environment is the broker's sandboxed agent environment
+narrowed to that reviewer's provider: Claude gets only Anthropic credentials, Codex only
+OpenAI/Codex credentials, and every other credential is stripped.
 Secret-like values in the subject are replaced with `[REDACTED]` before it is sent; the subject
 is capped at 256 KiB.
 

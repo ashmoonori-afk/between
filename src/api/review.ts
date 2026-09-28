@@ -1,9 +1,11 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
-import { readFile, realpath, stat } from 'node:fs/promises'
-import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
 import { buildAgentSandboxEnv } from '../adapters/agent-env'
+import { fetchSubjectText } from '../review/fetch-subject'
 import { GitAdapter, GitError } from '../adapters/git'
 import { betweenPaths } from '../adapters/paths'
 import { redactSecrets } from '../core/redact'
@@ -64,7 +66,6 @@ export interface ReviewResult extends ParsedReview {
 }
 
 export interface ReviewerRunOptions {
-  cwd: string
   timeoutMs: number
 }
 
@@ -129,7 +130,7 @@ export async function requestReview(
   })
   const run = deps.runReviewer ?? runReviewerCli
   const timeoutMs = config ? config.review_timeout_seconds * 1000 : DEFAULT_REVIEW_TIMEOUT_MS
-  const reply = await run(route.preset, prompt, { cwd: realRoot, timeoutMs })
+  const reply = await run(route.preset, prompt, { timeoutMs })
 
   let parsed: ParsedReview
   try {
@@ -166,6 +167,9 @@ function validateRequest(req: ReviewRequest): void {
   }
   if (req.base !== undefined && (req.kind !== 'diff' || given.length > 0)) {
     throw invalid('base applies only to a diff review of the working tree')
+  }
+  if (req.reviewer !== undefined && req.reviewer === req.from) {
+    throw invalid(`${req.from} cannot review its own work; the other agent of the pair reviews`)
   }
 }
 
@@ -231,23 +235,40 @@ async function fetchUrl(
 }
 
 async function defaultFetchText(url: string): Promise<string> {
-  let res: Response
   try {
-    res = await fetch(url, { signal: AbortSignal.timeout(URL_FETCH_TIMEOUT_MS) })
+    return await fetchSubjectText(url, {
+      maxBytes: MAX_REVIEW_SUBJECT_BYTES,
+      timeoutMs: URL_FETCH_TIMEOUT_MS,
+    })
   } catch (e) {
     throw invalid(`could not fetch ${url}: ${e instanceof Error ? e.message : String(e)}`)
   }
-  if (!res.ok) throw invalid(`could not fetch ${url}: HTTP ${res.status}`)
-  const declared = Number(res.headers.get('content-length') ?? 0)
-  if (declared > MAX_REVIEW_SUBJECT_BYTES) {
-    throw invalid(`URL body is ${declared} bytes; the limit is ${MAX_REVIEW_SUBJECT_BYTES}`)
-  }
-  return res.text()
+}
+
+const PROVIDER_AUTH_BY_PRESET: Record<'claude' | 'codex', readonly string[]> = {
+  claude: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'],
+  codex: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
 }
 
 /**
- * Spawn the reviewer CLI read-only with the same sandboxed environment the broker gives agents:
- * provider auth passes through, every other credential is stripped. No new keys are needed.
+ * The broker's sandboxed agent env, narrowed to the reviewer's own provider: every other
+ * credential, including the other provider's key, is stripped. No new keys are needed.
+ */
+export function reviewerEnv(
+  preset: 'claude' | 'codex',
+  baseEnv: NodeJS.ProcessEnv = process.env,
+): Record<string, string | undefined> {
+  const { env } = buildAgentSandboxEnv({}, { role: 'reviewer', baseEnv })
+  const other = PROVIDER_AUTH_BY_PRESET[preset === 'claude' ? 'codex' : 'claude']
+  for (const name of Object.keys(env)) {
+    if (other.includes(name.toUpperCase())) delete env[name]
+  }
+  return env
+}
+
+/**
+ * The reviewer runs in an empty temporary directory, never the project: the subject is fully
+ * in the prompt, so a prompt injection inside it finds no repository to read or change.
  */
 async function runReviewerCli(
   preset: ReviewerPreset,
@@ -255,15 +276,25 @@ async function runReviewerCli(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   if (preset === 'fake') return fakeReviewerOutput(prompt)
-  const { file, args } = reviewerInvocation(preset)
-  const { env } = buildAgentSandboxEnv(
-    { BETWEEN_ROOT: opts.cwd },
-    { role: 'reviewer', baseEnv: process.env },
-  )
+  const workdir = await realpath(await mkdtemp(join(tmpdir(), 'between-review-')))
+  try {
+    return await spawnReviewer(preset, prompt, workdir, opts)
+  } finally {
+    await rm(workdir, { recursive: true, force: true })
+  }
+}
+
+async function spawnReviewer(
+  preset: 'claude' | 'codex',
+  prompt: string,
+  workdir: string,
+  opts: ReviewerRunOptions,
+): Promise<string> {
+  const { file, args } = reviewerInvocation(preset, workdir)
   const r = await execa(file, args, {
-    cwd: opts.cwd,
+    cwd: workdir,
     input: prompt,
-    env,
+    env: reviewerEnv(preset),
     extendEnv: false,
     timeout: opts.timeoutMs,
     reject: false,

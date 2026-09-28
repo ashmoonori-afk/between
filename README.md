@@ -322,7 +322,7 @@ between verify
 between journal
 between replay
 between cockpit
-between mcp [--root <path>] [--allow-control] [--allow-exec]
+between mcp [--root <path>] [--allow-control] [--allow-exec] [--allow-review]
 between review [file|-] [--kind diff|answer|plan] [--text <t>] [--url <u>] [--base <ref>] [--context <t>] [--focus <t>] [--criterion <t>]... [--reviewer claude|codex|fake] [--from claude|codex] [--json]
 between review-shim claude|codex [--force] [--print]
 between ide [--builder-agents <n>] [--reviewer-agents <n>] [--rules-mode project_only|inherit_global] [--permission-mode read_only|guard|full_access] [--working-folder <relative-path>] [--followup-mode steer|queue] [--print-cli builder|reviewer|builder:n|reviewer:n] [--json]
@@ -354,7 +354,8 @@ Other clients use the same command in their MCP config, for example:
 
 By default only read tools are exposed (`between_status`, `between_summarize`,
 `between_doctor`, `between_journal`, `between_replay`, `between_evidence`).
-`--allow-exec` adds `between_verify` and `between_policy`, and `--allow-control` adds
+`--allow-exec` adds `between_verify` and `between_policy`, `--allow-review` adds
+`between_review` (below), and `--allow-control` adds
 pause, resume, interrupt, review-now, stop, goal, and steer. Approval, ack, init, and
 verify-push are never exposed. Tool reference, security notes, and per-client configs
 (including Codex CLI and Cursor) are in [`docs/MCP.md`](./docs/MCP.md).
@@ -375,14 +376,20 @@ The result is structured: summary, findings with severity (`critical`, `major`, 
 `nit`), questions, and a verdict `APPROVE` or `REQUEST_CHANGES`.
 
 Routing reuses the pair: when Claude Code asks, Codex reviews; when Codex asks, Claude reviews.
-Between runs the same CLI the broker uses (`claude -p` or `codex exec --sandbox read-only`) with
-your existing sign-in, so there are no new provider keys. Secret-like values are redacted first.
+An agent cannot pick itself as the reviewer. Between runs the reviewer CLI with your existing
+sign-in (no new provider keys) in an empty temporary directory, with no tools (`claude -p
+--tools ""`) or in the read-only sandbox (`codex exec --sandbox read-only`), and passes only
+that provider's credentials. Secret-like values are redacted first.
+
+A review sends the subject to the reviewer's model provider and costs a model call, so the MCP
+tool is off until you start the server with `--allow-review`. URL subjects are fetched only
+from public addresses (loopback, private, and link-local ranges are refused on every redirect).
 
 **Claude Code**
 
 ```bash
-# 1. register the MCP server (between_review is on by default)
-claude mcp add between -- npx -y --package=between-dev between-mcp
+# 1. register the MCP server with the review tool enabled
+claude mcp add between -- npx -y --package=between-dev between-mcp --allow-review
 # 2. optional slash command: writes .claude/commands/between-review.md
 npx -y between-dev review-shim claude
 ```
@@ -396,7 +403,7 @@ Then in the session: `/between-review plan docs/plan.md`, `/between-review answe
 # 1. ~/.codex/config.toml
 #    [mcp_servers.between]
 #    command = "npx"
-#    args = ["-y", "--package=between-dev", "between-mcp", "--root", "/abs/path/to/repo"]
+#    args = ["-y", "--package=between-dev", "between-mcp", "--allow-review", "--root", "/abs/path/to/repo"]
 # 2. optional prompt: writes $CODEX_HOME/prompts/between-review.md (default ~/.codex)
 npx -y between-dev review-shim codex
 ```

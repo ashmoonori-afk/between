@@ -49,15 +49,15 @@ async function repo(): Promise<string> {
 }
 
 interface Recorder extends ReviewDeps {
-  calls: Array<{ preset: ReviewerPreset; prompt: string; cwd: string }>
+  calls: Array<{ preset: ReviewerPreset; prompt: string }>
 }
 
 function recorder(): Recorder {
   const calls: Recorder['calls'] = []
   return {
     calls,
-    runReviewer: async (preset, prompt, opts) => {
-      calls.push({ preset, prompt, cwd: opts.cwd })
+    runReviewer: async (preset, prompt) => {
+      calls.push({ preset, prompt })
       return fakeReviewerOutput(prompt)
     },
     fetchText: async (url) => `# Remote plan at ${url}\n`,
@@ -77,7 +77,6 @@ describe('requestReview', () => {
       subject: { source: 'git', label: 'git diff HEAD' },
     })
     expect(deps.calls[0]!.prompt).toContain('+v2')
-    expect(deps.calls[0]!.cwd).toBe(root)
   })
 
   it('reviews a plan file and an inline answer with their own rubrics', async () => {
@@ -160,6 +159,12 @@ describe('requestReview', () => {
       { kind: 'answer' as const, text: 'a', base: 'HEAD', reviewer: 'fake' as const },
       { kind: 'diff' as const, base: '--output=x', reviewer: 'fake' as const },
       { kind: 'plan' as const, text: 'no reviewer given' },
+      {
+        kind: 'plan' as const,
+        text: 'self review',
+        reviewer: 'claude' as const,
+        from: 'claude' as const,
+      },
     ]
     for (const req of cases) {
       await expect(requestReview(root, req, deps)).rejects.toMatchObject({
@@ -181,9 +186,14 @@ describe('requestReview', () => {
 })
 
 describe('between_review over MCP', () => {
-  async function connect(root: string, deps: ReviewDeps, clientName: string): Promise<Client> {
+  async function connect(
+    root: string,
+    deps: ReviewDeps,
+    clientName: string,
+    allowReview = true,
+  ): Promise<Client> {
     const [clientSide, serverSide] = InMemoryTransport.createLinkedPair()
-    await createBetweenMcpServer({ root, reviewDeps: deps }).connect(serverSide)
+    await createBetweenMcpServer({ root, reviewDeps: deps, allowReview }).connect(serverSide)
     const client = new Client({ name: clientName, version: '0.0.0' })
     await client.connect(clientSide)
     clients.push(client)
@@ -200,10 +210,27 @@ describe('between_review over MCP', () => {
     return { body, isError: res.isError === true }
   }
 
-  it('is on by default and read-only but open-world', async () => {
-    const client = await connect(await repo(), recorder(), 'test')
-    const tool = (await client.listTools()).tools.find((t) => t.name === 'between_review')
-    expect(tool?.annotations).toMatchObject({ readOnlyHint: true, openWorldHint: true })
+  it('needs the --allow-review startup grant and is not marked read-only', async () => {
+    const root = await repo()
+    const off = await connect(root, recorder(), 'test', false)
+    expect((await off.listTools()).tools.map((t) => t.name)).not.toContain('between_review')
+    expect((await review(off, { kind: 'plan', text: 'x', reviewer: 'codex' })).isError).toBe(true)
+
+    const on = await connect(root, recorder(), 'test')
+    const tool = (await on.listTools()).tools.find((t) => t.name === 'between_review')
+    expect(tool?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    })
+  })
+
+  it('refuses a self-review by the calling agent', async () => {
+    const deps = recorder()
+    const client = await connect(await repo(), deps, 'claude-code')
+    const res = await review(client, { kind: 'plan', text: 'x', reviewer: 'claude' })
+    expect(res.body).toMatchObject({ ok: false, error: { code: 'invalid_argument' } })
+    expect(deps.calls).toHaveLength(0)
   })
 
   it('reviews diff, answer, and plan; the other agent of the calling client reviews', async () => {

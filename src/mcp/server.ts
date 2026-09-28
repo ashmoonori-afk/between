@@ -23,6 +23,8 @@ export interface BetweenMcpOptions {
   allowControl?: boolean
   /** human-granted at startup: register tools that run repo-configured commands. */
   allowExec?: boolean
+  /** human-granted at startup: register between_review (sends subjects to another model). */
+  allowReview?: boolean
   /** test seam: replaces the reviewer CLI spawn and URL fetch of `between_review` */
   reviewDeps?: ReviewDeps
 }
@@ -41,9 +43,10 @@ const MUTATING = {
   idempotentHint: false,
   openWorldHint: true,
 } as const
-// does not touch the repo or the broker, but sends the subject to another agent's model
+// does not touch the repo or the broker, but runs a model CLI and sends the subject (and any
+// fetched URL body) to another provider, which costs money: not a read-only operation
 const REVIEW = {
-  readOnlyHint: true,
+  readOnlyHint: false,
   destructiveHint: false,
   idempotentHint: false,
   openWorldHint: true,
@@ -143,7 +146,7 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
   const server = new McpServer({ name: 'between', version: BETWEEN_VERSION })
   const enabled: Record<Access, boolean> = {
     read: true,
-    review: true,
+    review: Boolean(opts.allowReview),
     exec: Boolean(opts.allowExec),
     control: Boolean(opts.allowControl),
   }
@@ -289,6 +292,7 @@ export interface RunMcpOptions {
   root?: string
   allowControl?: boolean
   allowExec?: boolean
+  allowReview?: boolean
 }
 
 /** Start the stdio MCP server. stdout carries only JSON-RPC; diagnostics go to stderr. */
@@ -298,6 +302,6 @@ export async function runMcpServer(opts: RunMcpOptions = {}): Promise<void> {
   const server = createBetweenMcpServer({ ...opts, root })
   await server.connect(new StdioServerTransport())
   log(
-    `serving ${root} (control: ${opts.allowControl ? 'on' : 'off'}, exec: ${opts.allowExec ? 'on' : 'off'}; scrubbed ${removed.length} credential env var(s))`,
+    `serving ${root} (control: ${opts.allowControl ? 'on' : 'off'}, exec: ${opts.allowExec ? 'on' : 'off'}, review: ${opts.allowReview ? 'on' : 'off'}; scrubbed ${removed.length} credential env var(s))`,
   )
 }

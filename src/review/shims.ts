@@ -33,7 +33,8 @@ Arguments: $ARGUMENTS
    - Any remaining words are the \`focus\`.
 3. Call the \`between_review\` MCP tool with \`kind\`, the subject, \`focus\`, and
    \`from: "${host}"\`.
-   If that tool is not available, run the CLI from the project root instead:
+   If that tool is not available (the Between MCP server must be started with
+   \`--allow-review\`), run the CLI from the project root instead:
    \`npx -y between-dev review --kind <kind> --from ${host} --json [file]\`
    (use \`--url <url>\` for a URL; pipe inline text on stdin and pass \`-\` as the file).
 4. Report the verdict (APPROVE or REQUEST_CHANGES), the summary, every finding with its severity
