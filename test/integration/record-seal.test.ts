@@ -1,7 +1,17 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
 import { createHash } from 'node:crypto'
-import { chmod, mkdtemp, readFile, rename, rm, stat, symlink, writeFile } from 'node:fs/promises'
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { FakeClock } from '../../src/core/clock'
@@ -11,15 +21,28 @@ import { CommandBus } from '../../src/adapters/command-bus'
 import { AckStore } from '../../src/adapters/ack-store'
 import { EventsLog } from '../../src/adapters/events-log'
 import { buildSignal } from '../../src/adapters/signal-transport'
-import { APPROVAL_SECRET_ENV } from '../../src/adapters/approval-secret'
+import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/approval-secret'
+import { signApproval, approvalExpiry } from '../../src/core/approval'
+import { StateRepository } from '../../src/adapters/state-repository'
+import {
+  resolveAgentCommandPaths,
+  withDeveloperDenyRules,
+} from '../../src/adapters/agent-execution'
+import { LEGACY_SHA256, upgradePristineAgentScripts } from '../../src/agents/generated-scripts'
+import { toApiError } from '../../src/api/errors'
 import { collectEvidence } from '../../src/evidence/collect'
 import { betweenPaths, reviewPath, verifyPath } from '../../src/adapters/paths'
 import {
   RECORD_SEALED_EVENT,
   RecordIntegrityError,
   readRecordBytes,
+  sealMac,
 } from '../../src/review/record-seal'
-import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE } from '../../src/agents/real-agents'
+import {
+  CLAUDE_AGENT_SOURCE,
+  CODEX_AGENT_SOURCE,
+  DEVELOPER_DENIED_EDITS,
+} from '../../src/agents/real-agents'
 
 type Daemon = Awaited<ReturnType<typeof buildDaemon>>
 
@@ -116,9 +139,20 @@ describe('review/verify record sealing', () => {
       await d.tick()
       expect(d.state.workflow.phase).toBe('human_gate')
 
+      const secret = resolveApprovalSecret(dir)
       expect(await sealedEvents()).toEqual([
-        { record: 'review', sha256: sha256(review), path: '.between/reviews/cycle-0001.json' },
-        { record: 'verify', sha256: sha256(verify), path: '.between/verify/cycle-0001.json' },
+        {
+          record: 'review',
+          sha256: sha256(review),
+          path: '.between/reviews/cycle-0001.json',
+          mac: sealMac(secret, 'review', 1, sha256(review)),
+        },
+        {
+          record: 'verify',
+          sha256: sha256(verify),
+          path: '.between/verify/cycle-0001.json',
+          mac: sealMac(secret, 'verify', 1, sha256(verify)),
+        },
       ])
       for (const path of [reviewPath(p, 1), verifyPath(p, 1)]) {
         expect((await stat(path)).mode & 0o222).toBe(0)
@@ -194,9 +228,9 @@ describe('review/verify record sealing', () => {
     )
   }
 
-  it.skipIf(process.platform === 'win32')(
+  it(
     'refuses a sealed review swapped for a symlink to identical bytes',
-    async () => {
+    async (ctx) => {
       const { d, hash } = await reachReviewing()
       const path = reviewPath(betweenPaths(dir), 1)
       await writeFile(path, reviewJson(hash))
@@ -205,11 +239,125 @@ describe('review/verify record sealing', () => {
       const copy = join(dir, 'review-copy.json')
       await writeFile(copy, await readFile(path))
       await rm(path, { force: true })
-      await symlink(copy, path)
+      try {
+        await symlink(copy, path, 'file')
+      } catch (e) {
+        // Windows without Developer Mode / admin cannot create symlinks at all
+        if ((e as NodeJS.ErrnoException).code === 'EPERM') ctx.skip()
+        throw e
+      }
       expect((await readRecordBytes(path)).status).toBe('not_regular')
 
       await d.tick()
       expect(d.state.workflow.error?.code).toBe('record_tampered')
+    },
+    TIMEOUT_MS,
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'refuses a sealed review swapped for a FIFO without blocking',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const path = reviewPath(betweenPaths(dir), 1)
+      await writeFile(path, reviewJson(hash))
+      await d.tick()
+      await d.tick()
+      await rm(path, { force: true })
+      await execa('mkfifo', [path])
+      expect((await readRecordBytes(path)).status).toBe('not_regular')
+
+      await d.tick()
+      expect(d.state.workflow.error?.code).toBe('record_tampered')
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'ignores a well-chained forged seal appended after the pinned head',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const path = reviewPath(betweenPaths(dir), 1)
+      await writeFile(path, reviewJson(hash))
+      await d.tick()
+      await d.tick()
+      const forged = reviewJson(hash, 'forged but resealed')
+      await overwrite(path, forged)
+      await new EventsLog(dir).append({
+        ts: '2026-09-28T00:00:00.000Z',
+        cycle: 1,
+        phase: 'review_written',
+        event: RECORD_SEALED_EVENT,
+        detail: { record: 'review', sha256: sha256(forged) },
+      })
+      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
+        /content changed after it was sealed/,
+      )
+      await d.tick()
+      expect(d.state.workflow.error?.code).toBe('record_tampered')
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'rejects an unauthenticated seal even when the state pin is moved over it',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const path = reviewPath(betweenPaths(dir), 1)
+      await writeFile(path, reviewJson(hash))
+      await d.tick()
+      await d.tick()
+      const forged = reviewJson(hash, 'forged and pinned')
+      await overwrite(path, forged)
+      const log = new EventsLog(dir)
+      await log.append({
+        ts: '2026-09-28T00:00:00.000Z',
+        cycle: 1,
+        phase: 'review_written',
+        event: RECORD_SEALED_EVENT,
+        detail: { record: 'review', sha256: sha256(forged) },
+      })
+      const repo = new StateRepository(dir)
+      await repo.write({ ...(await repo.read())!, journal: log.head() })
+      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
+        /journal seal is not authenticated/,
+      )
+    },
+    TIMEOUT_MS,
+  )
+
+  it(
+    'refuses a non-merge approval over a tampered sealed record',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const p = betweenPaths(dir)
+      await writeFile(reviewPath(p, 1), reviewJson(hash))
+      await writeFile(verifyPath(p, 1), JSON.stringify({ diff_hash: hash, passed: true }))
+      await d.tick()
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('human_gate')
+      await overwrite(verifyPath(p, 1), JSON.stringify({ diff_hash: hash, passed: true, x: 1 }))
+
+      const st = d.state
+      const expiresAt = approvalExpiry(Date.now())
+      await new CommandBus(dir).submit({
+        kind: 'approve',
+        scope: 'promote_rule',
+        sig: signApproval(resolveApprovalSecret(dir), {
+          scope: 'promote_rule',
+          diff_hash: st.diff.hash,
+          cycle: st.workflow.cycle,
+          bundle_id: st.diff.bundle_id,
+          expires_at: expiresAt,
+        }),
+        bundle_id: st.diff.bundle_id,
+        expires_at: expiresAt,
+      })
+      await d.tick()
+      expect(d.state.approval).toBeNull()
+      const rejected = (await new EventsLog(dir).read()).find(
+        (e) => e.event === 'approval_rejected',
+      )
+      expect(String(rejected?.detail?.reason)).toMatch(/verify record for cycle 1/)
     },
     TIMEOUT_MS,
   )
@@ -268,5 +416,47 @@ describe('developer write access to review records', () => {
       `if (role === 'developer') args.push(...["--disallowedTools","Edit(/.between/reviews/**)","Edit(/.between/verify/**)"])`,
     )
     expect(CODEX_AGENT_SOURCE).not.toContain('--disallowedTools')
+  })
+
+  it('adds the deny rules when the developer command is the Claude CLI itself', () => {
+    const deny = ['--disallowedTools', ...DEVELOPER_DENIED_EDITS]
+    expect(resolveAgentCommandPaths(dir, { file: 'claude', args: [] }, 'developer').args).toEqual(
+      deny,
+    )
+    expect(withDeveloperDenyRules('C:\\npm\\claude.cmd', ['--model', 'x'])).toEqual([
+      '--model',
+      'x',
+      ...deny,
+    ])
+    expect(resolveAgentCommandPaths(dir, { file: 'claude', args: [] }, 'reviewer').args).toEqual([])
+    expect(withDeveloperDenyRules('node', ['.between/agents/claude-agent.mjs'])).toEqual([
+      '.between/agents/claude-agent.mjs',
+    ])
+    expect(withDeveloperDenyRules('claude', ['--disallowedTools', 'Bash'])).toEqual([
+      '--disallowedTools',
+      'Bash',
+    ])
+  })
+
+  it('upgrades a pristine older generated wrapper and keeps a customized one', async () => {
+    const agents = join(dir, 'agents')
+    await mkdir(agents)
+    const legacy = '// older generated wrapper\n'
+    await writeFile(join(agents, 'claude-agent.mjs'), legacy)
+    await writeFile(join(agents, 'codex-agent.mjs'), '// customized by the user\n')
+    const upgraded = await upgradePristineAgentScripts(agents, {
+      'claude-agent.mjs': [sha256(legacy)],
+      'codex-agent.mjs': [sha256('// the stock text\n')],
+    })
+    expect(upgraded).toEqual([join(agents, 'claude-agent.mjs')])
+    expect(await readFile(join(agents, 'claude-agent.mjs'), 'utf8')).toBe(CLAUDE_AGENT_SOURCE)
+    expect(await readFile(join(agents, 'codex-agent.mjs'), 'utf8')).toBe(
+      '// customized by the user\n',
+    )
+    expect(Object.values(LEGACY_SHA256).flat()).not.toContain(sha256(CLAUDE_AGENT_SOURCE))
+  })
+
+  it('maps a record integrity failure to the integrity_error API code', () => {
+    expect(toApiError(new RecordIntegrityError('review', 1, 'x')).code).toBe('integrity_error')
   })
 })

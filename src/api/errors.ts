@@ -1,6 +1,7 @@
 import { NotInitializedError } from '../runtime'
 import { ReplayError } from '../core/replay'
 import { BundleIntegrityError } from '../review/store'
+import { RecordIntegrityError } from '../review/record-seal'
 
 export type BetweenApiErrorCode =
   | 'no_state'
@@ -40,7 +41,11 @@ const INTERNAL_MESSAGE = 'internal error (see the server log for details)'
 export function toApiError(err: unknown): BetweenApiError {
   if (err instanceof BetweenApiError) return err
   if (err instanceof NotInitializedError) return new BetweenApiError('no_state', err.message)
-  if (err instanceof ReplayError || err instanceof BundleIntegrityError) {
+  if (
+    err instanceof ReplayError ||
+    err instanceof BundleIntegrityError ||
+    err instanceof RecordIntegrityError
+  ) {
     return new BetweenApiError('integrity_error', err.message)
   }
   if (err instanceof Error && err.message.startsWith('Invalid config.yaml')) {

@@ -1,5 +1,8 @@
 import { existsSync } from 'node:fs'
-import { isAbsolute, resolve } from 'node:path'
+import { basename, isAbsolute, resolve } from 'node:path'
+import { DEVELOPER_DENIED_EDITS } from '../agents/real-agents'
+import { upgradePristineAgentScripts } from '../agents/generated-scripts'
+import { betweenPaths } from './paths'
 import type { AgentRole } from './agent-host'
 import { buildAgentSandboxEnv, writeAgentEnvManifest } from './agent-env'
 import { buildSandboxedAgentEnv } from './sandbox'
@@ -20,6 +23,7 @@ export async function prepareAgentExecution(
   defaultCwd: string,
   extraEnv: Record<string, string | undefined> = {},
 ): Promise<AgentExecution> {
+  await upgradePristineAgentScripts(betweenPaths(root).agents)
   if (role === 'reviewer') return prepareReviewerExecution(root, extraEnv)
   const sandbox = buildAgentSandboxEnv(
     { ...extraEnv, BETWEEN_ROOT: root },
@@ -32,11 +36,23 @@ export async function prepareAgentExecution(
 export function resolveAgentCommandPaths(
   root: string,
   command: { file: string; args: string[] },
+  role?: AgentRole,
 ): { file: string; args: string[] } {
+  const args = command.args.map((arg) => resolveIfRepoPath(root, arg))
   return {
     file: resolveIfRepoPath(root, command.file),
-    args: command.args.map((arg) => resolveIfRepoPath(root, arg)),
+    args: role === 'developer' ? withDeveloperDenyRules(command.file, args) : args,
   }
+}
+
+/**
+ * A developer launched as the Claude Code CLI directly (no generated wrapper) gets the same
+ * permission deny rules the wrapper passes, unless the command already sets --disallowedTools.
+ */
+export function withDeveloperDenyRules(file: string, args: string[]): string[] {
+  const name = basename(file.replace(/\\/g, '/')).toLowerCase()
+  if (!/^claude(\.exe|\.cmd)?$/.test(name) || args.includes('--disallowedTools')) return args
+  return [...args, '--disallowedTools', ...DEVELOPER_DENIED_EDITS]
 }
 
 async function prepareReviewerExecution(

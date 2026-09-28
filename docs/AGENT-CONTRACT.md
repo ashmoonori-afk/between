@@ -35,12 +35,17 @@ rewrite it. When the broker accepts it, the record is sealed:
 
 1. The file is made read-only (`chmod 0444`; on Windows this sets the read-only attribute).
 2. Its sha256 is appended to the hash-chained journal as a `record_sealed` event
-   `{ record: "review" | "verify", sha256, path }`, and the journal head is pinned in `state.json`.
-3. Every later read (the daemon loop, the evidence manifest, the merge-approval policy gate,
-   `verify-push`, dashboards) re-hashes the file and refuses it when the bytes changed, the file was
-   deleted, or it was replaced by a symlink or other non-regular file. The seal is only trusted when
-   the journal chain and pinned head verify, so dropping the `record_sealed` entry does not unseal
-   a record.
+   `{ record: "review" | "verify", sha256, path, mac? }`, and the journal head is pinned in
+   `state.json`. When `BETWEEN_APPROVAL_SECRET` is set, `mac` is an HMAC over the seal with that
+   secret, which is env-only and stripped from agent environments.
+3. Every later read (the daemon loop, the evidence manifest, approvals of every scope, the
+   merge policy gate, `verify-push`, dashboards) re-hashes the file and refuses it when the bytes
+   changed, the file was deleted, or it was replaced by a symlink, FIFO, or other non-regular file.
+   The seal is only trusted from one journal snapshot whose chain and pinned head verify, and only
+   entries inside the pinned range count: dropping the `record_sealed` entry does not unseal a
+   record, and a well-chained forged seal appended after the pin is ignored. With the secret set, a
+   seal without a valid `mac` is rejected, so moving the pin in `state.json` over a forged seal does
+   not work either.
 
 A refused record fails the cycle closed: the daemon moves to `error` with code `record_tampered`
 (not recoverable), and evidence/approval paths throw instead of consuming the record.
@@ -49,11 +54,15 @@ A refused record fails the cycle closed: the daemon moves to `error` with code `
 
 | Layer | Enforced | Scope |
 | --- | --- | --- |
-| Journal seal + hash check on every read | Yes, all platforms | Detects any change after acceptance and fails closed. It cannot stop a developer who rewrites a record *before* the broker accepts it, or who rewrites the whole journal and `state.json` consistently. |
+| Journal seal + hash check on every read | Yes, all platforms | Detects any change after acceptance and fails closed. It cannot stop a developer who rewrites a record *before* the broker accepts it. Without `BETWEEN_APPROVAL_SECRET`, a developer who rewrites the journal and the `state.json` pin consistently can also forge a seal; set the secret to close that. |
 | Read-only file mode | Best effort | macOS/Linux: blocks a plain write by a non-root process, but the owner can `chmod` it back or rename over it. Windows: read-only attribute; same caveat. |
-| Claude Code developer wrapper (`claude-agent.mjs developer`) | Yes, for Claude's tools | Passes `--disallowedTools "Edit(/.between/reviews/**)" "Edit(/.between/verify/**)"`. This covers Claude's file tools and the Bash file commands/redirections Claude recognizes; it does not cover a script that opens the file itself. |
-| Codex developer wrapper (`codex-agent.mjs developer`) | No | `codex exec` has no per-path write deny inside its workspace sandbox, so `.between/` stays writable. The journal seal is the only guard. |
-| `developer_command: 'claude'` (interactive, no wrapper) | No | Between passes no flags. Add the same deny rules to your Claude settings yourself if you need them. |
+| Claude Code developer (generated wrapper, or `developer_command` that runs the `claude` CLI directly) | Yes, for Claude's tools | Between adds `--disallowedTools "Edit(/.between/reviews/**)" "Edit(/.between/verify/**)"` unless the command already sets `--disallowedTools`. This covers Claude's file tools and the Bash file commands/redirections Claude recognizes; it does not cover a script that opens the file itself. |
+| Codex developer (`codex-agent.mjs developer`) | No | `codex exec` has no per-path write deny inside its workspace sandbox, so `.between/` stays writable. The journal seal is the only guard. |
+| Any other developer command | No | Between cannot know the host's permission model. The journal seal is the only guard. |
+
+Generated wrappers from earlier releases are replaced automatically (on `between init` and before
+each agent launch) when their bytes still match a known generated version; customized wrappers are
+left untouched and keep whatever flags they pass.
 
 The contract prompt also tells developers never to touch `.between/reviews` or `.between/verify`, but
 treat prompt text as a request rather than a control.

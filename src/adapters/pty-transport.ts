@@ -43,7 +43,7 @@ export class OneShotTransport implements SignalTransport, AgentControl {
     if (!role) return
     const command = role === 'reviewer' ? this.opts.reviewerCommand : this.opts.developerCommand
     const launch = await prepareAgentExecution(this.root, role, this.opts.cwd, { FORCE_COLOR: '1' })
-    const { file, args } = resolveAgentCommandPaths(this.root, tokenizeCommand(command))
+    const { file, args } = resolveAgentCommandPaths(this.root, tokenizeCommand(command), role)
     const host = this.opts.hosts?.[role]
     host?.markStart()
     host?.feed(`$ ${command}\n`)

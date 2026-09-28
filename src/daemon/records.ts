@@ -2,11 +2,13 @@ import { relative } from 'node:path'
 import { parseReviewRecord, parseVerifyRecord } from '../core/findings'
 import type { ReviewRecord, VerifyRecord } from '../core/types'
 import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
+import { resolveApprovalSecret } from '../adapters/approval-secret'
 import {
   RECORD_SEALED_EVENT,
   loadRecord,
   lookupRecordSeal,
   makeRecordReadOnly,
+  sealMac,
   type LoadedRecord,
   type SealedRecordKind,
 } from '../review/record-seal'
@@ -36,6 +38,8 @@ export async function sealRecord(
 ): Promise<void> {
   if (loaded.sealed) return
   const path = recordPath(ctx, kind)
+  const secret = resolveApprovalSecret(ctx.deps.root)
+  const cycle = ctx.current().workflow.cycle
   await makeRecordReadOnly(path)
   await ctx.emit(RECORD_SEALED_EVENT, {
     diff_hash: ctx.current().diff.hash ?? undefined,
@@ -43,6 +47,7 @@ export async function sealRecord(
       record: kind,
       sha256: loaded.sha256,
       path: relative(ctx.deps.root, path).split('\\').join('/'),
+      ...(secret ? { mac: sealMac(secret, kind, cycle, loaded.sha256) } : {}),
     },
   })
 }
@@ -53,7 +58,13 @@ async function readRecord<T>(
   parse: (raw: unknown) => T,
 ): Promise<DaemonRecord<T> | null> {
   const cycle = ctx.current().workflow.cycle
-  const seal = await lookupRecordSeal(ctx.deps.events, ctx.current().journal, kind, cycle)
+  const seal = await lookupRecordSeal(
+    ctx.deps.events,
+    ctx.current().journal,
+    kind,
+    cycle,
+    resolveApprovalSecret(ctx.deps.root),
+  )
   const loaded = await loadRecord(recordPath(ctx, kind), parse, kind, cycle, seal)
   return loaded ? { ...loaded, sealed: seal !== null } : null
 }

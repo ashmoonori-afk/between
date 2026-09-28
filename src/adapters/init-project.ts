@@ -8,6 +8,7 @@ import { StateRepository } from './state-repository'
 import { betweenPaths, betweenSubdirs } from './paths'
 import { FAKE_AGENT_SOURCE } from '../agents/fake-agent'
 import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE } from '../agents/real-agents'
+import { upgradePristineAgentScripts } from '../agents/generated-scripts'
 import { PRESET_SCRIPT, type AgentPreset } from '../core/constants'
 import { installPrePushHookDetailed, type PrePushHookInstallResult } from './git-hooks'
 
@@ -121,6 +122,7 @@ export async function initProject(
       created.push(file)
     }
   }
+  await upgradePristineAgentScripts(p.agents)
 
   await ensureGitignore(absRoot)
 

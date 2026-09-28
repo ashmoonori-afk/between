@@ -8,6 +8,7 @@ import { RecordIntegrityError } from '../review/record-seal'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
+import { collectEvidence } from '../evidence/collect'
 import { usesSimulatedEvidence } from '../core/evidence-trust'
 import type { DaemonContext } from './context'
 import { abortActiveAgents, steerActiveAgents } from './agent-control-actions'
@@ -237,6 +238,18 @@ export async function approve(
   // NOT enforced by the flow, so a policy-failing change could reach a push. Refuse to grant a
   // merge approval while a required gate fails (fail-closed) -> no approval -> the pre-push hook
   // keeps blocking. deploy / promote_rule are distinct downstream gates and are not policy-gated here.
+  if (scope !== 'merge') {
+    // merge re-reads the evidence inside the policy gate below; every other scope must still be
+    // refused when a sealed review/verify record (or the bundle) fails its integrity check
+    try {
+      await collectEvidence(ctx.deps.root, ctx.deps.clock.nowIso(), cur)
+    } catch (e) {
+      await ctx.emit('approval_rejected', {
+        detail: { scope, reason: `evidence error: ${e instanceof Error ? e.message : String(e)}` },
+      })
+      return
+    }
+  }
   if (scope === 'merge') {
     let satisfied = false
     let reason = ''

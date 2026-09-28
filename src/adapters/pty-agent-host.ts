@@ -82,10 +82,16 @@ export class PtyAgentHost extends BaseAgentHost {
   async start(): Promise<void> {
     if (this.proc) await this.stop()
     const pty = await (this.opts.loadPty ?? loadPty)()
-    const { file, args } = resolvePtyCommand(this.opts.root, this.opts.command)
     const launch = await prepareAgentExecution(this.opts.root, this.role, this.opts.cwd, {
       FORCE_COLOR: '1',
     })
+    const { file, args } = resolvePtyCommand(
+      this.opts.root,
+      this.opts.command,
+      undefined,
+      undefined,
+      this.role,
+    )
     this.markStart()
     if (launch.reviewerWorktree)
       this.feed(`[between] reviewer worktree ${launch.reviewerWorktree}\n`)
@@ -137,8 +143,9 @@ export function resolvePtyCommand(
   command: string,
   platform: NodeJS.Platform = process.platform,
   comspec = process.env.ComSpec,
+  role?: AgentRole,
 ): { file: string; args: string[] } {
-  const resolved = resolveAgentCommandPaths(root, tokenizeCommand(command))
+  const resolved = resolveAgentCommandPaths(root, tokenizeCommand(command), role)
   if (platform !== 'win32') return resolved
 
   return {

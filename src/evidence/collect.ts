@@ -1,5 +1,6 @@
 import type { BetweenState } from '../core/types'
 import { EventsLog } from '../adapters/events-log'
+import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { StateRepository } from '../adapters/state-repository'
 import { betweenPaths, reviewPath, usagePath, verifyPath } from '../adapters/paths'
 import { parseReviewRecord, parseVerifyRecord } from '../core/findings'
@@ -25,9 +26,10 @@ export async function collectEvidence(
   const cycle = state.workflow.cycle
   // sealed review/verify records must still match their journal seal (fail closed, like bundles)
   const log = new EventsLog(root)
+  const secret = resolveApprovalSecret(root)
   const [reviewSeal, verifySeal] = await Promise.all([
-    lookupRecordSeal(log, state.journal, 'review', cycle),
-    lookupRecordSeal(log, state.journal, 'verify', cycle),
+    lookupRecordSeal(log, state.journal, 'review', cycle, secret),
+    lookupRecordSeal(log, state.journal, 'verify', cycle, secret),
   ])
   const [review, verify, bundle, verification, usage] = await Promise.all([
     loadRecord(reviewPath(p, cycle), parseReviewRecord, 'review', cycle, reviewSeal),
