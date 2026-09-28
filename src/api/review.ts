@@ -313,6 +313,8 @@ export function reviewerEnv(
       env[name] = value
     }
   }
+  // managed-policy hooks still run under --safe-mode; keep the credential out of their env
+  if (preset === 'claude') env.CLAUDE_CODE_SUBPROCESS_ENV_SCRUB = '1'
   return env
 }
 
@@ -363,7 +365,8 @@ export async function resolveReviewerBinary(
     process.platform === 'win32'
       ? (extValue ?? '.COM;.EXE;.BAT;.CMD').split(';').filter(Boolean)
       : ['']
-  for (const dir of pathValue.split(delimiter).filter(Boolean)) {
+  // relative entries would be checked against Between's cwd but run from the reviewer's cwd
+  for (const dir of pathValue.split(delimiter).filter((entry) => isAbsolute(entry))) {
     for (const ext of exts) {
       const candidate = join(dir, name + ext)
       let canonical: string
@@ -377,10 +380,48 @@ export async function resolveReviewerBinary(
       if (roots.some((root) => isInside(root, canonical) || isInside(root, resolve(candidate)))) {
         continue
       }
-      return candidate
+      // run exactly the file that was checked: no second symlink walk, no cwd-relative lookup
+      return canonical
     }
   }
   return null
+}
+
+function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
+  const key = Object.keys(env).find((k) => k.toUpperCase() === name)
+  return key === undefined ? undefined : env[key]
+}
+
+/**
+ * Windows runs `.cmd`/`.bat` shims through `ComSpec` taken from Between's own environment, not
+ * the filtered child env. Refuse unless it is the system `cmd.exe`, outside the project, so a
+ * substituted interpreter can never receive the prompt or the provider credential.
+ */
+export function assertTrustedBatchShell(
+  projectRoot: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const systemRoot = envValue(env, 'SYSTEMROOT') ?? envValue(env, 'WINDIR') ?? 'C:\\Windows'
+  const trusted = join(systemRoot, 'System32', 'cmd.exe')
+  const comspec = envValue(env, 'COMSPEC') ?? trusted
+  const canon = (p: string): string => {
+    try {
+      return realpathSync.native(p)
+    } catch {
+      return resolve(p)
+    }
+  }
+  const roots = projectRoots(projectRoot)
+  const trustedCanon = canon(trusted)
+  if (
+    canon(comspec).toLowerCase() !== trustedCanon.toLowerCase() ||
+    roots.some((root) => isInside(root, trustedCanon))
+  ) {
+    throw new BetweenApiError(
+      'reviewer_failed',
+      `ComSpec (${comspec}) is not the system cmd.exe (${trusted}); refusing to run the reviewer's batch shim`,
+    )
+  }
 }
 
 /**
@@ -448,6 +489,9 @@ async function spawnReviewer(
       'reviewer_failed',
       `${preset} CLI not found on PATH outside the project; install it and sign in, or pick another reviewer`,
     )
+  }
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary)) {
+    assertTrustedBatchShell(opts.projectRoot)
   }
   const r = await execa(binary, args, {
     cwd: workdir,

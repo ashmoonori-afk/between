@@ -2,11 +2,17 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, relative } from 'node:path'
 import { realpathSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
+import { execa } from 'execa'
 import { fetchSubjectText, isPublicAddress } from '../../src/review/fetch-subject'
-import { makeReviewerWorkdir, resolveReviewerBinary, reviewerEnv } from '../../src/api/review'
+import {
+  assertTrustedBatchShell,
+  makeReviewerWorkdir,
+  resolveReviewerBinary,
+  reviewerEnv,
+} from '../../src/api/review'
 
 const servers: Server[] = []
 
@@ -124,6 +130,7 @@ describe('reviewerEnv', () => {
       PATH: '/usr/bin',
       ANTHROPIC_API_KEY: 'a',
       CLAUDE_CODE_OAUTH_TOKEN: 'c',
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
     })
     expect(reviewerEnv('codex', root, base)).toEqual({
       PATH: '/usr/bin',
@@ -162,7 +169,12 @@ describe('reviewer isolation from the project (canonical paths)', () => {
   async function fakeCli(binDir: string, name: string): Promise<void> {
     await mkdir(binDir, { recursive: true })
     const file = join(binDir, process.platform === 'win32' ? `${name}.cmd` : name)
-    await writeFile(file, process.platform === 'win32' ? '@echo off\r\n' : '#!/bin/sh\n')
+    await writeFile(
+      file,
+      process.platform === 'win32'
+        ? '@echo off\r\necho fake-cli-ok\r\n'
+        : '#!/bin/sh\necho fake-cli-ok\n',
+    )
     await chmod(file, 0o755)
   }
 
@@ -178,7 +190,11 @@ describe('reviewer isolation from the project (canonical paths)', () => {
       CLAUDE_CONFIG_DIR: join(alias, '.claude'),
       HOME: '/home/u',
     })
-    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/home/u' })
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      HOME: '/home/u',
+      CLAUDE_CODE_SUBPROCESS_ENV_SCRUB: '1',
+    })
   })
 
   it('never resolves a reviewer binary that lives inside the project', async () => {
@@ -192,12 +208,44 @@ describe('reviewer isolation from the project (canonical paths)', () => {
     // the project copy comes first on PATH, once directly and once through an alias
     const PATH = [join(alias, 'bin'), join(root, 'bin'), join(outside, 'bin')].join(delimiter)
     const found = await resolveReviewerBinary('codex', { PATH }, root)
-    expect(found && realpathSync.native(found)).toBe(
+    // the canonical absolute path of the checked file, runnable from any cwd
+    expect(found).toBe(
       realpathSync.native(
         join(outside, 'bin', process.platform === 'win32' ? 'codex.cmd' : 'codex'),
       ),
     )
+    const ran = await execa(found!, [], { cwd: aliasParent })
+    expect(ran.stdout.trim()).toBe('fake-cli-ok')
     expect(await resolveReviewerBinary('codex', { PATH: join(root, 'bin') }, root)).toBeNull()
+  })
+
+  it('ignores relative PATH entries (they would resolve against a different cwd)', async () => {
+    const root = await dir('between-iso-root-')
+    const outside = await dir('between-iso-outside-')
+    await fakeCli(join(outside, 'bin'), 'codex')
+    const PATH = relative(process.cwd(), join(outside, 'bin'))
+    expect(await resolveReviewerBinary('codex', { PATH }, root)).toBeNull()
+  })
+
+  it('only trusts the system cmd.exe outside the project for Windows batch shims', async () => {
+    const root = await dir('between-iso-root-')
+    const system = await dir('between-iso-windows-')
+    await mkdir(join(system, 'System32'))
+    await writeFile(join(system, 'System32', 'cmd.exe'), '')
+    await writeFile(join(root, 'cmd.exe'), '')
+    const trusted = join(system, 'System32', 'cmd.exe')
+    expect(() =>
+      assertTrustedBatchShell(root, { SystemRoot: system, ComSpec: trusted }),
+    ).not.toThrow()
+    expect(() => assertTrustedBatchShell(root, { SystemRoot: system })).not.toThrow()
+    expect(() =>
+      assertTrustedBatchShell(root, { SystemRoot: system, ComSpec: join(root, 'cmd.exe') }),
+    ).toThrow(/not the system cmd.exe/)
+    await mkdir(join(root, 'System32'))
+    await writeFile(join(root, 'System32', 'cmd.exe'), '')
+    expect(() => assertTrustedBatchShell(root, { SystemRoot: root })).toThrow(
+      /not the system cmd.exe/,
+    )
   })
 
   it('fails closed when the temp base is inside the project, and cleans up', async () => {

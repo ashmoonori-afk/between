@@ -63,6 +63,10 @@ its next tick. "Queued" is not "applied". Check `between_status` afterwards.
 
 ### Direct review (`between_review`)
 
+> Available in the release after `between-dev@0.2.0` (0.2.0 and earlier do not have
+> `--allow-review` or `between_review`). Until that release is on npm, start the server from the
+> GitHub build: `npx -y --package=github:ashmoonori-afk/between between-mcp --allow-review`.
+
 Asks the other agent of the pair for an independent review, from inside a running session and
 outside the broker cycle. It is registered only with `--allow-review`. It does not touch the
 repository or the broker, but it runs a model CLI, costs a model call, and sends the subject (and
@@ -83,7 +87,9 @@ Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_comman
 The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
 started in an empty temporary directory, never the project, with no way to read the disk:
 `claude -p --safe-mode --tools "" --strict-mcp-config --disable-slash-commands` (no built-in
-tools, and no hooks, plugins, skills, MCP servers, or CLAUDE.md, while sign-in still works), or
+tools, and no user or project hooks, plugins, skills, MCP servers, or CLAUDE.md, while sign-in
+still works; hooks from a managed policy still apply, so the reviewer also runs with
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to keep the credential out of hook subprocesses), or
 `codex exec --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers={}` with every
 model-visible capability feature disabled (shell, exec, code mode, image viewing and generation,
 apps, plugins, skills, multi-agent, browser, computer use, hooks). The subject is entirely in the
