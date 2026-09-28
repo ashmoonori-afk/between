@@ -8,6 +8,7 @@ export type BetweenApiErrorCode =
   | 'not_found'
   | 'invalid_config'
   | 'integrity_error'
+  | 'reviewer_failed'
   | 'internal'
 
 /**

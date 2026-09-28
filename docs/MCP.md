@@ -17,10 +17,10 @@ The package is `between-dev`. It has three bins:
 
 ```bash
 # recommended for MCP clients: name the package and the MCP bin explicitly, pin the version
-npx -y --package=between-dev@0.1.0 between-mcp
+npx -y --package=between-dev@0.2.0 between-mcp
 
 # equivalent convenience form (same server start function)
-npx -y between-dev@0.1.0 mcp
+npx -y between-dev@0.2.0 mcp
 
 # before the package is on the npm registry, run straight from GitHub (builds on install)
 npx -y --package=github:ashmoonori-afk/between between-mcp
@@ -35,6 +35,7 @@ Do not use `npx between-mcp`. npx would look up a separate npm package called `b
 | `--root <path>` | `$BETWEEN_ROOT`, then the working directory | Project the server is pinned to. Resolved to a real path at startup. |
 | `--allow-control` | off | Register the broker control tools (pause, resume, interrupt, review now, stop, goal, steer). |
 | `--allow-exec` | off | Register tools that run repo-configured commands (`between_verify`, `between_policy`). |
+| `--allow-review` | off | Register `between_review`, which runs the claude/codex CLI and sends the subject to that provider. |
 
 The project must already be initialized with `between init` (a human step; see below).
 
@@ -51,6 +52,7 @@ pinned to one project.
 | `between_journal` | `{ verify?: boolean = true }` | read | Entry count and hash-chain integrity |
 | `between_replay` | `{ verify?: boolean = true }` | read | State reconstructed from the journal |
 | `between_evidence` | `{}` | read | Evidence manifest for the current cycle |
+| `between_review` | `{ kind, text? \| file? \| url?, base?, context?, focus?, criteria?, reviewer?, from? }` | review | One-shot review of a diff, answer, or plan by the paired agent (see below) |
 | `between_policy` | `{}` | exec | Policy evaluation (may run a dependency audit) |
 | `between_verify` | `{}` | exec | Runs the configured verification checks |
 | `between_pause` / `between_resume` / `between_interrupt` / `between_review_now` / `between_stop` | `{}` | control | `{ command_id, status: "queued" }` |
@@ -58,6 +60,77 @@ pinned to one project.
 
 Control tools **queue** a command on the broker's command bus; the running broker applies it on
 its next tick. "Queued" is not "applied". Check `between_status` afterwards.
+
+### Direct review (`between_review`)
+
+> Available in the release after `between-dev@0.2.0` (0.2.0 and earlier do not have
+> `--allow-review` or `between_review`). Until that release is on npm, start the server from the
+> GitHub build: `npx -y --package=github:ashmoonori-afk/between between-mcp --allow-review`.
+
+Asks the other agent of the pair for an independent review, from inside a running session and
+outside the broker cycle. It is registered only with `--allow-review`. It does not touch the
+repository or the broker, but it runs a model CLI, costs a model call, and sends the subject (and
+a fetched URL body) to the reviewer agent's model provider, so it is not annotated read-only.
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `diff` (code change), `answer` (an agent's reply), or `plan` (plan, spec, design) |
+| `text` / `file` / `url` | The subject; at most one. `file` must resolve inside the project root and not under `.between/`, `.git/`, or `.env*`. `url` is http(s) only, fetched from public addresses only: loopback, private, link-local (cloud metadata), and reserved ranges are refused at DNS-lookup time on every redirect hop, and the body is aborted past 256 KiB. |
+| `base` | `diff` with no subject: commit to diff the working tree against (default `HEAD`, tracked files) |
+| `context` | For `answer`, the user's question verbatim; otherwise background |
+| `focus`, `criteria` | What to look at hardest; up to 10 extra criteria |
+| `reviewer` | Force `claude` or `codex`; refused when it equals the caller (no self-review) |
+| `from` | The calling agent. The other one reviews. When the MCP client is recognized (Claude Code -> `codex` reviews; Codex -> `claude` reviews), the client identity is authoritative and a conflicting `from` is refused; `from` is only taken as given from unrecognized clients. |
+
+Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_command` of
+`.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
+The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
+started in an empty temporary directory, never the project, with no way to read the disk:
+`claude -p --safe-mode --tools "" --strict-mcp-config --disable-slash-commands` (no built-in
+tools, and no user or project hooks, plugins, skills, MCP servers, or CLAUDE.md, while sign-in
+still works; hooks from a managed policy still apply, so the reviewer also runs with
+`CLAUDE_CODE_SUBPROCESS_ENV_SCRUB=1` to keep the credential out of hook subprocesses), or
+`codex exec --sandbox read-only --ignore-user-config --ignore-rules -c mcp_servers={}` with every
+model-visible capability feature disabled (shell, exec, code mode, image viewing and generation,
+apps, plugins, skills, multi-agent, browser, computer use, hooks). The subject is entirely in the
+prompt, so an injection inside it finds no tool to read or change anything with. The reviewer
+binary is looked up on the filtered `PATH` by Between itself and refused if its canonical path is
+inside the project, and the temporary directory must resolve outside the project (a `TMPDIR`
+inside it fails closed). The
+environment is an allowlist: runtime variables plus that reviewer's own provider credentials
+(Claude gets only Anthropic credentials, Codex only OpenAI/Codex ones); every other credential
+and anything pointing into the project (`BETWEEN_ROOT`, `INIT_CWD`, project entries on `PATH`,
+...) is dropped.
+Secret-like values in the subject are replaced with `[REDACTED]` before it is sent; the subject
+is capped at 256 KiB.
+
+Rubrics: `diff` correctness, regressions, security, tests, maintainability; `answer` correctness,
+completeness, evidence, clarity; `plan` goals, scope, risks, sequencing, testability, open
+decisions.
+
+Result `data`:
+
+```json
+{
+  "kind": "plan",
+  "reviewer": "codex",
+  "routed_by": "paired_with_caller",
+  "verdict": "REQUEST_CHANGES",
+  "verdict_adjusted": false,
+  "summary": "...",
+  "findings": [
+    { "id": "F1", "severity": "major", "title": "...", "detail": "...", "location": "...", "criterion": "risks" }
+  ],
+  "questions": ["..."],
+  "rubric": ["goals", "scope", "risks", "sequencing", "testability", "open decisions"],
+  "subject": { "source": "file", "label": "docs/plan.md", "bytes": 1234, "sha256": "...", "redactions": 0 }
+}
+```
+
+Severities are `critical`, `major`, `minor`, `nit`. Any `critical` or `major` finding forces
+`REQUEST_CHANGES` (`verdict_adjusted: true` when the reviewer said APPROVE anyway). A reviewer
+that is missing, times out (`review_timeout_seconds`, default 900 s), or returns no valid verdict
+yields error code `reviewer_failed`.
 
 ### Result shape
 
@@ -69,7 +142,7 @@ Every tool returns the same envelope in `structuredContent` and as JSON text:
 ```
 
 Failures also set `isError: true`. Error codes: `no_state`, `invalid_argument`, `not_found`,
-`invalid_config`, `integrity_error`, `internal`. `internal` carries a generic message; details are
+`invalid_config`, `integrity_error`, `reviewer_failed`, `internal`. `internal` carries a generic message; details are
 written to the server's stderr only.
 
 ## What is deliberately not exposed
@@ -106,7 +179,7 @@ Replace `/abs/path/to/repo` with the repository Between manages. Add `--allow-co
 Run from the repository (Claude Code starts the server in the project directory):
 
 ```bash
-claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
+claude mcp add between -- npx -y --package=between-dev@0.2.0 between-mcp
 ```
 
 ### Claude Desktop
@@ -119,14 +192,14 @@ claude mcp add between -- npx -y --package=between-dev@0.1.0 between-mcp
   "mcpServers": {
     "between": {
       "command": "npx",
-      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+      "args": ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
     }
   }
 }
 ```
 
 On Windows, launch through `cmd`:
-`"command": "cmd", "args": ["/c", "npx", "-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "C:\\path\\to\\repo"]`.
+`"command": "cmd", "args": ["/c", "npx", "-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "C:\\path\\to\\repo"]`.
 
 ### Codex CLI
 
@@ -135,7 +208,7 @@ On Windows, launch through `cmd`:
 ```toml
 [mcp_servers.between]
 command = "npx"
-args = ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path/to/repo"]
+args = ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
 ```
 
 ### Cursor
@@ -147,7 +220,7 @@ args = ["-y", "--package=between-dev@0.1.0", "between-mcp", "--root", "/abs/path
   "mcpServers": {
     "between": {
       "command": "npx",
-      "args": ["-y", "--package=between-dev@0.1.0", "between-mcp"],
+      "args": ["-y", "--package=between-dev@0.2.0", "between-mcp"],
       "env": { "BETWEEN_ROOT": "/abs/path/to/repo" }
     }
   }

@@ -13,6 +13,8 @@ import { runDoctor } from '../api/setup'
 import { inspectJournal, replayState, getEvidence } from '../api/records'
 import { evaluatePolicy, runConfiguredVerification } from '../api/checks'
 import { submitBrokerCommand, type BrokerControl } from '../api/broker'
+import { requestReview, type ReviewDeps } from '../api/review'
+import { HOST_AGENTS, REVIEW_KINDS, hostFromClientName } from '../review/direct'
 
 export interface BetweenMcpOptions {
   /** absolute, canonical project root; every tool is pinned to it (tools take no `root`). */
@@ -21,9 +23,13 @@ export interface BetweenMcpOptions {
   allowControl?: boolean
   /** human-granted at startup: register tools that run repo-configured commands. */
   allowExec?: boolean
+  /** human-granted at startup: register between_review (sends subjects to another model). */
+  allowReview?: boolean
+  /** test seam: replaces the reviewer CLI spawn and URL fetch of `between_review` */
+  reviewDeps?: ReviewDeps
 }
 
-type Access = 'read' | 'exec' | 'control'
+type Access = 'read' | 'review' | 'exec' | 'control'
 
 const READ_ONLY = {
   readOnlyHint: true,
@@ -37,6 +43,43 @@ const MUTATING = {
   idempotentHint: false,
   openWorldHint: true,
 } as const
+// does not touch the repo or the broker, but runs a model CLI and sends the subject (and any
+// fetched URL body) to another provider, which costs money: not a read-only operation
+const REVIEW = {
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: true,
+} as const
+const ANNOTATIONS = { read: READ_ONLY, review: REVIEW, exec: MUTATING, control: MUTATING }
+
+const ReviewArgs = z
+  .object({
+    kind: z
+      .enum(REVIEW_KINDS)
+      .describe('diff = code change, answer = an agent reply, plan = a plan/spec'),
+    text: z.string().optional().describe('inline subject: the answer, the plan, or a unified diff'),
+    file: z.string().optional().describe('subject file path inside the project'),
+    url: z.string().optional().describe('http(s) URL of the subject'),
+    base: z
+      .string()
+      .optional()
+      .describe(
+        'diff without text/file/url: commit to diff the working tree against (default HEAD)',
+      ),
+    context: z
+      .string()
+      .optional()
+      .describe("answer: the user's question, verbatim; otherwise background for the reviewer"),
+    focus: z.string().optional().describe('what the reviewer should look at hardest'),
+    criteria: z.array(z.string()).max(10).optional().describe('extra review criteria'),
+    reviewer: z.enum(HOST_AGENTS).optional().describe('force a reviewer agent'),
+    from: z
+      .enum(HOST_AGENTS)
+      .optional()
+      .describe('the calling agent; the other agent reviews (inferred from the MCP client)'),
+  })
+  .strict()
 
 const ResultEnvelope = z.object({
   ok: z.boolean(),
@@ -103,6 +146,7 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
   const server = new McpServer({ name: 'between', version: BETWEEN_VERSION })
   const enabled: Record<Access, boolean> = {
     read: true,
+    review: Boolean(opts.allowReview),
     exec: Boolean(opts.allowExec),
     control: Boolean(opts.allowControl),
   }
@@ -122,7 +166,7 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
         description,
         inputSchema,
         outputSchema: ResultEnvelope,
-        annotations: access === 'read' ? READ_ONLY : MUTATING,
+        annotations: ANNOTATIONS[access],
       },
       // the SDK has already validated (and defaulted) args against `input`
       async (args) => {
@@ -189,6 +233,26 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
   )
 
   tool(
+    'between_review',
+    'review',
+    'Ask the paired agent for an independent one-shot review of a diff, an answer, or a plan. ' +
+      'Returns summary, findings with severity, questions, and verdict APPROVE or REQUEST_CHANGES.',
+    ReviewArgs,
+    async (args) => {
+      // a recognized client is who it says it is: a claimed `from` cannot override it, or a
+      // claude-code client could claim to be codex and pick claude to review its own work
+      const client = hostFromClientName(server.server.getClientVersion()?.name)
+      if (client && args.from && args.from !== client) {
+        throw new BetweenApiError(
+          'invalid_argument',
+          `from "${args.from}" conflicts with the calling client (${client})`,
+        )
+      }
+      return requestReview(root, { ...args, from: client ?? args.from }, opts.reviewDeps)
+    },
+  )
+
+  tool(
     'between_policy',
     'exec',
     'Evaluate the current cycle against policy-as-code. May run a dependency audit.',
@@ -234,6 +298,7 @@ export interface RunMcpOptions {
   root?: string
   allowControl?: boolean
   allowExec?: boolean
+  allowReview?: boolean
 }
 
 /** Start the stdio MCP server. stdout carries only JSON-RPC; diagnostics go to stderr. */
@@ -243,6 +308,6 @@ export async function runMcpServer(opts: RunMcpOptions = {}): Promise<void> {
   const server = createBetweenMcpServer({ ...opts, root })
   await server.connect(new StdioServerTransport())
   log(
-    `serving ${root} (control: ${opts.allowControl ? 'on' : 'off'}, exec: ${opts.allowExec ? 'on' : 'off'}; scrubbed ${removed.length} credential env var(s))`,
+    `serving ${root} (control: ${opts.allowControl ? 'on' : 'off'}, exec: ${opts.allowExec ? 'on' : 'off'}, review: ${opts.allowReview ? 'on' : 'off'}; scrubbed ${removed.length} credential env var(s))`,
   )
 }

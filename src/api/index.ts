@@ -18,6 +18,13 @@ export {
   type PushVerdict,
 } from './checks'
 export {
+  requestReview,
+  MAX_REVIEW_SUBJECT_BYTES,
+  type ReviewRequest,
+  type ReviewResult,
+  type ReviewDeps,
+} from './review'
+export {
   inspectJournal,
   replayState,
   getEvidence,

@@ -3,6 +3,7 @@ import { VERSION } from './shared'
 import { registerBrokerCommands } from './broker-commands'
 import { registerEvidenceCommand } from './evidence-command'
 import { registerReviewCommand } from './review-command'
+import { registerDirectReviewCommands } from './direct-review-command'
 import { registerPolicyCommand } from './policy-command'
 import { registerVerifyCommand } from './verify-command'
 import { registerJournalCommand } from './journal-command'
@@ -25,6 +26,7 @@ export function buildProgram(): Command {
   registerBrokerCommands(program)
   registerEvidenceCommand(program)
   registerReviewCommand(program)
+  registerDirectReviewCommands(program)
   registerPolicyCommand(program)
   registerVerifyCommand(program)
   registerJournalCommand(program)
