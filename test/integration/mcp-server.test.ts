@@ -20,6 +20,7 @@ const READ_TOOLS = [
   'between_evidence',
   'between_journal',
   'between_replay',
+  'between_review',
   'between_status',
   'between_summarize',
 ]

@@ -83,7 +83,7 @@ try {
     run('npx', ['--yes', `file:${tarball}`, 'status'], project),
     'phase:      idle',
   )
-  const expectedMcp = 'server=between tools=6 approve=false phase=idle'
+  const expectedMcp = 'server=between tools=7 approve=false phase=idle'
   check(
     'mcp stdio via npx --package <pkg> between-mcp',
     mcpSession(['--package', tarball, 'between-mcp'], project),

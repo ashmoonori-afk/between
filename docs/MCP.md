@@ -51,6 +51,7 @@ pinned to one project.
 | `between_journal` | `{ verify?: boolean = true }` | read | Entry count and hash-chain integrity |
 | `between_replay` | `{ verify?: boolean = true }` | read | State reconstructed from the journal |
 | `between_evidence` | `{}` | read | Evidence manifest for the current cycle |
+| `between_review` | `{ kind, text? \| file? \| url?, base?, context?, focus?, criteria?, reviewer?, from? }` | review | One-shot review of a diff, answer, or plan by the paired agent (see below) |
 | `between_policy` | `{}` | exec | Policy evaluation (may run a dependency audit) |
 | `between_verify` | `{}` | exec | Runs the configured verification checks |
 | `between_pause` / `between_resume` / `between_interrupt` / `between_review_now` / `between_stop` | `{}` | control | `{ command_id, status: "queued" }` |
@@ -58,6 +59,58 @@ pinned to one project.
 
 Control tools **queue** a command on the broker's command bus; the running broker applies it on
 its next tick. "Queued" is not "applied". Check `between_status` afterwards.
+
+### Direct review (`between_review`)
+
+Asks the other agent of the pair for an independent review, from inside a running session and
+outside the broker cycle. It is registered by default: it does not touch the repository or the
+broker, but it does send the subject to the reviewer agent's model provider.
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `diff` (code change), `answer` (an agent's reply), or `plan` (plan, spec, design) |
+| `text` / `file` / `url` | The subject; at most one. `file` must resolve inside the project root and not under `.between/`, `.git/`, or `.env*`. `url` is http(s) only. |
+| `base` | `diff` with no subject: commit to diff the working tree against (default `HEAD`, tracked files) |
+| `context` | For `answer`, the user's question verbatim; otherwise background |
+| `focus`, `criteria` | What to look at hardest; up to 10 extra criteria |
+| `reviewer` | Force `claude` or `codex` |
+| `from` | The calling agent. The other one reviews. Inferred from the MCP client name when omitted (Claude Code -> `codex` reviews; Codex -> `claude` reviews). |
+
+Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_command` of
+`.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
+The reviewer is the same CLI the broker wrappers use (`claude -p`, or
+`codex exec --sandbox read-only`), started in the project root with the broker's sandboxed agent
+environment: provider sign-in passes through, other credentials are stripped. No new keys.
+Secret-like values in the subject are replaced with `[REDACTED]` before it is sent; the subject
+is capped at 256 KiB.
+
+Rubrics: `diff` correctness, regressions, security, tests, maintainability; `answer` correctness,
+completeness, evidence, clarity; `plan` goals, scope, risks, sequencing, testability, open
+decisions.
+
+Result `data`:
+
+```json
+{
+  "kind": "plan",
+  "reviewer": "codex",
+  "routed_by": "paired_with_caller",
+  "verdict": "REQUEST_CHANGES",
+  "verdict_adjusted": false,
+  "summary": "...",
+  "findings": [
+    { "id": "F1", "severity": "major", "title": "...", "detail": "...", "location": "...", "criterion": "risks" }
+  ],
+  "questions": ["..."],
+  "rubric": ["goals", "scope", "risks", "sequencing", "testability", "open decisions"],
+  "subject": { "source": "file", "label": "docs/plan.md", "bytes": 1234, "sha256": "...", "redactions": 0 }
+}
+```
+
+Severities are `critical`, `major`, `minor`, `nit`. Any `critical` or `major` finding forces
+`REQUEST_CHANGES` (`verdict_adjusted: true` when the reviewer said APPROVE anyway). A reviewer
+that is missing, times out (`review_timeout_seconds`, default 900 s), or returns no valid verdict
+yields error code `reviewer_failed`.
 
 ### Result shape
 
@@ -69,7 +122,7 @@ Every tool returns the same envelope in `structuredContent` and as JSON text:
 ```
 
 Failures also set `isError: true`. Error codes: `no_state`, `invalid_argument`, `not_found`,
-`invalid_config`, `integrity_error`, `internal`. `internal` carries a generic message; details are
+`invalid_config`, `integrity_error`, `reviewer_failed`, `internal`. `internal` carries a generic message; details are
 written to the server's stderr only.
 
 ## What is deliberately not exposed

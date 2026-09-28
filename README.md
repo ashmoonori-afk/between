@@ -323,6 +323,8 @@ between journal
 between replay
 between cockpit
 between mcp [--root <path>] [--allow-control] [--allow-exec]
+between review [file|-] [--kind diff|answer|plan] [--text <t>] [--url <u>] [--base <ref>] [--context <t>] [--focus <t>] [--criterion <t>]... [--reviewer claude|codex|fake] [--from claude|codex] [--json]
+between review-shim claude|codex [--force] [--print]
 between ide [--builder-agents <n>] [--reviewer-agents <n>] [--rules-mode project_only|inherit_global] [--permission-mode read_only|guard|full_access] [--working-folder <relative-path>] [--followup-mode steer|queue] [--print-cli builder|reviewer|builder:n|reviewer:n] [--json]
 ```
 
@@ -356,6 +358,62 @@ By default only read tools are exposed (`between_status`, `between_summarize`,
 pause, resume, interrupt, review-now, stop, goal, and steer. Approval, ack, init, and
 verify-push are never exposed. Tool reference, security notes, and per-client configs
 (including Codex CLI and Cursor) are in [`docs/MCP.md`](./docs/MCP.md).
+
+## Direct Review From Claude Code Or Codex
+
+From inside a running Claude Code or Codex session you can ask the *other* agent for an
+independent review without starting the broker. The subject does not have to be a repo diff:
+it can be an agent's answer or a plan/spec.
+
+| Kind | Subject | Rubric |
+| --- | --- | --- |
+| `diff` | working tree vs `HEAD` (or `--base <ref>`), or a diff as text/file | correctness, regressions, security, tests, maintainability |
+| `answer` | an agent's reply (text, file, or URL) plus the question as context | correctness, completeness, evidence, clarity |
+| `plan` | a plan, spec, or design (text, file, or URL) | goals, scope, risks, sequencing, testability, open decisions |
+
+The result is structured: summary, findings with severity (`critical`, `major`, `minor`,
+`nit`), questions, and a verdict `APPROVE` or `REQUEST_CHANGES`.
+
+Routing reuses the pair: when Claude Code asks, Codex reviews; when Codex asks, Claude reviews.
+Between runs the same CLI the broker uses (`claude -p` or `codex exec --sandbox read-only`) with
+your existing sign-in, so there are no new provider keys. Secret-like values are redacted first.
+
+**Claude Code**
+
+```bash
+# 1. register the MCP server (between_review is on by default)
+claude mcp add between -- npx -y --package=between-dev between-mcp
+# 2. optional slash command: writes .claude/commands/between-review.md
+npx -y between-dev review-shim claude
+```
+
+Then in the session: `/between-review plan docs/plan.md`, `/between-review answer`, or just ask
+"get a between review of this diff".
+
+**Codex**
+
+```bash
+# 1. ~/.codex/config.toml
+#    [mcp_servers.between]
+#    command = "npx"
+#    args = ["-y", "--package=between-dev", "between-mcp", "--root", "/abs/path/to/repo"]
+# 2. optional prompt: writes $CODEX_HOME/prompts/between-review.md (default ~/.codex)
+npx -y between-dev review-shim codex
+```
+
+Then in the session: `/prompts:between-review plan docs/plan.md`.
+
+**CLI (any shell, scripts, or as the fallback)**
+
+```bash
+between review --from claude                        # diff vs HEAD, reviewed by codex
+between review --kind plan docs/plan.md --reviewer codex
+echo "$ANSWER" | between review --kind answer - --context "the user's question" --json
+between review --kind plan --url https://example.com/spec.md --focus "rollback"
+```
+
+`--json` prints the structured verdict. The exit code is 0 whenever a review completes; read
+`verdict` to gate on it. Details: [`docs/MCP.md`](./docs/MCP.md#direct-review-between_review).
 
 ## Forge Lifecycle
 

@@ -113,6 +113,23 @@ export class GitAdapter {
     return r.stdout
   }
 
+  /**
+   * Tracked working-tree diff against `ref` (default HEAD, or the empty tree before the first
+   * commit) for an on-demand review. The ref must name a commit; fail-closed like trackedDiff.
+   */
+  async diffAgainst(ref?: string): Promise<string> {
+    let base = await this.base()
+    if (ref) {
+      if (ref.startsWith('-')) throw new GitError(`not a commit: ${ref}`)
+      const r = await this.run(['rev-parse', '--verify', '-q', `${ref}^{commit}`])
+      if (r.exitCode !== 0 || !r.stdout.trim()) throw new GitError(`not a commit: ${ref}`)
+      base = r.stdout.trim()
+    }
+    const r = await this.run(['diff', base, ...DIFF_FLAGS, ...TRACKED_EXCLUDE])
+    if (r.exitCode !== 0) throw new GitError('git diff failed', r.stderr)
+    return r.stdout
+  }
+
   private async trackedRaw(): Promise<string> {
     // --no-renames so a rename emits delete+add (one path per line) instead of an R record with
     // two tab-separated paths, which downstream raw parsers (policy changedPathsFromRaw) misread.
