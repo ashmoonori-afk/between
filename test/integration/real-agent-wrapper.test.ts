@@ -63,7 +63,14 @@ describe('generated real-agent wrappers (N4)', () => {
   it('invokes claude in print mode with the prompt on stdin', async () => {
     const { exitCode, call } = await runWrapper(CLAUDE_AGENT_SOURCE, 'claude')
     expect(exitCode).toBe(0)
-    expect(call.argv).toEqual(['-p', '--output-format', 'text'])
+    expect(call.argv).toEqual([
+      '-p',
+      '--output-format',
+      'text',
+      '--disallowedTools',
+      'Edit(/.between/reviews/**)',
+      'Edit(/.between/verify/**)',
+    ])
     expect(call.stdin).toContain('Your role: developer')
   })
 })

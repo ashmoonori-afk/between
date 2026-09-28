@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { applyCommand } from '../../src/daemon/commands'
+import { EventsLog } from '../../src/adapters/events-log'
 import type { BetweenState, BetweenEvent } from '../../src/core/types'
 import type { DaemonContext } from '../../src/daemon/context'
 
@@ -87,6 +88,7 @@ function fakeContext(events: BetweenEvent[]): DaemonContext {
   return {
     deps: {
       root: dir,
+      events: new EventsLog(dir),
       clock: {
         now: () => 0,
         nowIso: () => '2026-06-20T00:00:00.000Z',

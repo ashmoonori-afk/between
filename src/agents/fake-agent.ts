@@ -23,6 +23,11 @@ function pad(n) { return String(n).padStart(4, '0') }
 
 function out(line) { process.stdout.write('[' + role + '] ' + line + '\\n') }
 
+// review/verify records are write-once: the broker seals accepted ones read-only
+function writeOnce(file, text) {
+  try { writeFileSync(file, text, { flag: 'wx' }); return true } catch (e) { if (e && e.code === 'EEXIST') return false; throw e }
+}
+
 function act() {
   let state
   try { state = JSON.parse(readFileSync(join(dir, 'state.json'), 'utf8')) } catch { out('no state yet'); return }
@@ -37,9 +42,9 @@ function act() {
     const name = 'cycle-' + pad(cycle)
     mkdirSync(join(dir, 'reviews'), { recursive: true })
     mkdirSync(join(dir, 'verify'), { recursive: true })
-    writeFileSync(join(dir, 'reviews', name + '.json'), JSON.stringify({ cycle: cycle, diff_hash: hash, findings: [], complete: true }, null, 2))
-    writeFileSync(join(dir, 'verify', name + '.json'), JSON.stringify({ diff_hash: hash, passed: true, summary: 'fake-agent: no blocking findings' }, null, 2))
-    out('wrote clean review + passing verify for ' + name)
+    const wroteReview = writeOnce(join(dir, 'reviews', name + '.json'), JSON.stringify({ cycle: cycle, diff_hash: hash, findings: [], complete: true }, null, 2))
+    const wroteVerify = writeOnce(join(dir, 'verify', name + '.json'), JSON.stringify({ diff_hash: hash, passed: true, summary: 'fake-agent: no blocking findings' }, null, 2))
+    out(wroteReview || wroteVerify ? 'wrote clean review + passing verify for ' + name : 'records for ' + name + ' already written')
   }
 }
 

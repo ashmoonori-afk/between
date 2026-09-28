@@ -28,6 +28,36 @@ Compute `id = role + "-" + String(cycle).padStart(4, "0") + "-" + diff_hash.slic
 
 The broker validates these files and ignores records whose `diff_hash` is not the current cycle hash.
 
+## Review Record Immutability
+
+Write each review and verify record once. Until the broker accepts a record, the reviewer may still
+rewrite it. When the broker accepts it, the record is sealed:
+
+1. The file is made read-only (`chmod 0444`; on Windows this sets the read-only attribute).
+2. Its sha256 is appended to the hash-chained journal as a `record_sealed` event
+   `{ record: "review" | "verify", sha256, path }`, and the journal head is pinned in `state.json`.
+3. Every later read (the daemon loop, the evidence manifest, the merge-approval policy gate,
+   `verify-push`, dashboards) re-hashes the file and refuses it when the bytes changed, the file was
+   deleted, or it was replaced by a symlink or other non-regular file. The seal is only trusted when
+   the journal chain and pinned head verify, so dropping the `record_sealed` entry does not unseal
+   a record.
+
+A refused record fails the cycle closed: the daemon moves to `error` with code `record_tampered`
+(not recoverable), and evidence/approval paths throw instead of consuming the record.
+
+### What stops the developer agent from writing review records
+
+| Layer | Enforced | Scope |
+| --- | --- | --- |
+| Journal seal + hash check on every read | Yes, all platforms | Detects any change after acceptance and fails closed. It cannot stop a developer who rewrites a record *before* the broker accepts it, or who rewrites the whole journal and `state.json` consistently. |
+| Read-only file mode | Best effort | macOS/Linux: blocks a plain write by a non-root process, but the owner can `chmod` it back or rename over it. Windows: read-only attribute; same caveat. |
+| Claude Code developer wrapper (`claude-agent.mjs developer`) | Yes, for Claude's tools | Passes `--disallowedTools "Edit(/.between/reviews/**)" "Edit(/.between/verify/**)"`. This covers Claude's file tools and the Bash file commands/redirections Claude recognizes; it does not cover a script that opens the file itself. |
+| Codex developer wrapper (`codex-agent.mjs developer`) | No | `codex exec` has no per-path write deny inside its workspace sandbox, so `.between/` stays writable. The journal seal is the only guard. |
+| `developer_command: 'claude'` (interactive, no wrapper) | No | Between passes no flags. Add the same deny rules to your Claude settings yourself if you need them. |
+
+The contract prompt also tells developers never to touch `.between/reviews` or `.between/verify`, but
+treat prompt text as a request rather than a control.
+
 ## Real CLI Invocation
 
 Only the bundled `fake-agent` is verified end-to-end here. The real wrappers are templates; set the API key and smoke-test the flags for your CLI version before relying on them.

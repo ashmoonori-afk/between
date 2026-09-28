@@ -74,5 +74,6 @@ export function developerSignalBody(): string {
     'Between signal: review updated.',
     'Read: .between/reviews/<cycle>.json, .between/state.json, git diff.',
     'Apply accepted feedback, run verification, leave merge/deploy to the human.',
+    'Review and verify records are sealed; never modify .between/reviews or .between/verify.',
   ].join('\n')
 }

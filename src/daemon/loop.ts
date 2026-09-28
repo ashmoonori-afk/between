@@ -5,6 +5,7 @@ import { replaySnapshot } from '../core/replay'
 import { setPhase, touch, pinJournal } from '../core/state'
 import { reconcile } from './reconcile'
 import { GitError } from '../adapters/git'
+import { RecordIntegrityError } from '../review/record-seal'
 import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
 import { watchForNewDiff, runDebounce, awaitAck, awaitReview, handleReviewWritten } from './phases'
 import { drainCommands } from './commands'
@@ -188,15 +189,21 @@ export class Daemon {
     } catch (err) {
       // A4: a git/IO failure while producing the review object must FAIL CLOSED into `error`,
       // never be swallowed into an empty diff ("no change"). Recoverable -> resume restores it.
+      // A sealed review/verify record that no longer matches its journal seal is NOT recoverable.
+      const tampered = err instanceof RecordIntegrityError
       await this.dispatch('fail', (s) => ({
         ...s,
         workflow: {
           ...s.workflow,
           error: {
-            code: err instanceof GitError ? 'git_error' : 'internal_error',
+            code: tampered
+              ? 'record_tampered'
+              : err instanceof GitError
+                ? 'git_error'
+                : 'internal_error',
             message: err instanceof Error ? err.message : String(err),
             occurred_at: this.deps.clock.nowIso(),
-            recoverable: true,
+            recoverable: !tampered,
           },
         },
       }))

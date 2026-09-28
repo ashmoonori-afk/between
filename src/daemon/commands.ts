@@ -3,7 +3,8 @@ import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
 import { verifyApproval, approvalExpiry } from '../core/approval'
-import type { ApprovalScope } from '../core/types'
+import type { ApprovalScope, ReviewRecord } from '../core/types'
+import { RecordIntegrityError } from '../review/record-seal'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
@@ -140,7 +141,17 @@ async function recordFindingAction(
     })
     return
   }
-  const review = await readReview(ctx)
+  let review: ReviewRecord | null
+  try {
+    review = (await readReview(ctx))?.record ?? null
+  } catch (err) {
+    if (!(err instanceof RecordIntegrityError)) throw err
+    // the phase loop fails the cycle closed; the command itself is just refused
+    await ctx.emit('finding_action_rejected', {
+      detail: { action: command.action, finding_id: command.finding_id, reason: 'record_tampered' },
+    })
+    return
+  }
   if (review && review.diff_hash !== cur.diff.hash) {
     await ctx.emit('finding_action_rejected', {
       detail: {
