@@ -49,6 +49,7 @@ export class Daemon {
 
   /** Load + reconcile persisted state into memory. Returns false if none existed. */
   async load(): Promise<boolean> {
+    await this.deps.events.prime()
     const loaded = await readRecoverableState(this.deps.state, this.deps.events)
     if (!loaded) return false
     this.current = reconcile(loaded, this.deps.clock)

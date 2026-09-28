@@ -25,8 +25,8 @@ function out(line) { process.stdout.write('[' + role + '] ' + line + '\\n') }
 
 // review/verify records are written once: keep a valid record for this hash (the broker may have
 // sealed it read-only), otherwise replace a missing/malformed one atomically
-function isFinding(f) { return !!f && typeof f.id === 'string' && f.id.length > 0 && (f.severity === 'blocking' || f.severity === 'non-blocking') && typeof f.summary === 'string' && typeof f.target_hash === 'string' && f.target_hash.length > 0 }
-function isReview(r, hash, cycle) { return r.diff_hash === hash && r.cycle === cycle && Array.isArray(r.findings) && r.findings.every(isFinding) && r.complete === true }
+function isFinding(f, hash) { return !!f && typeof f.id === 'string' && f.id.length > 0 && (f.severity === 'blocking' || f.severity === 'non-blocking') && typeof f.summary === 'string' && f.target_hash === hash && (f.agent === undefined || (typeof f.agent === 'string' && f.agent.length > 0)) }
+function isReview(r, hash, cycle) { return r.diff_hash === hash && r.cycle === cycle && Array.isArray(r.findings) && r.findings.every(function (f) { return isFinding(f, hash) }) && r.complete === true }
 function isVerify(r, hash) { return r.diff_hash === hash && typeof r.passed === 'boolean' && (r.summary === undefined || typeof r.summary === 'string') }
 function writeRecord(file, text, hash, cycle, valid) {
   try { const r = JSON.parse(readFileSync(file, 'utf8')); if (r && valid(r, hash, cycle)) return false } catch {}

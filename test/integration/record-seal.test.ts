@@ -40,6 +40,7 @@ import {
   RECORD_SEALED_EVENT,
   RecordIntegrityError,
   findRecordSeal,
+  makeRecordReadOnly,
   readRecordBytes,
   sealMac,
 } from '../../src/review/record-seal'
@@ -455,11 +456,93 @@ describe('review/verify record sealing', () => {
   )
 })
 
+describe('restarted daemon and sealing races', () => {
+  it(
+    'a restarted daemon does not adopt a forged suffix appended after it loaded (no secret)',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const path = reviewPath(betweenPaths(dir), 1)
+      await writeFile(path, reviewJson(hash))
+      await d.tick()
+      await d.tick()
+      delete process.env[APPROVAL_SECRET_ENV]
+      const fc = new FakeClock(Date.UTC(2026, 8, 28, 1, 0, 0))
+      const restarted = await buildDaemon(dir, fc)
+      await restarted.load()
+      expect(restarted.state.workflow.phase).toBe('review_written')
+
+      const forged = reviewJson(hash, 'forged after restart')
+      await overwrite(path, forged)
+      await new EventsLog(dir).append({
+        ts: fc.nowIso(),
+        cycle: 1,
+        phase: 'review_written',
+        event: RECORD_SEALED_EVENT,
+        detail: { record: 'review', sha256: sha256(forged) },
+      })
+      // any broker event before the next record read (here: a refused stale command)
+      await new CommandBus(dir).submit({
+        kind: 'finding_action',
+        action: 'accept',
+        finding_id: 'f1',
+        cycle: 99,
+        diff_hash: 'stale',
+      })
+      await restarted.tick()
+      expect(restarted.state.workflow.phase).toBe('error')
+      expect(restarted.state.workflow.error?.code).toBe('record_tampered')
+    },
+    TIMEOUT_MS,
+  )
+
+  it('never makes the target of a swapped-in symlink read-only', async (ctx) => {
+    const target = join(dir, 'unrelated.txt')
+    await writeFile(target, 'unrelated')
+    await chmod(target, 0o644)
+    const link = join(dir, 'record.json')
+    try {
+      await symlink(target, link, 'file')
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EPERM') ctx.skip()
+      throw e
+    }
+    expect(await makeRecordReadOnly(link, sha256('unrelated'))).toBe(false)
+    expect((await stat(target)).mode & 0o200).not.toBe(0)
+  })
+
+  it('does not seal a record whose bytes changed after they were read', async () => {
+    const file = join(dir, 'record.json')
+    await writeFile(file, 'v2')
+    expect(await makeRecordReadOnly(file, sha256('v1'))).toBe(false)
+    expect((await stat(file)).mode & 0o200).not.toBe(0)
+    expect(await makeRecordReadOnly(file, sha256('v2'))).toBe(true)
+    expect((await stat(file)).mode & 0o222).toBe(0)
+  })
+})
+
 describe('bundled fake agent', () => {
   const hash = 'e'.repeat(64)
   const malformed: Array<[string, unknown]> = [
     ['missing fields', { diff_hash: hash }],
     ['a malformed finding', { cycle: 1, diff_hash: hash, findings: [{}], complete: true }],
+    [
+      'a finding for another hash',
+      {
+        cycle: 1,
+        diff_hash: hash,
+        findings: [{ id: 'f', severity: 'blocking', summary: 's', target_hash: 'old' }],
+        complete: true,
+      },
+    ],
+    [
+      'a non-string agent',
+      {
+        cycle: 1,
+        diff_hash: hash,
+        findings: [{ id: 'f', severity: 'blocking', summary: 's', target_hash: hash, agent: 7 }],
+        complete: true,
+      },
+    ],
   ]
   for (const [name, stale] of malformed) {
     it(`replaces a schema-invalid record (${name}) instead of keeping it`, async () => {

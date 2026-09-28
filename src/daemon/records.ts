@@ -29,18 +29,20 @@ export function readVerify(ctx: DaemonContext): Promise<DaemonRecord<VerifyRecor
 
 /**
  * Seal an accepted record: make it read-only and append its sha256 to the hash-chained journal.
- * From then on every read must reproduce these exact bytes or the cycle fails closed.
+ * From then on every read must reproduce these exact bytes or the cycle fails closed. Returns false
+ * when the file changed after it was read (the reviewer may still rewrite it before acceptance):
+ * nothing is sealed and the caller retries on the next tick.
  */
 export async function sealRecord(
   ctx: DaemonContext,
   kind: SealedRecordKind,
   loaded: DaemonRecord<unknown>,
-): Promise<void> {
-  if (loaded.sealed) return
+): Promise<boolean> {
+  if (loaded.sealed) return true
   const path = recordPath(ctx, kind)
   const secret = resolveApprovalSecret(ctx.deps.root)
   const cycle = ctx.current().workflow.cycle
-  await makeRecordReadOnly(path)
+  if (!(await makeRecordReadOnly(path, loaded.sha256))) return false
   await ctx.emit(RECORD_SEALED_EVENT, {
     diff_hash: ctx.current().diff.hash ?? undefined,
     detail: {
@@ -50,6 +52,7 @@ export async function sealRecord(
       ...(secret ? { mac: sealMac(secret, kind, cycle, loaded.sha256) } : {}),
     },
   })
+  return true
 }
 
 async function readRecord<T>(

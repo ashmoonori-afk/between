@@ -45,8 +45,13 @@ rewrite it. When the broker accepts it, the record is sealed:
    entries inside the pinned range count: dropping the `record_sealed` entry does not unseal a
    record, and a well-chained forged seal appended after the pin is ignored.
 
-A refused record fails the cycle closed: the daemon moves to `error` with code `record_tampered`
-(not recoverable), and evidence/approval paths throw instead of consuming the record.
+A refused record is never consumed. What happens depends on the surface:
+
+- Daemon phase loop: the cycle fails closed into `error` with code `record_tampered` (not
+  recoverable).
+- `between approve` (any scope): the daemon refuses the approval and journals `approval_rejected`.
+- Finding actions: refused and journaled as `finding_action_rejected` with reason `record_tampered`.
+- Evidence, `verify-push`, dashboards, MCP/API: the read throws; API callers get `integrity_error`.
 
 ### Threat model: what is and is not covered
 

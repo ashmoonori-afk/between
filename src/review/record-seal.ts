@@ -1,5 +1,5 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
-import { chmod, lstat, open } from 'node:fs/promises'
+import { lstat, open, type FileHandle } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import type { BetweenEvent } from '../core/types'
 import { verifyChain, verifyChainHead, type ChainHead, type JournalPayload } from '../core/journal'
@@ -46,7 +46,32 @@ const NON_BLOCK = constants.O_NONBLOCK ?? 0
  * opening, the handle must be a regular file whose identity (dev + ino) matches a fresh lstat of
  * the path; on Windows (no O_NOFOLLOW) that comparison is what rejects a symlink/reparse swap.
  */
-export async function readRecordBytes(path: string): Promise<RecordBytes> {
+export function readRecordBytes(path: string): Promise<RecordBytes> {
+  return withRecordHandle(path, async (fh) => {
+    const buf = await fh.readFile()
+    return { status: 'ok', raw: buf.toString('utf8'), sha256: sha256Bytes(buf) }
+  })
+}
+
+/**
+ * Make an accepted record read-only through the SAME validated handle whose bytes are re-hashed,
+ * so a rename/symlink swap can never redirect the chmod to another file. Returns false (seal
+ * nothing, retry later) when the file is gone, not regular, or no longer has `sha256`. The mode
+ * change itself is best effort; the journal seal is the enforced check.
+ */
+export async function makeRecordReadOnly(path: string, sha256: string): Promise<boolean> {
+  const result = await withRecordHandle(path, async (fh) => {
+    if (sha256Bytes(await fh.readFile()) !== sha256) return { status: 'absent' as const }
+    await fh.chmod(0o444).catch(() => {})
+    return { status: 'ok' as const, raw: '', sha256 }
+  })
+  return result.status === 'ok'
+}
+
+async function withRecordHandle(
+  path: string,
+  use: (fh: FileHandle) => Promise<RecordBytes>,
+): Promise<RecordBytes> {
   try {
     const fh = await open(path, constants.O_RDONLY | NO_FOLLOW | NON_BLOCK)
     try {
@@ -56,8 +81,7 @@ export async function readRecordBytes(path: string): Promise<RecordBytes> {
       if (!linked.isFile() || linked.dev !== opened.dev || linked.ino !== opened.ino) {
         return { status: 'not_regular' }
       }
-      const buf = await fh.readFile()
-      return { status: 'ok', raw: buf.toString('utf8'), sha256: sha256Bytes(buf) }
+      return await use(fh)
     } finally {
       await fh.close()
     }
@@ -68,11 +92,6 @@ export async function readRecordBytes(path: string): Promise<RecordBytes> {
     if (code === 'ELOOP' || code === 'EMLINK') return { status: 'not_regular' }
     throw e
   }
-}
-
-/** Make a sealed record read-only. Best effort: the journal seal is the enforced check. */
-export async function makeRecordReadOnly(path: string): Promise<void> {
-  await chmod(path, 0o444).catch(() => {})
 }
 
 /** HMAC binding (kind, cycle, sha256) to the broker's approval secret. */

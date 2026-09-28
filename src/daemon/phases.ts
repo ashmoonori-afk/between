@@ -167,7 +167,7 @@ export async function awaitReview(ctx: DaemonContext): Promise<void> {
   const loaded = await readReview(ctx)
   const hash = ctx.current().diff.hash
   if (loaded && hash && reviewMatchesCurrent(loaded.record, hash)) {
-    await sealRecord(ctx, 'review', loaded)
+    if (!(await sealRecord(ctx, 'review', loaded))) return // changed while sealing: retry
     await ctx.dispatch('review_written')
     return
   }
@@ -190,10 +190,10 @@ export async function handleReviewWritten(ctx: DaemonContext): Promise<void> {
   // ignore a review file replaced with one for a different cycle/hash (TOCTOU, I14, HIGH-2)
   if (record.diff_hash !== ctx.current().diff.hash) return
   // a cycle accepted by an older build has no seal yet: seal it before acting on it
-  await sealRecord(ctx, 'review', loaded)
+  if (!(await sealRecord(ctx, 'review', loaded))) return
   if (reviewIsClean(record)) {
     const loadedVerify = await readVerify(ctx)
-    if (loadedVerify) await sealRecord(ctx, 'verify', loadedVerify)
+    if (loadedVerify && !(await sealRecord(ctx, 'verify', loadedVerify))) return
     const verify = loadedVerify?.record ?? null
     if (cycleShouldEnd(record, verify)) {
       // commit the hash as reviewed ONLY when the cycle actually completes (I4, HIGH-3)

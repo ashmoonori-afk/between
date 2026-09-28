@@ -53,6 +53,19 @@ export class EventsLog {
     return write
   }
 
+  /**
+   * Fix the write cursor to the journal as it is NOW (the daemon calls this at load). Without it
+   * the cursor is seeded lazily at the first append, so entries someone appended in between would
+   * be silently adopted into the chain the daemon then pins.
+   */
+  prime(): Promise<void> {
+    const init = this.queue.then(async () => {
+      if (this.lastHash === undefined) await this.initChain()
+    })
+    this.queue = init.catch(() => {})
+    return init
+  }
+
   /** Seed the chain head from the last persisted entry (once, inside the write queue). */
   private async initChain(): Promise<void> {
     const entries = await this.read()
