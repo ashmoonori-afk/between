@@ -238,12 +238,18 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
     'Ask the paired agent for an independent one-shot review of a diff, an answer, or a plan. ' +
       'Returns summary, findings with severity, questions, and verdict APPROVE or REQUEST_CHANGES.',
     ReviewArgs,
-    (args) =>
-      requestReview(
-        root,
-        { ...args, from: args.from ?? hostFromClientName(server.server.getClientVersion()?.name) },
-        opts.reviewDeps,
-      ),
+    async (args) => {
+      // a recognized client is who it says it is: a claimed `from` cannot override it, or a
+      // claude-code client could claim to be codex and pick claude to review its own work
+      const client = hostFromClientName(server.server.getClientVersion()?.name)
+      if (client && args.from && args.from !== client) {
+        throw new BetweenApiError(
+          'invalid_argument',
+          `from "${args.from}" conflicts with the calling client (${client})`,
+        )
+      }
+      return requestReview(root, { ...args, from: client ?? args.from }, opts.reviewDeps)
+    },
   )
 
   tool(

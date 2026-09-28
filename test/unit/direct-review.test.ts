@@ -137,7 +137,12 @@ describe('reviewer routing', () => {
     const { file, args } = reviewerInvocation('codex', '/tmp/w')
     expect(file).toBe('codex')
     expect(args.slice(0, 3)).toEqual(['--ask-for-approval', 'never', 'exec'])
-    expect(args.join(' ')).toContain('--sandbox read-only --cd /tmp/w -c mcp_servers={}')
+    expect(args.join(' ')).toContain(
+      '--sandbox read-only --cd /tmp/w --ignore-user-config --ignore-rules -c mcp_servers={}',
+    )
+    for (const feature of ['shell_tool', 'unified_exec', 'view_image', 'hooks']) {
+      expect(args[args.indexOf(feature) - 1], feature).toBe('--disable')
+    }
     expect(reviewerInvocation('claude', '/tmp/w')).toEqual({
       file: 'claude',
       args: ['-p', '--output-format', 'text', '--tools', '', '--strict-mcp-config'],

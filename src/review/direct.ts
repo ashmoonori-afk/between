@@ -299,9 +299,26 @@ export function resolveReviewer(opts: {
 }
 
 /**
+ * Codex features that give the model a way to read the disk or reach out (shell, exec, image
+ * viewing, apps/plugins/browser/computer use, hooks). The read-only sandbox blocks writes only,
+ * so every one of them is disabled for a review.
+ */
+export const CODEX_DISABLED_FEATURES = [
+  'shell_tool',
+  'unified_exec',
+  'view_image',
+  'apps',
+  'plugins',
+  'browser_use',
+  'computer_use',
+  'hooks',
+] as const
+
+/**
  * Non-interactive invocation of a reviewer CLI in `workdir` (an empty temp dir); the prompt goes
  * over stdin. The reviewer needs no tools: claude gets no built-in tools and no MCP servers;
- * codex runs in its read-only sandbox with MCP servers cleared.
+ * codex gets no tool features, no MCP servers, and ignores user config and rules, inside its
+ * read-only sandbox.
  */
 export function reviewerInvocation(
   preset: HostAgent,
@@ -324,8 +341,11 @@ export function reviewerInvocation(
       'read-only',
       '--cd',
       workdir,
+      '--ignore-user-config',
+      '--ignore-rules',
       '-c',
       'mcp_servers={}',
+      ...CODEX_DISABLED_FEATURES.flatMap((feature) => ['--disable', feature]),
       '--skip-git-repo-check',
       '--ephemeral',
       '-',

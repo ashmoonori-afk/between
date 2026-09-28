@@ -377,9 +377,10 @@ The result is structured: summary, findings with severity (`critical`, `major`, 
 
 Routing reuses the pair: when Claude Code asks, Codex reviews; when Codex asks, Claude reviews.
 An agent cannot pick itself as the reviewer. Between runs the reviewer CLI with your existing
-sign-in (no new provider keys) in an empty temporary directory, with no tools (`claude -p
---tools ""`) or in the read-only sandbox (`codex exec --sandbox read-only`), and passes only
-that provider's credentials. Secret-like values are redacted first.
+sign-in (no new provider keys) in an empty temporary directory with every tool disabled
+(`claude -p --tools ""`; `codex exec --sandbox read-only` with shell/exec and other tool
+features off and user config ignored), and passes only that provider's credentials.
+Secret-like values are redacted first.
 
 A review sends the subject to the reviewer's model provider and costs a model call, so the MCP
 tool is off until you start the server with `--allow-review`. URL subjects are fetched only

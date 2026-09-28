@@ -30,25 +30,43 @@ for (const [net, prefix] of [
 ] as const) {
   NON_PUBLIC.addSubnet(net, prefix, 'ipv4')
 }
+// IPv6 is an allowlist: only global unicast (2000::/3) passes, minus the special-purpose blocks
+// inside it. Everything else (site-local fec0::/10, ULA, link-local, NAT64 64:ff9b::/96 and
+// 64:ff9b:1::/48, IPv4-compatible and IPv4-translated forms, multicast) is refused.
+const GLOBAL_UNICAST_V6 = new BlockList()
+GLOBAL_UNICAST_V6.addSubnet('2000::', 3, 'ipv6')
+const SPECIAL_IN_GLOBAL_V6 = new BlockList()
 for (const [net, prefix] of [
-  // IPv4-mapped addresses (::ffff:a.b.c.d) need no rule here: BlockList checks them against the
-  // IPv4 rules above, and a ::ffff:0:0/96 rule would also match every plain IPv4 address
-  ['::', 127],
-  ['64:ff9b::', 96],
-  ['100::', 64],
-  ['2001:db8::', 32],
-  ['fc00::', 7],
-  ['fe80::', 10],
-  ['ff00::', 8],
+  ['2001::', 23], // IETF protocol assignments, incl. Teredo 2001::/32 (embeds IPv4)
+  ['2001:db8::', 32], // documentation
+  ['2002::', 16], // 6to4 (embeds IPv4)
+  ['3fff::', 20], // documentation
 ] as const) {
-  NON_PUBLIC.addSubnet(net, prefix, 'ipv6')
+  SPECIAL_IN_GLOBAL_V6.addSubnet(net, prefix, 'ipv6')
 }
 
 export function isPublicAddress(address: string): boolean {
   const family = isIP(address)
   if (family === 4) return !NON_PUBLIC.check(address, 'ipv4')
-  if (family === 6) return !NON_PUBLIC.check(address, 'ipv6')
-  return false
+  if (family !== 6) return false
+  const mapped = ipv4FromMapped(address)
+  if (mapped) return !NON_PUBLIC.check(mapped, 'ipv4')
+  return GLOBAL_UNICAST_V6.check(address, 'ipv6') && !SPECIAL_IN_GLOBAL_V6.check(address, 'ipv6')
+}
+
+/** `::ffff:a.b.c.d` in any spelling -> `a.b.c.d`; null for every other address. */
+function ipv4FromMapped(address: string): string | null {
+  let host: string
+  try {
+    host = new URL(`http://[${address}]/`).hostname.slice(1, -1)
+  } catch {
+    return null
+  }
+  const m = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (!m) return null
+  const hi = parseInt(m[1]!, 16)
+  const lo = parseInt(m[2]!, 16)
+  return `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`
 }
 
 export class SubjectFetchError extends Error {

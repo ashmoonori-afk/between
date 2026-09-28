@@ -257,9 +257,39 @@ describe('between_review over MCP', () => {
     expect(answer.body.data).toMatchObject({ kind: 'answer', verdict: 'REQUEST_CHANGES' })
     expect(answer.body.data!.findings[0]).toMatchObject({ id: 'F1', severity: 'major' })
 
-    const plan = await review(client, { kind: 'plan', file: 'plan.md', from: 'codex' })
-    expect(plan.body.data).toMatchObject({ kind: 'plan', reviewer: 'claude' })
-    expect(deps.calls.map((c) => c.preset)).toEqual(['codex', 'codex', 'claude'])
+    const plan = await review(client, { kind: 'plan', file: 'plan.md', from: 'claude' })
+    expect(plan.body.data).toMatchObject({ kind: 'plan', reviewer: 'codex' })
+
+    const fromCodex = await connect(root, deps, 'codex-mcp-client')
+    const codexPlan = await review(fromCodex, { kind: 'plan', file: 'plan.md' })
+    expect(codexPlan.body.data).toMatchObject({ kind: 'plan', reviewer: 'claude' })
+    expect(deps.calls.map((c) => c.preset)).toEqual(['codex', 'codex', 'codex', 'claude'])
+  })
+
+  it('treats a recognized client as authoritative: a conflicting from is refused', async () => {
+    const deps = recorder()
+    const client = await connect(await repo(), deps, 'claude-code')
+    const spoofed = await review(client, {
+      kind: 'plan',
+      text: 'x',
+      from: 'codex',
+      reviewer: 'claude',
+    })
+    expect(spoofed.body).toMatchObject({
+      ok: false,
+      error: {
+        code: 'invalid_argument',
+        message: expect.stringContaining('conflicts with the calling client'),
+      },
+    })
+    expect(deps.calls).toHaveLength(0)
+  })
+
+  it('accepts a claimed from only from an unrecognized client', async () => {
+    const deps = recorder()
+    const client = await connect(await repo(), deps, 'cursor')
+    const res = await review(client, { kind: 'plan', text: 'x', from: 'codex' })
+    expect(res.body.data).toMatchObject({ reviewer: 'claude', routed_by: 'paired_with_caller' })
   })
 
   it('does not let an agent pick the fake reviewer or pass a root', async () => {

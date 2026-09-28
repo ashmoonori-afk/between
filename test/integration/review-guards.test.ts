@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { createServer, type RequestListener, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
+import { delimiter, join } from 'node:path'
 import { fetchSubjectText, isPublicAddress } from '../../src/review/fetch-subject'
 import { reviewerEnv } from '../../src/api/review'
 
@@ -37,12 +39,32 @@ describe('isPublicAddress', () => {
       'fe80::1',
       'fd00::1',
       '::ffff:127.0.0.1',
+      '::ffff:7f00:1',
+      '::ffff:10.0.0.1',
+      'fec0::1',
+      '64:ff9b::7f00:1',
+      '64:ff9b:1::1',
+      '::ffff:0:7f00:1',
+      '::7f00:1',
+      '::1.2.3.4',
+      '2001::1',
+      '2001:db8::1',
+      '2002:7f00:1::1',
+      '3fff::1',
+      'ff02::1',
       'not-an-ip',
     ]) {
       expect(isPublicAddress(a), a).toBe(false)
     }
-    expect(isPublicAddress('8.8.8.8')).toBe(true)
-    expect(isPublicAddress('2606:4700::1111')).toBe(true)
+    for (const a of [
+      '8.8.8.8',
+      '1.1.1.1',
+      '2606:4700::1111',
+      '2a00:1450:4001::1',
+      '::ffff:8.8.8.8',
+    ]) {
+      expect(isPublicAddress(a), a).toBe(true)
+    }
   })
 })
 
@@ -93,16 +115,32 @@ describe('reviewerEnv', () => {
     GITHUB_TOKEN: 'g',
   }
 
+  const root = join(tmpdir(), 'between-guard-project')
+
   it("passes only the reviewer's own provider credentials", () => {
-    expect(reviewerEnv('claude', base)).toEqual({
+    expect(reviewerEnv('claude', root, base)).toEqual({
       PATH: '/usr/bin',
       ANTHROPIC_API_KEY: 'a',
       CLAUDE_CODE_OAUTH_TOKEN: 'c',
     })
-    expect(reviewerEnv('codex', base)).toEqual({
+    expect(reviewerEnv('codex', root, base)).toEqual({
       PATH: '/usr/bin',
       OPENAI_API_KEY: 'o',
       CODEX_API_KEY: 'x',
     })
+  })
+
+  it('drops anything that points into the project and non-runtime variables', () => {
+    const env = reviewerEnv('codex', root, {
+      PATH: [join(root, 'node_modules', '.bin'), '/usr/bin'].join(delimiter),
+      HOME: '/home/u',
+      BETWEEN_ROOT: root,
+      INIT_CWD: root,
+      PWD: root,
+      TMPDIR: join(root, 'tmp'),
+      npm_package_json: join(root, 'package.json'),
+      SOME_APP_SETTING: 'x',
+    })
+    expect(env).toEqual({ PATH: '/usr/bin', HOME: '/home/u' })
   })
 })

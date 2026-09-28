@@ -2,9 +2,8 @@ import { createHash, randomBytes } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
-import { buildAgentSandboxEnv } from '../adapters/agent-env'
 import { fetchSubjectText } from '../review/fetch-subject'
 import { GitAdapter, GitError } from '../adapters/git'
 import { betweenPaths } from '../adapters/paths'
@@ -67,6 +66,8 @@ export interface ReviewResult extends ParsedReview {
 
 export interface ReviewerRunOptions {
   timeoutMs: number
+  /** only used to keep project paths out of the reviewer's environment */
+  projectRoot: string
 }
 
 export interface ReviewDeps {
@@ -130,7 +131,7 @@ export async function requestReview(
   })
   const run = deps.runReviewer ?? runReviewerCli
   const timeoutMs = config ? config.review_timeout_seconds * 1000 : DEFAULT_REVIEW_TIMEOUT_MS
-  const reply = await run(route.preset, prompt, { timeoutMs })
+  const reply = await run(route.preset, prompt, { timeoutMs, projectRoot: realRoot })
 
   let parsed: ParsedReview
   try {
@@ -250,20 +251,74 @@ const PROVIDER_AUTH_BY_PRESET: Record<'claude' | 'codex', readonly string[]> = {
   codex: ['OPENAI_API_KEY', 'CODEX_API_KEY'],
 }
 
+/** Runtime variables a reviewer CLI needs to start, sign in, and reach its provider. */
+const REVIEWER_RUNTIME_ENV = new Set([
+  'PATH',
+  'PATHEXT',
+  'SYSTEMROOT',
+  'WINDIR',
+  'COMSPEC',
+  'HOME',
+  'USERPROFILE',
+  'HOMEDRIVE',
+  'HOMEPATH',
+  'APPDATA',
+  'LOCALAPPDATA',
+  'TEMP',
+  'TMP',
+  'TMPDIR',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'TERM',
+  'NO_COLOR',
+  'CODEX_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'XDG_CONFIG_HOME',
+  'XDG_DATA_HOME',
+  'XDG_CACHE_HOME',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+])
+
 /**
- * The broker's sandboxed agent env, narrowed to the reviewer's own provider: every other
- * credential, including the other provider's key, is stripped. No new keys are needed.
+ * Allowlisted reviewer environment: runtime variables plus the reviewer's own provider
+ * credentials only (no other provider's key, no other credential). Anything that points into the
+ * project (BETWEEN_ROOT, INIT_CWD, PWD, project entries on PATH, ...) is dropped so the reviewer
+ * is not told where the repository is. No new keys are needed.
  */
 export function reviewerEnv(
   preset: 'claude' | 'codex',
+  projectRoot: string,
   baseEnv: NodeJS.ProcessEnv = process.env,
-): Record<string, string | undefined> {
-  const { env } = buildAgentSandboxEnv({}, { role: 'reviewer', baseEnv })
-  const other = PROVIDER_AUTH_BY_PRESET[preset === 'claude' ? 'codex' : 'claude']
-  for (const name of Object.keys(env)) {
-    if (other.includes(name.toUpperCase())) delete env[name]
+): Record<string, string> {
+  const own = new Set(PROVIDER_AUTH_BY_PRESET[preset])
+  const root = resolve(projectRoot)
+  const env: Record<string, string> = {}
+  for (const [name, value] of Object.entries(baseEnv)) {
+    if (value === undefined) continue
+    const upper = name.toUpperCase()
+    if (own.has(upper)) {
+      env[name] = value
+    } else if (upper === 'PATH') {
+      env[name] = value
+        .split(delimiter)
+        .filter((entry) => entry && !isInside(root, entry))
+        .join(delimiter)
+    } else if (REVIEWER_RUNTIME_ENV.has(upper) && !value.includes(root)) {
+      env[name] = value
+    }
   }
   return env
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, resolve(path))
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
 /**
@@ -276,11 +331,19 @@ async function runReviewerCli(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   if (preset === 'fake') return fakeReviewerOutput(prompt)
-  const workdir = await realpath(await mkdtemp(join(tmpdir(), 'between-review-')))
+  const created = await mkdtemp(join(tmpdir(), 'between-review-'))
   try {
-    return await spawnReviewer(preset, prompt, workdir, opts)
+    return await spawnReviewer(preset, prompt, await realpath(created), opts)
   } finally {
-    await rm(workdir, { recursive: true, force: true })
+    // Windows may hold the dir briefly after the child exits; retry, and never let a cleanup
+    // failure replace the review result or the reviewer's own error
+    await rm(created, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 }).catch(
+      (e: unknown) => {
+        process.stderr.write(
+          `between: could not remove reviewer temp dir ${created}: ${e instanceof Error ? e.message : String(e)}\n`,
+        )
+      },
+    )
   }
 }
 
@@ -294,7 +357,7 @@ async function spawnReviewer(
   const r = await execa(file, args, {
     cwd: workdir,
     input: prompt,
-    env: reviewerEnv(preset),
+    env: reviewerEnv(preset, opts.projectRoot),
     extendEnv: false,
     timeout: opts.timeoutMs,
     reject: false,

@@ -76,17 +76,20 @@ a fetched URL body) to the reviewer agent's model provider, so it is not annotat
 | `context` | For `answer`, the user's question verbatim; otherwise background |
 | `focus`, `criteria` | What to look at hardest; up to 10 extra criteria |
 | `reviewer` | Force `claude` or `codex`; refused when it equals the caller (no self-review) |
-| `from` | The calling agent. The other one reviews. Inferred from the MCP client name when omitted (Claude Code -> `codex` reviews; Codex -> `claude` reviews). |
+| `from` | The calling agent. The other one reviews. When the MCP client is recognized (Claude Code -> `codex` reviews; Codex -> `claude` reviews), the client identity is authoritative and a conflicting `from` is refused; `from` is only taken as given from unrecognized clients. |
 
 Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_command` of
 `.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
 The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
-started in an empty temporary directory, never the project: `claude -p --tools ""
---strict-mcp-config` (no tools, no MCP servers) or `codex exec --sandbox read-only -c
-mcp_servers={}`. The subject is entirely in the prompt, so an injection inside it finds no
-repository to read or change. The environment is the broker's sandboxed agent environment
-narrowed to that reviewer's provider: Claude gets only Anthropic credentials, Codex only
-OpenAI/Codex credentials, and every other credential is stripped.
+started in an empty temporary directory, never the project, with no way to read the disk:
+`claude -p --tools "" --strict-mcp-config` (no tools, no MCP servers), or `codex exec --sandbox
+read-only --ignore-user-config --ignore-rules -c mcp_servers={}` with the shell, exec, image,
+apps, plugins, browser, computer-use, and hooks features disabled. The subject is entirely in
+the prompt, so an injection inside it finds no tool to read or change anything with. The
+environment is an allowlist: runtime variables plus that reviewer's own provider credentials
+(Claude gets only Anthropic credentials, Codex only OpenAI/Codex ones); every other credential
+and anything pointing into the project (`BETWEEN_ROOT`, `INIT_CWD`, project entries on `PATH`,
+...) is dropped.
 Secret-like values in the subject are replaced with `[REDACTED]` before it is sent; the subject
 is capped at 256 KiB.
 
