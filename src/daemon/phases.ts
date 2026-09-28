@@ -10,7 +10,7 @@ import { bundleFromDiff, writeBundle } from '../review/store'
 import { BETWEEN_VERSION } from '../core/version'
 import type { DaemonContext } from './context'
 import { ensureReviewerSignal, expectedSignalId, sendReviewerSignal } from './reviewer-signal'
-import { readReview, readVerify } from './records'
+import { readReview, readVerify, sealRecord } from './records'
 
 export async function currentDiff(
   ctx: DaemonContext,
@@ -164,9 +164,10 @@ export async function awaitAck(ctx: DaemonContext): Promise<void> {
 
 export async function awaitReview(ctx: DaemonContext): Promise<void> {
   if (await superseded(ctx)) return // live diff changed -> abandon (P1-3)
-  const record = await readReview(ctx)
+  const loaded = await readReview(ctx)
   const hash = ctx.current().diff.hash
-  if (record && hash && reviewMatchesCurrent(record, hash)) {
+  if (loaded && hash && reviewMatchesCurrent(loaded.record, hash)) {
+    if (!(await sealRecord(ctx, 'review', loaded))) return // changed while sealing: retry
     await ctx.dispatch('review_written')
     return
   }
@@ -180,15 +181,20 @@ export async function awaitReview(ctx: DaemonContext): Promise<void> {
 
 export async function handleReviewWritten(ctx: DaemonContext): Promise<void> {
   if (await superseded(ctx)) return // live diff changed under us -> abandon (P1-3)
-  const record = await readReview(ctx)
-  if (!record) {
+  const loaded = await readReview(ctx)
+  if (!loaded) {
     await maybeReviewTimeout(ctx, 'reviewer did not write a review')
     return
   }
+  const record = loaded.record
   // ignore a review file replaced with one for a different cycle/hash (TOCTOU, I14, HIGH-2)
   if (record.diff_hash !== ctx.current().diff.hash) return
+  // a cycle accepted by an older build has no seal yet: seal it before acting on it
+  if (!(await sealRecord(ctx, 'review', loaded))) return
   if (reviewIsClean(record)) {
-    const verify = await readVerify(ctx)
+    const loadedVerify = await readVerify(ctx)
+    if (loadedVerify && !(await sealRecord(ctx, 'verify', loadedVerify))) return
+    const verify = loadedVerify?.record ?? null
     if (cycleShouldEnd(record, verify)) {
       // commit the hash as reviewed ONLY when the cycle actually completes (I4, HIGH-3)
       const reviewed = ctx.current().diff.hash

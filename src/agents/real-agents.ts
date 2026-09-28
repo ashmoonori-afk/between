@@ -26,7 +26,17 @@ const CONTRACT_PROMPT = [
   'If role is reviewer: also write BETWEEN_ROOT/.between/reviews/cycle-<cycle4>.json =',
   '  {cycle, diff_hash, findings:[{id,severity:"blocking"|"non-blocking",summary,agent:"reviewer",target_hash:diff_hash}], complete:true}',
   '  and BETWEEN_ROOT/.between/verify/cycle-<cycle4>.json = {diff_hash, passed:boolean, summary}.',
+  '  Write each record once. The broker seals accepted records read-only and fails the cycle if they change.',
+  'If role is DEVELOPER: never create, edit, move, or delete anything under .between/reviews or .between/verify.',
 ].join(' ')
+
+/**
+ * Claude Code permission deny rules passed to the DEVELOPER only (CLI rules anchor at the working
+ * directory, which is BETWEEN_ROOT for the developer). They cover Claude's file tools and the Bash
+ * file commands/redirections Claude recognizes; the broker's journal seal is the backstop for
+ * anything else (e.g. a script that opens the file itself).
+ */
+export const DEVELOPER_DENIED_EDITS = ['Edit(/.between/reviews/**)', 'Edit(/.between/verify/**)']
 
 function wrapper(cli: string, exampleCmd: string): string {
   return (
@@ -51,10 +61,13 @@ function wrapper(cli: string, exampleCmd: string): string {
     '// ' +
     exampleCmd +
     '\n' +
+    'const args = ' +
+    spawnArgs(cli) +
+    '\n' +
+    developerDenyArgs(cli) +
     "const r = spawnSync('" +
     cli +
-    "', " +
-    spawnArgs(cli) +
+    "', args" +
     // npm installs agent CLIs on Windows as .cmd shims, which only run through a shell; the
     // arguments are fixed literals and the prompt goes over stdin, so this adds no injection path
     ", { cwd: agentCwd, input: prompt, stdio: ['pipe','inherit','inherit'], shell: process.platform === 'win32' })\n" +
@@ -76,6 +89,13 @@ function spawnArgs(cli: string): string {
     ? "['-p', '--output-format', 'text']"
     : // --ask-for-approval is a top-level codex flag; after `exec` codex rejects it (exit 2)
       "['--ask-for-approval', 'never', 'exec']"
+}
+
+function developerDenyArgs(cli: string): string {
+  // codex exec has no per-path write deny inside its workspace sandbox (docs/AGENT-CONTRACT.md)
+  if (cli !== 'claude') return ''
+  const denied = JSON.stringify(['--disallowedTools', ...DEVELOPER_DENIED_EDITS])
+  return "if (role === 'developer') args.push(..." + denied + ')\n'
 }
 
 export const CLAUDE_AGENT_SOURCE = wrapper(

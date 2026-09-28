@@ -271,7 +271,14 @@ Between is alpha. It is useful now, but it is not pretending to be finished.
   login state, and terminal capabilities.
 - Abort and steer are broker-level controls; downstream agent compliance depends
   on the wrapper and hosted process behavior.
-- `.between/` is a cooperative local protocol, not a sandbox.
+- `.between/` is a cooperative local protocol, not a sandbox. Accepted review and
+  verify records are sealed (read-only plus a sha256 in the hash-chained journal)
+  and re-checked on every read, so later edits are detected and fail closed; OS/tool
+  write denial for the developer is only applied where the host supports it.
+  Rolling back or rewriting the on-disk journal and `state.json` together is NOT
+  detected: that needs an OS trust boundary (a separate OS user for agents, or a
+  keychain-held seal), which Between does not provide yet. See
+  `docs/AGENT-CONTRACT.md`, "Review Record Immutability".
 - Terminal dashboards are compatibility and diagnostic surfaces; the VS Code IDE
   cockpit is the primary app surface over the local protocol.
 

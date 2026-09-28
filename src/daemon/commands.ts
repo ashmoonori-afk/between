@@ -3,10 +3,12 @@ import { isCycleCapReached } from '../core/cycle'
 import { emptyDebounce } from '../core/debounce'
 import { redactSecrets } from '../core/redact'
 import { verifyApproval, approvalExpiry } from '../core/approval'
-import type { ApprovalScope } from '../core/types'
+import type { ApprovalScope, ReviewRecord } from '../core/types'
+import { RecordIntegrityError } from '../review/record-seal'
 import type { Command } from '../adapters/command-bus'
 import { resolveApprovalSecret } from '../adapters/approval-secret'
 import { evaluateCyclePolicy } from '../policy/gate'
+import { collectEvidence } from '../evidence/collect'
 import { usesSimulatedEvidence } from '../core/evidence-trust'
 import type { DaemonContext } from './context'
 import { abortActiveAgents, steerActiveAgents } from './agent-control-actions'
@@ -140,7 +142,17 @@ async function recordFindingAction(
     })
     return
   }
-  const review = await readReview(ctx)
+  let review: ReviewRecord | null
+  try {
+    review = (await readReview(ctx))?.record ?? null
+  } catch (err) {
+    if (!(err instanceof RecordIntegrityError)) throw err
+    // the phase loop fails the cycle closed; the command itself is just refused
+    await ctx.emit('finding_action_rejected', {
+      detail: { action: command.action, finding_id: command.finding_id, reason: 'record_tampered' },
+    })
+    return
+  }
   if (review && review.diff_hash !== cur.diff.hash) {
     await ctx.emit('finding_action_rejected', {
       detail: {
@@ -226,6 +238,18 @@ export async function approve(
   // NOT enforced by the flow, so a policy-failing change could reach a push. Refuse to grant a
   // merge approval while a required gate fails (fail-closed) -> no approval -> the pre-push hook
   // keeps blocking. deploy / promote_rule are distinct downstream gates and are not policy-gated here.
+  if (scope !== 'merge') {
+    // merge re-reads the evidence inside the policy gate below; every other scope must still be
+    // refused when a sealed review/verify record (or the bundle) fails its integrity check
+    try {
+      await collectEvidence(ctx.deps.root, ctx.deps.clock.nowIso(), cur)
+    } catch (e) {
+      await ctx.emit('approval_rejected', {
+        detail: { scope, reason: `evidence error: ${e instanceof Error ? e.message : String(e)}` },
+      })
+      return
+    }
+  }
   if (scope === 'merge') {
     let satisfied = false
     let reason = ''

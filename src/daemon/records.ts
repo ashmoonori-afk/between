@@ -1,26 +1,79 @@
-import { readFile } from 'node:fs/promises'
+import { relative } from 'node:path'
 import { parseReviewRecord, parseVerifyRecord } from '../core/findings'
+import type { ReviewRecord, VerifyRecord } from '../core/types'
 import { betweenPaths, reviewPath, verifyPath } from '../adapters/paths'
+import { resolveApprovalSecret } from '../adapters/approval-secret'
+import {
+  RECORD_SEALED_EVENT,
+  loadRecord,
+  lookupRecordSeal,
+  makeRecordReadOnly,
+  sealMac,
+  type LoadedRecord,
+  type SealedRecordKind,
+} from '../review/record-seal'
 import type { DaemonContext } from './context'
 
-export async function readReview(ctx: DaemonContext) {
-  return readJson(
-    reviewPath(betweenPaths(ctx.deps.root), ctx.current().workflow.cycle),
-    parseReviewRecord,
-  )
+export interface DaemonRecord<T> extends LoadedRecord<T> {
+  /** true once the record's hash is in the journal; its bytes are then verified on every read. */
+  sealed: boolean
 }
 
-export async function readVerify(ctx: DaemonContext) {
-  return readJson(
-    verifyPath(betweenPaths(ctx.deps.root), ctx.current().workflow.cycle),
-    parseVerifyRecord,
-  )
+export function readReview(ctx: DaemonContext): Promise<DaemonRecord<ReviewRecord> | null> {
+  return readRecord(ctx, 'review', parseReviewRecord)
 }
 
-async function readJson<T>(path: string, parse: (raw: unknown) => T): Promise<T | null> {
-  try {
-    return parse(JSON.parse(await readFile(path, 'utf8')))
-  } catch {
-    return null
-  }
+export function readVerify(ctx: DaemonContext): Promise<DaemonRecord<VerifyRecord> | null> {
+  return readRecord(ctx, 'verify', parseVerifyRecord)
+}
+
+/**
+ * Seal an accepted record: make it read-only and append its sha256 to the hash-chained journal.
+ * From then on every read must reproduce these exact bytes or the cycle fails closed. Returns false
+ * when the file changed after it was read (the reviewer may still rewrite it before acceptance):
+ * nothing is sealed and the caller retries on the next tick.
+ */
+export async function sealRecord(
+  ctx: DaemonContext,
+  kind: SealedRecordKind,
+  loaded: DaemonRecord<unknown>,
+): Promise<boolean> {
+  if (loaded.sealed) return true
+  const path = recordPath(ctx, kind)
+  const secret = resolveApprovalSecret(ctx.deps.root)
+  const cycle = ctx.current().workflow.cycle
+  if (!(await makeRecordReadOnly(path, loaded.sha256))) return false
+  await ctx.emit(RECORD_SEALED_EVENT, {
+    diff_hash: ctx.current().diff.hash ?? undefined,
+    detail: {
+      record: kind,
+      sha256: loaded.sha256,
+      path: relative(ctx.deps.root, path).split('\\').join('/'),
+      ...(secret ? { mac: sealMac(secret, kind, cycle, loaded.sha256) } : {}),
+    },
+  })
+  return true
+}
+
+async function readRecord<T>(
+  ctx: DaemonContext,
+  kind: SealedRecordKind,
+  parse: (raw: unknown) => T,
+): Promise<DaemonRecord<T> | null> {
+  const cycle = ctx.current().workflow.cycle
+  const seal = await lookupRecordSeal(
+    ctx.deps.events,
+    ctx.current().journal,
+    kind,
+    cycle,
+    resolveApprovalSecret(ctx.deps.root),
+  )
+  const loaded = await loadRecord(recordPath(ctx, kind), parse, kind, cycle, seal)
+  return loaded ? { ...loaded, sealed: seal !== null } : null
+}
+
+function recordPath(ctx: DaemonContext, kind: SealedRecordKind): string {
+  const p = betweenPaths(ctx.deps.root)
+  const cycle = ctx.current().workflow.cycle
+  return kind === 'review' ? reviewPath(p, cycle) : verifyPath(p, cycle)
 }
