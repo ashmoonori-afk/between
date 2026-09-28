@@ -221,10 +221,12 @@ describe('reviewer isolation from the project (canonical paths)', () => {
 
   it('ignores relative PATH entries (they would resolve against a different cwd)', async () => {
     const root = await dir('between-iso-root-')
-    const outside = await dir('between-iso-outside-')
-    await fakeCli(join(outside, 'bin'), 'codex')
-    const PATH = relative(process.cwd(), join(outside, 'bin'))
-    expect(await resolveReviewerBinary('codex', { PATH }, root)).toBeNull()
+    // tsc exists in this repo's node_modules/.bin on every platform (tsc.cmd on Windows);
+    // path.relative() cannot be used to build the entry: across drives it returns an absolute path
+    const relativeEntry = join('node_modules', '.bin')
+    expect(await resolveReviewerBinary('tsc', { PATH: relativeEntry }, root)).toBeNull()
+    const absoluteEntry = join(process.cwd(), relativeEntry)
+    expect(await resolveReviewerBinary('tsc', { PATH: absoluteEntry }, root)).not.toBeNull()
   })
 
   it('resolves an npm cmd-shim to its JS entry instead of running the batch file', async () => {
