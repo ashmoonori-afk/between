@@ -166,9 +166,13 @@ export function replayStateFromEvents(
     throw new ReplayError('invalid_replay_state', 'journal cannot replay: invalid replay_state')
   }
 
+  const tailHead = chainHeadOf(payloads)
+  // keep the pinned head (and its MAC) when the verified chain ends exactly at it
+  const samePin =
+    tailHead && pinnedHead?.hash === tailHead.hash && pinnedHead.count === tailHead.count
   return {
     ...structuredClone(parsed.data),
-    journal: chainHeadOf(payloads),
+    journal: samePin ? { ...pinnedHead } : tailHead,
   }
 }
 

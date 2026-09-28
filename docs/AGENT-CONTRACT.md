@@ -47,9 +47,9 @@ rewrite it. When the broker accepts it, the record is sealed:
 4. With `BETWEEN_APPROVAL_SECRET` set, the journal pin in `state.json` also carries an HMAC. Readers
    refuse a journal whose pin is not authenticated, so rebuilding the journal without its seals (or
    with forged ones) and re-pinning it is rejected, and a daemon refuses to start on a pin with a
-   wrong MAC. A pin with no MAC at all (written by an older build, or before the secret was set) is
-   adopted once when a daemon with the secret starts, and the adoption is journaled as
-   `journal_pin_adopted`. Every Between process (daemon, CLI, pre-push hook, dashboards) must then
+   wrong MAC. A pin with no MAC at all (written by an older build, before the secret was set, or
+   when `state.json` was lost and rebuilt from the journal) is adopted once when a daemon with the
+   secret starts, and the adoption is journaled as `journal_pin_adopted`. Every Between process (daemon, CLI, pre-push hook, dashboards) must then
    see the same secret.
 
 A refused record fails the cycle closed: the daemon moves to `error` with code `record_tampered`
