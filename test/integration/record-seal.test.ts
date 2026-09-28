@@ -30,7 +30,6 @@ import {
   resolveAgentCommandPaths,
   withDeveloperDenyRules,
 } from '../../src/adapters/agent-execution'
-import { pinIsAuthentic } from '../../src/core/journal'
 import { FAKE_AGENT_SOURCE } from '../../src/agents/fake-agent'
 import { realpathSync } from 'node:fs'
 import { LEGACY_SHA256, upgradePristineAgentScripts } from '../../src/agents/generated-scripts'
@@ -321,9 +320,8 @@ describe('review/verify record sealing', () => {
       const repo = new StateRepository(dir)
       await repo.write({ ...(await repo.read())!, journal: log.head() })
       await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
-        /journal pin is not authenticated/,
+        /journal seal is not authenticated/,
       )
-      // even inside an authentic pinned range, a seal without a valid MAC is refused
       const events = await log.read()
       expect(() => findRecordSeal(events, 'review', 1, resolveApprovalSecret(dir))).toThrow(
         /journal seal is not authenticated/,
@@ -417,14 +415,14 @@ describe('review/verify record sealing', () => {
   )
 
   it(
-    'rejects a journal rebuilt without its seals and re-pinned (no valid pin MAC)',
+    'the running daemon still catches a journal rebuilt without its seals and re-pinned on disk',
     async () => {
       const { d, hash } = await reachReviewing()
       const p = betweenPaths(dir)
       await writeFile(reviewPath(p, 1), reviewJson(hash))
       await d.tick()
-      const oldPin = (await new StateRepository(dir).read())!.journal!
-      expect(pinIsAuthentic(oldPin, resolveApprovalSecret(dir))).toBe(true)
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('review_written')
 
       // rebuild a perfectly chained journal that simply never sealed anything
       const kept = (await new EventsLog(dir).read()).filter((e) => e.event !== RECORD_SEALED_EVENT)
@@ -446,44 +444,39 @@ describe('review/verify record sealing', () => {
       const st = (await repo.read())!
 
       await repo.write({ ...st, journal: rebuilt.head() })
-      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
-        /journal pin is not authenticated/,
-      )
 
-      // reusing the old MAC does not help either: a restarted daemon refuses the journal
-      await repo.write({ ...st, journal: { ...rebuilt.head()!, mac: oldPin.mac } })
-      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
-        /journal pin is not authenticated/,
-      )
-      const restarted = await buildDaemon(dir, new FakeClock(Date.UTC(2026, 8, 28, 1, 0, 0)))
-      await expect(restarted.load()).rejects.toThrow(/journal pin in state.json failed/)
+      // the daemon's pin lives in memory, so the rewritten journal no longer matches it
+      await d.tick()
+      expect(d.state.workflow.phase).toBe('error')
+      expect(d.state.workflow.error?.code).toBe('record_tampered')
+      expect(d.state.workflow.error?.message).toMatch(/journal integrity check failed/)
     },
     TIMEOUT_MS,
   )
 })
 
 describe('bundled fake agent', () => {
-  it('replaces a schema-invalid record instead of keeping it', async () => {
-    const hash = 'e'.repeat(64)
-    const between = join(dir, '.between')
-    await mkdir(join(between, 'reviews'), { recursive: true })
-    await writeFile(
-      join(between, 'state.json'),
-      JSON.stringify({ workflow: { cycle: 1 }, diff: { hash } }),
-    )
-    await writeFile(
-      join(between, 'reviews', 'cycle-0001.json'),
-      JSON.stringify({ diff_hash: hash }),
-    )
-    const script = join(dir, 'fake-agent.mjs')
-    await writeFile(script, FAKE_AGENT_SOURCE)
-    await execa('node', [script, 'reviewer'], {
-      input: '',
-      env: { BETWEEN_ROOT: dir },
+  const hash = 'e'.repeat(64)
+  const malformed: Array<[string, unknown]> = [
+    ['missing fields', { diff_hash: hash }],
+    ['a malformed finding', { cycle: 1, diff_hash: hash, findings: [{}], complete: true }],
+  ]
+  for (const [name, stale] of malformed) {
+    it(`replaces a schema-invalid record (${name}) instead of keeping it`, async () => {
+      const between = join(dir, '.between')
+      await mkdir(join(between, 'reviews'), { recursive: true })
+      await writeFile(
+        join(between, 'state.json'),
+        JSON.stringify({ workflow: { cycle: 1 }, diff: { hash } }),
+      )
+      await writeFile(join(between, 'reviews', 'cycle-0001.json'), JSON.stringify(stale))
+      const script = join(dir, 'fake-agent.mjs')
+      await writeFile(script, FAKE_AGENT_SOURCE)
+      await execa('node', [script, 'reviewer'], { input: '', env: { BETWEEN_ROOT: dir } })
+      const review = JSON.parse(await readFile(join(between, 'reviews', 'cycle-0001.json'), 'utf8'))
+      expect(review).toEqual({ cycle: 1, diff_hash: hash, findings: [], complete: true })
     })
-    const review = JSON.parse(await readFile(join(between, 'reviews', 'cycle-0001.json'), 'utf8'))
-    expect(review).toMatchObject({ cycle: 1, diff_hash: hash, findings: [], complete: true })
-  })
+  }
 })
 
 describe('developer write access to review records', () => {

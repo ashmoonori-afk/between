@@ -25,10 +25,11 @@ function out(line) { process.stdout.write('[' + role + '] ' + line + '\\n') }
 
 // review/verify records are written once: keep a valid record for this hash (the broker may have
 // sealed it read-only), otherwise replace a missing/malformed one atomically
-function isReview(r, hash) { return r.diff_hash === hash && typeof r.cycle === 'number' && Array.isArray(r.findings) && typeof r.complete === 'boolean' }
-function isVerify(r, hash) { return r.diff_hash === hash && typeof r.passed === 'boolean' }
-function writeRecord(file, text, hash, valid) {
-  try { const r = JSON.parse(readFileSync(file, 'utf8')); if (r && valid(r, hash)) return false } catch {}
+function isFinding(f) { return !!f && typeof f.id === 'string' && f.id.length > 0 && (f.severity === 'blocking' || f.severity === 'non-blocking') && typeof f.summary === 'string' && typeof f.target_hash === 'string' && f.target_hash.length > 0 }
+function isReview(r, hash, cycle) { return r.diff_hash === hash && r.cycle === cycle && Array.isArray(r.findings) && r.findings.every(isFinding) && r.complete === true }
+function isVerify(r, hash) { return r.diff_hash === hash && typeof r.passed === 'boolean' && (r.summary === undefined || typeof r.summary === 'string') }
+function writeRecord(file, text, hash, cycle, valid) {
+  try { const r = JSON.parse(readFileSync(file, 'utf8')); if (r && valid(r, hash, cycle)) return false } catch {}
   const tmp = file + '.' + process.pid + '.tmp'
   writeFileSync(tmp, text)
   renameSync(tmp, file)
@@ -49,8 +50,8 @@ function act() {
     const name = 'cycle-' + pad(cycle)
     mkdirSync(join(dir, 'reviews'), { recursive: true })
     mkdirSync(join(dir, 'verify'), { recursive: true })
-    const wroteReview = writeRecord(join(dir, 'reviews', name + '.json'), JSON.stringify({ cycle: cycle, diff_hash: hash, findings: [], complete: true }, null, 2), hash, isReview)
-    const wroteVerify = writeRecord(join(dir, 'verify', name + '.json'), JSON.stringify({ diff_hash: hash, passed: true, summary: 'fake-agent: no blocking findings' }, null, 2), hash, isVerify)
+    const wroteReview = writeRecord(join(dir, 'reviews', name + '.json'), JSON.stringify({ cycle: cycle, diff_hash: hash, findings: [], complete: true }, null, 2), hash, cycle, isReview)
+    const wroteVerify = writeRecord(join(dir, 'verify', name + '.json'), JSON.stringify({ diff_hash: hash, passed: true, summary: 'fake-agent: no blocking findings' }, null, 2), hash, cycle, isVerify)
     out(wroteReview || wroteVerify ? 'wrote clean review + passing verify for ' + name : 'records for ' + name + ' already written')
   }
 }

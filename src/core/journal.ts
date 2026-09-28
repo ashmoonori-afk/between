@@ -1,4 +1,4 @@
-import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import { createHash } from 'node:crypto'
 
 /**
  * B5: tamper-evident hash chain for the append-only event journal. Each entry carries `prev_hash`
@@ -62,33 +62,6 @@ export function verifyChain(entries: ReadonlyArray<JournalPayload>): ChainVerifi
 export interface ChainHead {
   hash: string
   count: number
-  /**
-   * HMAC of (hash, count) under the env-only approval secret, when one is provisioned. Without it
-   * anyone who can write `.between/` can rewrite the journal AND re-pin it consistently.
-   */
-  mac?: string
-}
-
-function pinMac(secret: string, head: Pick<ChainHead, 'hash' | 'count'>): string {
-  return createHmac('sha256', secret)
-    .update(['BETWEEN_JOURNAL_PIN_V1', head.hash, String(head.count)].join('\0'), 'utf8')
-    .digest('hex')
-}
-
-/** Attach the pin MAC (no-op without a secret or a head). */
-export function authenticatePin(head: ChainHead | null, secret: string): ChainHead | null {
-  if (!head || !secret) return head
-  return { hash: head.hash, count: head.count, mac: pinMac(secret, head) }
-}
-
-/** True when `pin` carries a valid MAC for `secret`. */
-export function pinIsAuthentic(pin: ChainHead | null | undefined, secret: string): boolean {
-  if (!pin || typeof pin.mac !== 'string') return false
-  const expected = pinMac(secret, pin)
-  return (
-    pin.mac.length === expected.length &&
-    timingSafeEqual(Buffer.from(pin.mac, 'utf8'), Buffer.from(expected, 'utf8'))
-  )
 }
 
 export interface HeadVerification {

@@ -2,13 +2,7 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { chmod, lstat, open } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import type { BetweenEvent } from '../core/types'
-import {
-  pinIsAuthentic,
-  verifyChain,
-  verifyChainHead,
-  type ChainHead,
-  type JournalPayload,
-} from '../core/journal'
+import { verifyChain, verifyChainHead, type ChainHead, type JournalPayload } from '../core/journal'
 import type { EventsLog } from '../adapters/events-log'
 
 /**
@@ -21,9 +15,10 @@ import type { EventsLog } from '../adapters/events-log'
  *
  * Seal trust: the journal snapshot must pass its hash chain + pinned head, and only entries inside
  * the pinned range count (a well-chained suffix appended after the pin is ignored). When the
- * approval secret is provisioned (env-only, stripped from agent environments), the pin itself and
- * each seal carry an HMAC agents cannot compute, so rewriting the journal and re-pinning it (to
- * drop or forge a seal) is rejected too.
+ * approval secret is provisioned (env-only, stripped from agent environments), each seal carries
+ * an HMAC agents cannot compute. The authority is the running daemon, whose pin lives in memory;
+ * a process that can rewrite or roll back BOTH the journal and state.json on disk is outside this
+ * model and needs an OS trust boundary (docs/AGENT-CONTRACT.md).
  */
 export const RECORD_SEALED_EVENT = 'record_sealed'
 
@@ -127,10 +122,6 @@ export async function lookupRecordSeal(
   secret = '',
 ): Promise<string | null> {
   const events = await log.read()
-  if (secret && events.length > 0 && !pinIsAuthentic(pin, secret)) {
-    // without an authenticated pin, the whole journal (seals included) could have been rewritten
-    throw new RecordIntegrityError(kind, cycle, 'journal pin is not authenticated')
-  }
   const payloads = events as unknown as JournalPayload[]
   const chain = verifyChain(payloads)
   const head = verifyChainHead(payloads, pin)
