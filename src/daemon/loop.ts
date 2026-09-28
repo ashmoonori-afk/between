@@ -6,6 +6,8 @@ import { setPhase, touch, pinJournal } from '../core/state'
 import { reconcile } from './reconcile'
 import { GitError } from '../adapters/git'
 import { RecordIntegrityError } from '../review/record-seal'
+import { resolveApprovalSecret } from '../adapters/approval-secret'
+import { authenticatePin, pinIsAuthentic, type ChainHead } from '../core/journal'
 import type { DaemonContext, DaemonDeps, EmitExtra } from './context'
 import { watchForNewDiff, runDebounce, awaitAck, awaitReview, handleReviewWritten } from './phases'
 import { drainCommands } from './commands'
@@ -51,8 +53,22 @@ export class Daemon {
   async load(): Promise<boolean> {
     const loaded = await readRecoverableState(this.deps.state, this.deps.events)
     if (!loaded) return false
-    this.current = reconcile(loaded, this.deps.clock)
+    // With the approval secret, the on-disk pin must be authentic before this daemon signs any new
+    // pin on top of the journal. A pin without a MAC (older build, or secret newly provisioned) is
+    // adopted once and the adoption is journaled; a pin with a WRONG MAC fails closed.
+    const secret = resolveApprovalSecret(this.deps.root)
+    const diskPin = (await this.deps.state.readPrimary())?.journal ?? null
+    if (secret && diskPin?.mac !== undefined && !pinIsAuthentic(diskPin, secret)) {
+      throw new Error('journal pin in state.json failed authentication (journal was rewritten)')
+    }
+    const adopted = Boolean(secret && loaded.journal && diskPin?.mac === undefined)
+    this.current = reconcile(
+      { ...loaded, journal: authenticatePin(loaded.journal, secret) },
+      this.deps.clock,
+    )
     await this.deps.state.write(this.current)
+    if (adopted)
+      await this.emit('journal_pin_adopted', { detail: { count: loaded.journal!.count } })
     return true
   }
 
@@ -83,7 +99,7 @@ export class Daemon {
    */
   private async emit(event: string, extra?: EmitExtra): Promise<void> {
     await this.appendEvent(this.current, event, extra)
-    await this.persist(pinJournal(this.current, this.deps.events.head()))
+    await this.persist(pinJournal(this.current, this.signedHead()))
   }
 
   /** Apply an FSM event; persist + log only when it actually changes phase. */
@@ -104,8 +120,12 @@ export class Daemon {
     // journal pin in a SINGLE state write (review): no double-write, and a crash can't leave the
     // phase advanced on disk without its journal entry.
     await this.appendEvent(next, event, extra)
-    await this.persist(pinJournal(next, this.deps.events.head()))
+    await this.persist(pinJournal(next, this.signedHead()))
     return true
+  }
+
+  private signedHead(): ChainHead | null {
+    return authenticatePin(this.deps.events.head(), resolveApprovalSecret(this.deps.root))
   }
 
   async reportAgentDied(role: AgentRole, exitCode: number | null): Promise<void> {

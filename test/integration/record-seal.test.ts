@@ -25,9 +25,14 @@ import { APPROVAL_SECRET_ENV, resolveApprovalSecret } from '../../src/adapters/a
 import { signApproval, approvalExpiry } from '../../src/core/approval'
 import { StateRepository } from '../../src/adapters/state-repository'
 import {
+  absoluteRecordDenyRules,
+  claudeAbsolutePath,
   resolveAgentCommandPaths,
   withDeveloperDenyRules,
 } from '../../src/adapters/agent-execution'
+import { pinIsAuthentic } from '../../src/core/journal'
+import { FAKE_AGENT_SOURCE } from '../../src/agents/fake-agent'
+import { realpathSync } from 'node:fs'
 import { LEGACY_SHA256, upgradePristineAgentScripts } from '../../src/agents/generated-scripts'
 import { toApiError } from '../../src/api/errors'
 import { collectEvidence } from '../../src/evidence/collect'
@@ -35,14 +40,11 @@ import { betweenPaths, reviewPath, verifyPath } from '../../src/adapters/paths'
 import {
   RECORD_SEALED_EVENT,
   RecordIntegrityError,
+  findRecordSeal,
   readRecordBytes,
   sealMac,
 } from '../../src/review/record-seal'
-import {
-  CLAUDE_AGENT_SOURCE,
-  CODEX_AGENT_SOURCE,
-  DEVELOPER_DENIED_EDITS,
-} from '../../src/agents/real-agents'
+import { CLAUDE_AGENT_SOURCE, CODEX_AGENT_SOURCE } from '../../src/agents/real-agents'
 
 type Daemon = Awaited<ReturnType<typeof buildDaemon>>
 
@@ -319,6 +321,11 @@ describe('review/verify record sealing', () => {
       const repo = new StateRepository(dir)
       await repo.write({ ...(await repo.read())!, journal: log.head() })
       await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
+        /journal pin is not authenticated/,
+      )
+      // even inside an authentic pinned range, a seal without a valid MAC is refused
+      const events = await log.read()
+      expect(() => findRecordSeal(events, 'review', 1, resolveApprovalSecret(dir))).toThrow(
         /journal seal is not authenticated/,
       )
     },
@@ -408,6 +415,75 @@ describe('review/verify record sealing', () => {
     },
     TIMEOUT_MS,
   )
+
+  it(
+    'rejects a journal rebuilt without its seals and re-pinned (no valid pin MAC)',
+    async () => {
+      const { d, hash } = await reachReviewing()
+      const p = betweenPaths(dir)
+      await writeFile(reviewPath(p, 1), reviewJson(hash))
+      await d.tick()
+      const oldPin = (await new StateRepository(dir).read())!.journal!
+      expect(pinIsAuthentic(oldPin, resolveApprovalSecret(dir))).toBe(true)
+
+      // rebuild a perfectly chained journal that simply never sealed anything
+      const kept = (await new EventsLog(dir).read()).filter((e) => e.event !== RECORD_SEALED_EVENT)
+      await rm(p.events)
+      const rebuilt = new EventsLog(dir)
+      for (const e of kept) {
+        const {
+          v: _v,
+          seq: _s,
+          prev_hash: _p,
+          hash: _h,
+          ...rest
+        } = e as unknown as Record<string, unknown>
+        await rebuilt.append(rest as never)
+      }
+      expect((await rebuilt.verify()).valid).toBe(true)
+      await overwrite(reviewPath(p, 1), reviewJson(hash, 'forged after unsealing'))
+      const repo = new StateRepository(dir)
+      const st = (await repo.read())!
+
+      await repo.write({ ...st, journal: rebuilt.head() })
+      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
+        /journal pin is not authenticated/,
+      )
+
+      // reusing the old MAC does not help either: a restarted daemon refuses the journal
+      await repo.write({ ...st, journal: { ...rebuilt.head()!, mac: oldPin.mac } })
+      await expect(collectEvidence(dir, '2026-09-28T00:00:00.000Z')).rejects.toThrow(
+        /journal pin is not authenticated/,
+      )
+      const restarted = await buildDaemon(dir, new FakeClock(Date.UTC(2026, 8, 28, 1, 0, 0)))
+      await expect(restarted.load()).rejects.toThrow(/journal pin in state.json failed/)
+    },
+    TIMEOUT_MS,
+  )
+})
+
+describe('bundled fake agent', () => {
+  it('replaces a schema-invalid record instead of keeping it', async () => {
+    const hash = 'e'.repeat(64)
+    const between = join(dir, '.between')
+    await mkdir(join(between, 'reviews'), { recursive: true })
+    await writeFile(
+      join(between, 'state.json'),
+      JSON.stringify({ workflow: { cycle: 1 }, diff: { hash } }),
+    )
+    await writeFile(
+      join(between, 'reviews', 'cycle-0001.json'),
+      JSON.stringify({ diff_hash: hash }),
+    )
+    const script = join(dir, 'fake-agent.mjs')
+    await writeFile(script, FAKE_AGENT_SOURCE)
+    await execa('node', [script, 'reviewer'], {
+      input: '',
+      env: { BETWEEN_ROOT: dir },
+    })
+    const review = JSON.parse(await readFile(join(between, 'reviews', 'cycle-0001.json'), 'utf8'))
+    expect(review).toMatchObject({ cycle: 1, diff_hash: hash, findings: [], complete: true })
+  })
 })
 
 describe('developer write access to review records', () => {
@@ -418,24 +494,43 @@ describe('developer write access to review records', () => {
     expect(CODEX_AGENT_SOURCE).not.toContain('--disallowedTools')
   })
 
-  it('adds the deny rules when the developer command is the Claude CLI itself', () => {
-    const deny = ['--disallowedTools', ...DEVELOPER_DENIED_EDITS]
-    expect(resolveAgentCommandPaths(dir, { file: 'claude', args: [] }, 'developer').args).toEqual(
-      deny,
-    )
-    expect(withDeveloperDenyRules('C:\\npm\\claude.cmd', ['--model', 'x'])).toEqual([
+  it('adds absolute deny rules when the developer command is the Claude CLI itself', () => {
+    const rules = absoluteRecordDenyRules(dir)
+    const abs = claudeAbsolutePath(realpathSync.native(dir))
+    expect(rules).toContain(`Edit(/${abs}/.between/reviews/**)`)
+    expect(rules).toContain(`Edit(/${abs}/.between/verify/**)`)
+    expect(rules.every((r) => r.startsWith('Edit(//'))).toBe(true)
+    expect(resolveAgentCommandPaths(dir, { file: 'claude', args: [] }, 'developer').args).toEqual([
+      '--disallowedTools',
+      ...rules,
+    ])
+    expect(withDeveloperDenyRules('C:\\npm\\claude.cmd', ['--model', 'x'], dir)).toEqual([
       '--model',
       'x',
-      ...deny,
+      '--disallowedTools',
+      ...rules,
     ])
     expect(resolveAgentCommandPaths(dir, { file: 'claude', args: [] }, 'reviewer').args).toEqual([])
-    expect(withDeveloperDenyRules('node', ['.between/agents/claude-agent.mjs'])).toEqual([
+    expect(withDeveloperDenyRules('node', ['.between/agents/claude-agent.mjs'], dir)).toEqual([
       '.between/agents/claude-agent.mjs',
     ])
-    expect(withDeveloperDenyRules('claude', ['--disallowedTools', 'Bash'])).toEqual([
-      '--disallowedTools',
+  })
+
+  it('merges the rules into an existing --disallowedTools list', () => {
+    const rules = absoluteRecordDenyRules(dir)
+    expect(
+      withDeveloperDenyRules('claude', ['--disallowedTools', 'Bash', '--model', 'x'], dir),
+    ).toEqual(['--disallowedTools', ...rules, 'Bash', '--model', 'x'])
+    expect(withDeveloperDenyRules('claude', ['--disallowed-tools', 'Bash'], dir)).toEqual([
+      '--disallowed-tools',
+      ...rules,
       'Bash',
     ])
+  })
+
+  it('writes Windows paths in the POSIX form Claude matches and escapes glob characters', () => {
+    expect(claudeAbsolutePath('C:\\Users\\me\\repo')).toBe('/c/Users/me/repo')
+    expect(claudeAbsolutePath('/home/me/re[po]*')).toBe('/home/me/re\\[po\\]\\*')
   })
 
   it('upgrades a pristine older generated wrapper and keeps a customized one', async () => {

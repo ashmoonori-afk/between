@@ -2,7 +2,13 @@ import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
 import { chmod, lstat, open } from 'node:fs/promises'
 import { constants } from 'node:fs'
 import type { BetweenEvent } from '../core/types'
-import { verifyChain, verifyChainHead, type ChainHead, type JournalPayload } from '../core/journal'
+import {
+  pinIsAuthentic,
+  verifyChain,
+  verifyChainHead,
+  type ChainHead,
+  type JournalPayload,
+} from '../core/journal'
 import type { EventsLog } from '../adapters/events-log'
 
 /**
@@ -13,10 +19,11 @@ import type { EventsLog } from '../adapters/events-log'
  * readBundle) when the bytes changed, the file was deleted, or it was swapped for a symlink / other
  * non-regular file.
  *
- * Seal trust: the journal snapshot must pass its hash chain + pinned head, only entries inside the
- * pinned range count (a well-chained suffix appended after the pin is ignored), and when the
- * approval secret is provisioned each seal carries an HMAC that agents cannot compute (the secret
- * is env-only and stripped from agent environments).
+ * Seal trust: the journal snapshot must pass its hash chain + pinned head, and only entries inside
+ * the pinned range count (a well-chained suffix appended after the pin is ignored). When the
+ * approval secret is provisioned (env-only, stripped from agent environments), the pin itself and
+ * each seal carry an HMAC agents cannot compute, so rewriting the journal and re-pinning it (to
+ * drop or forge a seal) is rejected too.
  */
 export const RECORD_SEALED_EVENT = 'record_sealed'
 
@@ -120,6 +127,10 @@ export async function lookupRecordSeal(
   secret = '',
 ): Promise<string | null> {
   const events = await log.read()
+  if (secret && events.length > 0 && !pinIsAuthentic(pin, secret)) {
+    // without an authenticated pin, the whole journal (seals included) could have been rewritten
+    throw new RecordIntegrityError(kind, cycle, 'journal pin is not authenticated')
+  }
   const payloads = events as unknown as JournalPayload[]
   const chain = verifyChain(payloads)
   const head = verifyChainHead(payloads, pin)

@@ -43,9 +43,14 @@ rewrite it. When the broker accepts it, the record is sealed:
    changed, the file was deleted, or it was replaced by a symlink, FIFO, or other non-regular file.
    The seal is only trusted from one journal snapshot whose chain and pinned head verify, and only
    entries inside the pinned range count: dropping the `record_sealed` entry does not unseal a
-   record, and a well-chained forged seal appended after the pin is ignored. With the secret set, a
-   seal without a valid `mac` is rejected, so moving the pin in `state.json` over a forged seal does
-   not work either.
+   record, and a well-chained forged seal appended after the pin is ignored.
+4. With `BETWEEN_APPROVAL_SECRET` set, the journal pin in `state.json` also carries an HMAC. Readers
+   refuse a journal whose pin is not authenticated, so rebuilding the journal without its seals (or
+   with forged ones) and re-pinning it is rejected, and a daemon refuses to start on a pin with a
+   wrong MAC. A pin with no MAC at all (written by an older build, or before the secret was set) is
+   adopted once when a daemon with the secret starts, and the adoption is journaled as
+   `journal_pin_adopted`. Every Between process (daemon, CLI, pre-push hook, dashboards) must then
+   see the same secret.
 
 A refused record fails the cycle closed: the daemon moves to `error` with code `record_tampered`
 (not recoverable), and evidence/approval paths throw instead of consuming the record.
@@ -54,9 +59,9 @@ A refused record fails the cycle closed: the daemon moves to `error` with code `
 
 | Layer | Enforced | Scope |
 | --- | --- | --- |
-| Journal seal + hash check on every read | Yes, all platforms | Detects any change after acceptance and fails closed. It cannot stop a developer who rewrites a record *before* the broker accepts it. Without `BETWEEN_APPROVAL_SECRET`, a developer who rewrites the journal and the `state.json` pin consistently can also forge a seal; set the secret to close that. |
+| Journal seal + hash check on every read | Yes, all platforms | Detects any change after acceptance and fails closed. It cannot stop a developer who rewrites a record *before* the broker accepts it. Without `BETWEEN_APPROVAL_SECRET`, a developer who rewrites the journal and the `state.json` pin consistently can also drop or forge a seal; set the secret to close that. Even with the secret, rolling BOTH files back to an earlier authentic snapshot is not detected (it also rolls back any later approval), and a MAC-less pin is adopted once on daemon start. |
 | Read-only file mode | Best effort | macOS/Linux: blocks a plain write by a non-root process, but the owner can `chmod` it back or rename over it. Windows: read-only attribute; same caveat. |
-| Claude Code developer (generated wrapper, or `developer_command` that runs the `claude` CLI directly) | Yes, for Claude's tools | Between adds `--disallowedTools "Edit(/.between/reviews/**)" "Edit(/.between/verify/**)"` unless the command already sets `--disallowedTools`. This covers Claude's file tools and the Bash file commands/redirections Claude recognizes; it does not cover a script that opens the file itself. |
+| Claude Code developer (generated wrapper, or `developer_command` that runs the `claude` CLI directly) | Yes, for Claude's tools | The wrapper passes `--disallowedTools "Edit(/.between/reviews/**)" "Edit(/.between/verify/**)"` (it always runs the developer from the repository root). A direct `claude` command gets absolute `Edit(//<root>/.between/...)` rules, merged into an existing `--disallowedTools` list if the command has one. This covers Claude's file tools and the Bash file commands/redirections Claude recognizes; it does not cover a script that opens the file itself. |
 | Codex developer (`codex-agent.mjs developer`) | No | `codex exec` has no per-path write deny inside its workspace sandbox, so `.between/` stays writable. The journal seal is the only guard. |
 | Any other developer command | No | Between cannot know the host's permission model. The journal seal is the only guard. |
 
