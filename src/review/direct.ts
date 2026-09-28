@@ -342,7 +342,8 @@ export function reviewerInvocation(
   if (preset === 'claude') {
     return {
       file: 'claude',
-      // --safe-mode: no hooks, plugins, skills, MCP servers, CLAUDE.md, or custom commands, while
+      // --safe-mode: no user/project hooks (managed-policy hooks still apply), plugins, skills,
+      // MCP servers, CLAUDE.md, or custom commands, while
       // sign-in still works (unlike --bare); --tools "": no built-in tools either
       args: [
         '-p',

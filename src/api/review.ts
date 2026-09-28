@@ -2,7 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { constants as fsConstants, existsSync, realpathSync } from 'node:fs'
 import { access, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
 import { fetchSubjectText } from '../review/fetch-subject'
 import { GitAdapter, GitError } from '../adapters/git'
@@ -305,9 +305,12 @@ export function reviewerEnv(
     if (own.has(upper)) {
       env[name] = value
     } else if (upper === 'PATH') {
+      // secondary lookups (a `#!/usr/bin/env node` shebang) search this PATH from the reviewer's
+      // temp cwd: keep only absolute entries outside the project, in canonical form
       env[name] = value
         .split(delimiter)
-        .filter((entry) => entry && !pointsInto(roots, entry))
+        .filter((entry) => entry && isAbsolute(entry) && !pointsInto(roots, entry))
+        .map(canonicalOrSelf)
         .join(delimiter)
     } else if (REVIEWER_RUNTIME_ENV.has(upper) && !pointsInto(roots, value)) {
       env[name] = value
@@ -387,40 +390,35 @@ export async function resolveReviewerBinary(
   return null
 }
 
-function envValue(env: NodeJS.ProcessEnv, name: string): string | undefined {
-  const key = Object.keys(env).find((k) => k.toUpperCase() === name)
-  return key === undefined ? undefined : env[key]
+function canonicalOrSelf(path: string): string {
+  try {
+    return realpathSync.native(path)
+  } catch {
+    return path
+  }
 }
 
 /**
- * Windows runs `.cmd`/`.bat` shims through `ComSpec` taken from Between's own environment, not
- * the filtered child env. Refuse unless it is the system `cmd.exe`, outside the project, so a
- * substituted interpreter can never receive the prompt or the provider credential.
+ * A `.cmd`/`.bat` reviewer shim would run through `cmd.exe` chosen by the ambient `ComSpec`,
+ * which Between cannot verify. Batch files are never run: an npm `cmd-shim` is resolved to the
+ * JavaScript entry point it wraps, which is then run with Between's own Node binary. Returns the
+ * canonical entry path, or null when the shim is not a recognizable npm shim (fail closed).
  */
-export function assertTrustedBatchShell(
-  projectRoot: string,
-  env: NodeJS.ProcessEnv = process.env,
-): void {
-  const systemRoot = envValue(env, 'SYSTEMROOT') ?? envValue(env, 'WINDIR') ?? 'C:\\Windows'
-  const trusted = join(systemRoot, 'System32', 'cmd.exe')
-  const comspec = envValue(env, 'COMSPEC') ?? trusted
-  const canon = (p: string): string => {
-    try {
-      return realpathSync.native(p)
-    } catch {
-      return resolve(p)
-    }
+export async function npmShimEntry(shimPath: string): Promise<string | null> {
+  let text: string
+  try {
+    text = await readFile(shimPath, 'utf8')
+  } catch {
+    return null
   }
-  const roots = projectRoots(projectRoot)
-  const trustedCanon = canon(trusted)
-  if (
-    canon(comspec).toLowerCase() !== trustedCanon.toLowerCase() ||
-    roots.some((root) => isInside(root, trustedCanon))
-  ) {
-    throw new BetweenApiError(
-      'reviewer_failed',
-      `ComSpec (${comspec}) is not the system cmd.exe (${trusted}); refusing to run the reviewer's batch shim`,
-    )
+  const m = /"%~?dp0%\\?([^"%]+?\.[cm]?js)"/i.exec(text)
+  if (!m) return null
+  const entry = join(dirname(shimPath), ...m[1]!.split(/[\\/]/).filter(Boolean))
+  try {
+    const canonical = await realpath(entry)
+    return (await stat(canonical)).isFile() ? canonical : null
+  } catch {
+    return null
   }
 }
 
@@ -490,10 +488,21 @@ async function spawnReviewer(
       `${preset} CLI not found on PATH outside the project; install it and sign in, or pick another reviewer`,
     )
   }
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(binary)) {
-    assertTrustedBatchShell(opts.projectRoot)
+  let command = binary
+  let commandArgs = args
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    const entry = await npmShimEntry(binary)
+    const roots = projectRoots(opts.projectRoot)
+    if (!entry || roots.some((root) => isInside(root, entry))) {
+      throw new BetweenApiError(
+        'reviewer_failed',
+        `${preset} resolves to a batch file (${binary}) that is not an npm shim outside the project; install the native ${preset} CLI or pick another reviewer`,
+      )
+    }
+    command = process.execPath
+    commandArgs = [entry, ...args]
   }
-  const r = await execa(binary, args, {
+  const r = await execa(command, commandArgs, {
     cwd: workdir,
     input: prompt,
     env,

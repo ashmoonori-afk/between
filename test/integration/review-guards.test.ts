@@ -8,8 +8,8 @@ import { chmod, mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/
 import { execa } from 'execa'
 import { fetchSubjectText, isPublicAddress } from '../../src/review/fetch-subject'
 import {
-  assertTrustedBatchShell,
   makeReviewerWorkdir,
+  npmShimEntry,
   resolveReviewerBinary,
   reviewerEnv,
 } from '../../src/api/review'
@@ -141,7 +141,7 @@ describe('reviewerEnv', () => {
 
   it('drops anything that points into the project and non-runtime variables', () => {
     const env = reviewerEnv('codex', root, {
-      PATH: [join(root, 'node_modules', '.bin'), '/usr/bin'].join(delimiter),
+      PATH: [join(root, 'node_modules', '.bin'), 'relative/bin', '.', '/usr/bin'].join(delimiter),
       HOME: '/home/u',
       BETWEEN_ROOT: root,
       INIT_CWD: root,
@@ -227,26 +227,70 @@ describe('reviewer isolation from the project (canonical paths)', () => {
     expect(await resolveReviewerBinary('codex', { PATH }, root)).toBeNull()
   })
 
-  it('only trusts the system cmd.exe outside the project for Windows batch shims', async () => {
-    const root = await dir('between-iso-root-')
-    const system = await dir('between-iso-windows-')
-    await mkdir(join(system, 'System32'))
-    await writeFile(join(system, 'System32', 'cmd.exe'), '')
-    await writeFile(join(root, 'cmd.exe'), '')
-    const trusted = join(system, 'System32', 'cmd.exe')
-    expect(() =>
-      assertTrustedBatchShell(root, { SystemRoot: system, ComSpec: trusted }),
-    ).not.toThrow()
-    expect(() => assertTrustedBatchShell(root, { SystemRoot: system })).not.toThrow()
-    expect(() =>
-      assertTrustedBatchShell(root, { SystemRoot: system, ComSpec: join(root, 'cmd.exe') }),
-    ).toThrow(/not the system cmd.exe/)
-    await mkdir(join(root, 'System32'))
-    await writeFile(join(root, 'System32', 'cmd.exe'), '')
-    expect(() => assertTrustedBatchShell(root, { SystemRoot: root })).toThrow(
-      /not the system cmd.exe/,
+  it('resolves an npm cmd-shim to its JS entry instead of running the batch file', async () => {
+    const npmBin = await dir('between-iso-npm-')
+    const entry = join(npmBin, 'node_modules', '@openai', 'codex', 'bin', 'codex.js')
+    await mkdir(join(npmBin, 'node_modules', '@openai', 'codex', 'bin'), { recursive: true })
+    await writeFile(entry, '')
+    // the shape npm's cmd-shim writes for a global bin
+    await writeFile(
+      join(npmBin, 'codex.cmd'),
+      [
+        '@ECHO off',
+        'GOTO start',
+        ':find_dp0',
+        'SET dp0=%~dp0',
+        'EXIT /b',
+        ':start',
+        'SETLOCAL',
+        'CALL :find_dp0',
+        'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\@openai\\codex\\bin\\codex.js" %*',
+        '',
+      ].join('\r\n'),
     )
+    expect(await npmShimEntry(join(npmBin, 'codex.cmd'))).toBe(realpathSync.native(entry))
+    await writeFile(join(npmBin, 'other.cmd'), '@echo off\r\n"C:\\tools\\evil.exe" %*\r\n')
+    expect(await npmShimEntry(join(npmBin, 'other.cmd'))).toBeNull()
   })
+
+  it.skipIf(process.platform === 'win32')(
+    'a shebang interpreter is never looked up in the project (end to end)',
+    async () => {
+      const root = await dir('between-iso-root-')
+      const outside = await dir('between-iso-outside-')
+      const workParent = await dir('between-iso-work-')
+      const work = join(workParent, 'w')
+      await mkdir(work)
+      const interp = (dirPath: string, tag: string) =>
+        mkdir(dirPath, { recursive: true }).then(async () => {
+          const file = join(dirPath, 'between-fake-node')
+          await writeFile(file, `#!/bin/sh\necho ${tag}\n`)
+          await chmod(file, 0o755)
+        })
+      await interp(join(root, 'bin'), 'project-interpreter')
+      await interp(join(outside, 'interp'), 'trusted-interpreter')
+      await mkdir(join(outside, 'bin'))
+      const cli = join(outside, 'bin', 'codex')
+      await writeFile(cli, '#!/usr/bin/env between-fake-node\n')
+      await chmod(cli, 0o755)
+      // a relative PATH entry that, from the reviewer's temp cwd, points back into the project
+      const sneaky = relative(work, join(root, 'bin'))
+      const env = reviewerEnv('codex', root, {
+        PATH: [
+          sneaky,
+          join(root, 'bin'),
+          join(outside, 'interp'),
+          join(outside, 'bin'),
+          '/usr/bin',
+          '/bin',
+        ].join(delimiter),
+      })
+      const binary = await resolveReviewerBinary('codex', env, root)
+      expect(binary).toBe(realpathSync.native(cli))
+      const ran = await execa(binary!, [], { cwd: work, env, extendEnv: false })
+      expect(ran.stdout.trim()).toBe('trusted-interpreter')
+    },
+  )
 
   it('fails closed when the temp base is inside the project, and cleans up', async () => {
     const root = await dir('between-iso-root-')
