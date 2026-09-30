@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { execa } from 'execa'
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, realpath, writeFile, rm } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -154,7 +154,8 @@ describe('oneshot embed (real fake-agent drives the loop)', () => {
 
       const reviewerCwd = await readFile(join(dir, '.between', 'reviewer-cwd.txt'), 'utf8')
       const expectedWorktree = join(dir, '.between', 'worktrees', REVIEWER_WORKTREE)
-      expect(reviewerCwd).toBe(expectedWorktree)
+      // process.cwd() reports the resolved path (macOS: /var -> /private/var), so compare real paths
+      expect(await realpath(reviewerCwd)).toBe(await realpath(expectedWorktree))
       const env = JSON.parse(await readFile(join(dir, '.between', 'reviewer-env.json'), 'utf8'))
       expect(env).toMatchObject({
         BETWEEN_SANDBOX_ROLE: 'reviewer',
