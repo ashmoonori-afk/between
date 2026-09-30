@@ -35,7 +35,7 @@ Do not use `npx between-mcp`. npx would look up a separate npm package called `b
 | `--root <path>` | `$BETWEEN_ROOT`, then the working directory | Project the server is pinned to. Resolved to a real path at startup. |
 | `--allow-control` | off | Register the broker control tools (pause, resume, interrupt, review now, stop, goal, steer). |
 | `--allow-exec` | off | Register tools that run repo-configured commands (`between_verify`, `between_policy`). |
-| `--allow-review` | off | Register `between_review`, which runs the claude/codex CLI and sends the subject to that provider. |
+| `--allow-review` | off | Register `between_review` and `between_models`. Review runs the claude/codex CLI and sends the subject to that provider; model listing runs only the read-only Codex listing command. |
 
 The project must already be initialized with `between init` (a human step; see below).
 
@@ -52,7 +52,8 @@ pinned to one project.
 | `between_journal` | `{ verify?: boolean = true }` | read | Entry count and hash-chain integrity |
 | `between_replay` | `{ verify?: boolean = true }` | read | State reconstructed from the journal |
 | `between_evidence` | `{}` | read | Evidence manifest for the current cycle |
-| `between_review` | `{ kind, text? \| file? \| url?, base?, context?, focus?, criteria?, reviewer?, from? }` | review | One-shot review of a diff, answer, or plan by the paired agent (see below) |
+| `between_models` | `{ refresh?: boolean = false }` | review | Available direct-review models and their CLI/cache/static source |
+| `between_review` | `{ kind, text? \| file? \| url?, base?, context?, focus?, criteria?, reviewer?, model?, from? }` | review | One-shot review of a diff, answer, or plan by the paired agent (see below) |
 | `between_policy` | `{}` | exec | Policy evaluation (may run a dependency audit) |
 | `between_verify` | `{}` | exec | Runs the configured verification checks |
 | `between_pause` / `between_resume` / `between_interrupt` / `between_review_now` / `between_stop` | `{}` | control | `{ command_id, status: "queued" }` |
@@ -80,10 +81,19 @@ a fetched URL body) to the reviewer agent's model provider, so it is not annotat
 | `context` | For `answer`, the user's question verbatim; otherwise background |
 | `focus`, `criteria` | What to look at hardest; up to 10 extra criteria |
 | `reviewer` | Force `claude` or `codex`; refused when it equals the caller (no self-review) |
+| `model` | Reviewer model. Omit it to preserve the reviewer CLI's own default. Use `between_models` to list choices. |
 | `from` | The calling agent. The other one reviews. When the MCP client is recognized (Claude Code -> `codex` reviews; Codex -> `claude` reviews), the client identity is authoritative and a conflicting `from` is refused; `from` is only taken as given from unrecognized clients. |
 
 Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_command` of
 `.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
+When `model` is omitted, Between passes no model flag, so the reviewer CLI keeps its current
+default. `between_models` runs only `codex debug models` with a five-second timeout and bounded
+output, caches valid visible models for 24 hours in the platform user cache, and falls back to a
+small verified static list if the CLI is missing, old, timed out, failed, or returned malformed
+data. `refresh: true` bypasses that cache. Claude Code has no reliable machine-readable listing,
+so its list is the documented aliases from
+[Claude Code model configuration](https://docs.anthropic.com/en/docs/claude-code/model-config);
+safe full model names are also accepted and delegated to Claude Code.
 The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
 started in an empty temporary directory, never the project, with no way to read the disk:
 `claude -p --safe-mode --tools "" --strict-mcp-config --disable-slash-commands` (no built-in
@@ -114,6 +124,7 @@ Result `data`:
 {
   "kind": "plan",
   "reviewer": "codex",
+  "model": "gpt-5.5",
   "routed_by": "paired_with_caller",
   "verdict": "REQUEST_CHANGES",
   "verdict_adjusted": false,
@@ -126,6 +137,9 @@ Result `data`:
   "subject": { "source": "file", "label": "docs/plan.md", "bytes": 1234, "sha256": "...", "redactions": 0 }
 }
 ```
+
+When a selected model came from a non-authoritative static list, `data.model_note` explains that
+the reviewer CLI makes the final availability decision.
 
 Severities are `critical`, `major`, `minor`, `nit`. Any `critical` or `major` finding forces
 `REQUEST_CHANGES` (`verdict_adjusted: true` when the reviewer said APPROVE anyway). A reviewer

@@ -8,6 +8,7 @@ import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
 import { BETWEEN_VERSION } from '../core/version'
 import { buildAgentSandboxEnv } from '../adapters/agent-env'
 import { BetweenApiError, toApiError } from '../api/errors'
+import { listModels } from '../api/models'
 import { getStatus, summarizeEvents } from '../api/status'
 import { runDoctor } from '../api/setup'
 import { inspectJournal, replayState, getEvidence } from '../api/records'
@@ -23,7 +24,7 @@ export interface BetweenMcpOptions {
   allowControl?: boolean
   /** human-granted at startup: register tools that run repo-configured commands. */
   allowExec?: boolean
-  /** human-granted at startup: register between_review (sends subjects to another model). */
+  /** human-granted at startup: register between_review and between_models. */
   allowReview?: boolean
   /** test seam: replaces the reviewer CLI spawn and URL fetch of `between_review` */
   reviewDeps?: ReviewDeps
@@ -74,6 +75,10 @@ const ReviewArgs = z
     focus: z.string().optional().describe('what the reviewer should look at hardest'),
     criteria: z.array(z.string()).max(10).optional().describe('extra review criteria'),
     reviewer: z.enum(HOST_AGENTS).optional().describe('force a reviewer agent'),
+    model: z
+      .string()
+      .optional()
+      .describe('reviewer model; omit for the reviewer CLI default. See between_models.'),
     from: z
       .enum(HOST_AGENTS)
       .optional()
@@ -230,6 +235,17 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
     'Evidence manifest for the current cycle: bundle, review, verification, approval.',
     NoArgs,
     () => getEvidence(root),
+  )
+
+  tool(
+    'between_models',
+    'review',
+    'List available direct-review models. Codex is discovered from the installed CLI when possible.',
+    z.object({ refresh: z.boolean().default(false) }).strict(),
+    ({ refresh }) =>
+      opts.reviewDeps?.listModels
+        ? opts.reviewDeps.listModels({ refresh })
+        : listModels({ refresh }),
   )
 
   tool(

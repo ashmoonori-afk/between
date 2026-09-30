@@ -18,6 +18,15 @@ export {
   type PushVerdict,
 } from './checks'
 export {
+  listModels,
+  modelCacheDir,
+  type ListModelsOptions,
+  type ModelDiscoveryDeps,
+  type ModelSource,
+  type ModelsResult,
+  type ReviewerModels,
+} from './models'
+export {
   requestReview,
   MAX_REVIEW_SUBJECT_BYTES,
   type ReviewRequest,
