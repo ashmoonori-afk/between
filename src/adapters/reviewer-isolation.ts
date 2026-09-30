@@ -144,6 +144,9 @@ export function planIsolationSetup(opts: {
   facts: HostFacts
 }): IsolationPlan {
   assertUserName(opts.user)
+  if (!Number.isInteger(opts.invokingUid) || opts.invokingUid < 0) {
+    throw new Error(`invalid invoking uid ${opts.invokingUid}`)
+  }
   if (opts.platform !== 'linux' || !opts.configPath) {
     return { supported: false, reason: UNSUPPORTED }
   }
@@ -209,8 +212,17 @@ export function planIsolationSetup(opts: {
       },
       {
         kind: 'run',
-        description: 'create the root-owned opt-in directory',
-        command: [SUDO, '/bin/mkdir', '-p', ISOLATION_CONFIG_DIR],
+        description:
+          "create the root-owned opt-in directories (world-readable, whatever root's umask)",
+        command: [
+          SUDO,
+          '/usr/bin/install',
+          '-d',
+          '-m',
+          '0755',
+          '/etc/between',
+          ISOLATION_CONFIG_DIR,
+        ],
       },
       {
         kind: 'write-config',
@@ -419,9 +431,21 @@ export interface IsolationStatus {
   config?: IsolationConfig
 }
 
-// W when the reviewer could replace the entry: writable, and not a sticky dir it does not own
+/**
+ * One protected path for the probe. `parentOfMissing`: the path is the nearest existing parent of a
+ * protected entry that does not exist yet, so the reviewer must not be able to create entries in
+ * it at all (even a sticky dir like /tmp would let it create the missing entry first).
+ */
+export interface ProtectedPath {
+  path: string
+  parentOfMissing: boolean
+}
+
+// W when the reviewer could change or replace the entry: it owns it (an owner can chmod u+w), or
+// it is writable and either not sticky or the parent of a missing entry. Args are "e:" or "c:"
+// (parentOfMissing) followed by the path.
 const PROBE =
-  'for p; do if test -w "$p" && { ! test -k "$p" || test -O "$p"; }; then echo W; else echo R; fi; done'
+  'for a; do p=${a#?:}; if test -O "$p" || { test -w "$p" && { test "${a%%:*}" = c || ! test -k "$p"; }; }; then echo W; else echo R; fi; done'
 
 /**
  * Whether isolation is really in force: the opt-in exists, the reviewer user still has the
@@ -431,7 +455,7 @@ const PROBE =
 export async function checkIsolation(opts: {
   platform: NodeJS.Platform
   configPath: string | null
-  protectedPaths: string[]
+  protectedPaths: ProtectedPath[]
   runner: IsolationRunner
 }): Promise<IsolationStatus> {
   let config: IsolationConfig | null
@@ -460,7 +484,17 @@ export async function checkIsolation(opts: {
   }
   const r = await opts.runner(
     SUDO,
-    ['-n', '-u', user, '--', SH, '-c', PROBE, 'sh', ...opts.protectedPaths],
+    [
+      '-n',
+      '-u',
+      user,
+      '--',
+      SH,
+      '-c',
+      PROBE,
+      'sh',
+      ...opts.protectedPaths.map((p) => `${p.parentOfMissing ? 'c' : 'e'}:${p.path}`),
+    ],
     { capture: true },
   )
   const answers = r.stdout.trim() === '' ? [] : r.stdout.trim().split('\n')
@@ -475,7 +509,7 @@ export async function checkIsolation(opts: {
       config,
     }
   }
-  const writable = opts.protectedPaths.filter((_, i) => answers[i] === 'W')
+  const writable = opts.protectedPaths.filter((_, i) => answers[i] === 'W').map((p) => p.path)
   if (writable.length > 0) {
     return { state: 'broken', detail: `${user} can write ${writable.join(', ')}`, config }
   }
@@ -489,7 +523,7 @@ export async function checkIsolation(opts: {
 export async function requireActiveIsolation(opts: {
   platform: NodeJS.Platform
   configPath: string | null
-  protectedPaths: string[]
+  protectedPaths: ProtectedPath[]
   runner: IsolationRunner
 }): Promise<IsolationConfig | null> {
   const status = await checkIsolation(opts)
@@ -564,21 +598,27 @@ export function isolatedReviewerLaunch(
  * journal and `state.json`, and every existing directory above them (a writable ancestor would let
  * it swap the whole subtree). A path that does not exist yet is covered by its existing ancestors.
  */
-export function protectedPathsFor(root: string, anchorStore: string = anchorDir()): string[] {
+export function protectedPathsFor(
+  root: string,
+  anchorStore: string = anchorDir(),
+): ProtectedPath[] {
   const p = betweenPaths(root)
   const targets = [join(anchorStore, `${anchorId(root)}.json`), p.events, p.state]
-  const out = new Set<string>()
+  const out = new Map<string, boolean>()
   for (const target of targets) {
     let current = resolve(target)
-    if (existsSync(current)) out.add(current)
+    let missingBelow = !existsSync(current)
+    if (!missingBelow) out.set(current, out.get(current) ?? false)
     for (;;) {
       const up = dirname(current)
       if (up === current) break
       current = up
-      if (existsSync(current)) out.add(current)
+      if (!existsSync(current)) continue
+      out.set(current, (out.get(current) ?? false) || missingBelow)
+      missingBelow = false
     }
   }
-  return [...out]
+  return [...out].map(([path, parentOfMissing]) => ({ path, parentOfMissing }))
 }
 
 export const probeRunner: IsolationRunner = async (file, args, opts = {}) => {

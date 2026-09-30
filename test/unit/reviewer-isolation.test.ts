@@ -87,7 +87,7 @@ describe('planIsolationSetup', () => {
       '/usr/bin/sudo /bin/chmod 0440 /etc/sudoers.d/between-reviewer.pending',
       '/usr/bin/sudo /usr/sbin/visudo -cf /etc/sudoers.d/between-reviewer.pending',
       '/usr/bin/sudo /bin/mv /etc/sudoers.d/between-reviewer.pending /etc/sudoers.d/between-reviewer',
-      '/usr/bin/sudo /bin/mkdir -p /etc/between/reviewer-isolation',
+      '/usr/bin/sudo /usr/bin/install -d -m 0755 /etc/between /etc/between/reviewer-isolation',
       'write-config',
     ])
     const rule = plan.steps[2]!
@@ -129,6 +129,18 @@ describe('planIsolationSetup', () => {
         facts: { userExists: false, configExists: false },
       }),
     ).toThrow(/user name/)
+  })
+
+  it.each([-1, 1.5, Number.NaN])('rejects the invoking uid %s', (invokingUid) => {
+    expect(() =>
+      planIsolationSetup({
+        platform: 'linux',
+        user: 'between-reviewer',
+        invokingUid,
+        configPath,
+        facts: { userExists: false, configExists: false },
+      }),
+    ).toThrow(/invoking uid/)
   })
 
   it.each(['darwin', 'win32'] as const)(
@@ -198,7 +210,7 @@ describe('runIsolationPlan (confirmation)', () => {
       '/usr/bin/sudo /bin/chmod',
       '/usr/bin/sudo /usr/sbin/visudo',
       '/usr/bin/sudo /bin/mv',
-      '/usr/bin/sudo /bin/mkdir',
+      '/usr/bin/sudo /usr/bin/install',
       '/usr/bin/id -u',
       '/usr/bin/sudo /usr/bin/tee',
       '/usr/bin/sudo /bin/chmod',
@@ -290,7 +302,10 @@ describe('planIsolationRemoval', () => {
 })
 
 describe('checkIsolation (doctor)', () => {
-  const paths = ['/home/alice/.local/state/between/anchors', '/home/alice']
+  const paths = [
+    { path: '/home/alice/.local/state/between/anchors', parentOfMissing: false },
+    { path: '/tmp', parentOfMissing: true },
+  ]
   const writeConfig = (value: unknown = CONFIG) => writeFile(configPath, JSON.stringify(value))
   const probe = (answer: Partial<IsolationRunResult>): Handler => {
     const id = idAnswers('999')
@@ -313,7 +328,7 @@ describe('checkIsolation (doctor)', () => {
     const fake = fakeRunner(probe({ stdout: 'R\nR\n' }))
     expect((await check(fake.runner)).state).toBe('active')
     expect(fake.lines().at(-1)).toMatch(
-      /^\/usr\/bin\/sudo -n -u between-reviewer -- \/bin\/sh -c .* sh \/home\/alice\/.local\/state\/between\/anchors \/home\/alice$/,
+      /^\/usr\/bin\/sudo -n -u between-reviewer -- \/bin\/sh -c .* sh e:\/home\/alice\/.local\/state\/between\/anchors c:\/tmp$/,
     )
   })
 
@@ -321,7 +336,7 @@ describe('checkIsolation (doctor)', () => {
     await writeConfig()
     const status = await check(fakeRunner(probe({ stdout: 'R\nW\n' })).runner)
     expect(status.state).toBe('broken')
-    expect(status.detail).toContain('/home/alice')
+    expect(status.detail).toContain('/tmp')
   })
 
   it.each([
@@ -409,10 +424,12 @@ describe('isolatedReviewerLaunch', () => {
 describe('protectedPathsFor', () => {
   it('covers the nearest existing ancestors of the anchor file and journal, up to the root', () => {
     const paths = protectedPathsFor(dir, join(dir, 'state', 'between', 'anchors'))
-    expect(paths).toContain(dir)
-    expect(paths).toContain(dirname(dir))
-    expect(paths).toContain(parse(dir).root)
-    expect(paths.every((p) => existsSync(p))).toBe(true)
+    const byPath = new Map(paths.map((p) => [p.path, p.parentOfMissing]))
+    // the anchor store and .between/ are missing: the project dir is their nearest existing parent
+    expect(byPath.get(dir)).toBe(true)
+    expect(byPath.get(dirname(dir))).toBe(false)
+    expect(byPath.has(parse(dir).root)).toBe(true)
+    expect(paths.every((p) => existsSync(p.path))).toBe(true)
   })
 })
 

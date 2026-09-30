@@ -123,7 +123,8 @@ Every command it runs as root is an absolute path (`/usr/bin/sudo /usr/sbin/user
    NOPASSWD:SETENV: ALL`. Setup refuses if that file already exists. The rule is first written as
    `between-reviewer.pending`, which sudo ignores because of the dot, and only moves into place after
    `visudo -cf` accepts it.
-3. The opt-in `/etc/between/reviewer-isolation/<your uid>.json`: root-owned, mode 0644, recording
+3. The opt-in `/etc/between/reviewer-isolation/<your uid>.json`: root-owned, mode 0644 (its
+   directories are created with `install -d -m 0755` whatever root's umask), recording
    the reviewer user and the uid `useradd` assigned. It is not read from any environment variable,
    so a process running as you cannot switch isolation off without root.
 
@@ -141,7 +142,9 @@ Before **every** isolated review, Between re-runs the full status check, then ru
 is a fresh `/tmp` directory owned by the reviewer user. Only the reviewer's own provider key,
 proxy/CA variables, and locale variables pass. Its `HOME`, `PATH`, and config directories
 (`CODEX_HOME`, `XDG_*`, ...) are its own. A reviewer that times out is killed, along with anything
-still running as the reviewer user. If isolation is configured but not in force, the review fails
+still running as the reviewer user. That kill covers every process of the reviewer user, so a
+timeout also ends any other isolated review running at the same time on this machine. If isolation
+is configured but not in force, the review fails
 with `reviewer_failed`; it never falls back to running as you.
 
 `between isolation status` reports **active** only when all of the following hold:
@@ -153,8 +156,11 @@ with `reviewer_failed`; it never falls back to running as you.
 
 The protected paths are this project's anchor file, `events.jsonl`, and `state.json`, plus every
 existing directory above each of them, up to `/`. A writable parent would let the reviewer swap the
-whole subtree. A sticky directory such as `/tmp` counts as safe unless the reviewer owns it. Any
-missing or unexpected probe answer is reported as **broken**, never as active.
+whole subtree. A path counts as writable when the reviewer owns it (an owner can `chmod` it back),
+or when it is writable and either not sticky or the nearest existing parent of a protected entry
+that does not exist yet (the reviewer could create that entry first). A sticky directory such as
+`/tmp` above existing entries counts as safe. Any missing or unexpected probe answer is reported as
+**broken**, never as active.
 
 If your account already has broad passwordless sudo (common on WSL and CI images), the dedicated
 rule is redundant: the reviewer still runs as `between-reviewer`, but any process running as you
