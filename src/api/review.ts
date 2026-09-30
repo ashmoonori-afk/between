@@ -12,6 +12,18 @@ import {
   validateModelName,
 } from '../review/models'
 import { GitAdapter, GitError } from '../adapters/git'
+import {
+  isolatedReviewerLaunch,
+  isolationConfigPath,
+  killReviewerProcesses,
+  makeIsolatedWorkdir,
+  probeRunner,
+  protectedPathsFor,
+  removeIsolatedWorkdir,
+  requireActiveIsolation,
+  type IsolationConfig,
+  type IsolationRunner,
+} from '../adapters/reviewer-isolation'
 import { betweenPaths } from '../adapters/paths'
 import { redactSecrets } from '../core/redact'
 import { isDeniedUntrackedPath } from '../core/untracked-policy'
@@ -532,6 +544,8 @@ async function runReviewerCli(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   if (preset === 'fake') return fakeReviewerOutput(prompt)
+  const isolation = await loadReviewerIsolation(opts.projectRoot)
+  if (isolation) return runIsolatedReviewer(isolation, preset, prompt, opts)
   const { created, workdir } = await makeReviewerWorkdir(opts.projectRoot)
   try {
     return await spawnReviewer(preset, prompt, workdir, opts)
@@ -568,18 +582,104 @@ async function spawnReviewer(
     command = process.execPath
     commandArgs = [entry, ...args]
   }
+  return execReviewer(preset, command, commandArgs, workdir, env, prompt, opts.timeoutMs)
+}
+
+/**
+ * Opt-in OS-user isolation (`between isolation setup`), fully re-checked before every review. A
+ * config that exists but is not in force fails the review closed instead of silently running the
+ * reviewer as the current user.
+ */
+export async function loadReviewerIsolation(
+  projectRoot: string,
+  deps: {
+    platform?: NodeJS.Platform
+    configPath?: string | null
+    anchorStore?: string
+    runner?: IsolationRunner
+  } = {},
+): Promise<IsolationConfig | null> {
+  const platform = deps.platform ?? process.platform
+  try {
+    return await requireActiveIsolation({
+      platform,
+      configPath:
+        deps.configPath === undefined ? isolationConfigPath({ platform }) : deps.configPath,
+      protectedPaths: protectedPathsFor(projectRoot, deps.anchorStore),
+      runner: deps.runner ?? probeRunner,
+    })
+  } catch (e) {
+    throw new BetweenApiError('reviewer_failed', `reviewer isolation: ${(e as Error).message}`)
+  }
+}
+
+/**
+ * Run the reviewer CLI as the isolation user, in a temp dir that user owns. The CLI is resolved by
+ * sudo (its secure_path, or /usr/bin:/bin), not by the caller's PATH.
+ */
+async function runIsolatedReviewer(
+  config: IsolationConfig,
+  preset: 'claude' | 'codex',
+  prompt: string,
+  opts: ReviewerRunOptions,
+): Promise<string> {
+  let workdir: string
+  try {
+    workdir = await makeIsolatedWorkdir(config)
+  } catch (e) {
+    throw new BetweenApiError('reviewer_failed', `reviewer isolation: ${(e as Error).message}`)
+  }
+  try {
+    const { file, args } = reviewerInvocation(preset, workdir, opts.model)
+    const launch = isolatedReviewerLaunch(
+      config,
+      file,
+      args,
+      workdir,
+      reviewerEnv(preset, opts.projectRoot),
+      PROVIDER_AUTH_BY_PRESET[preset],
+    )
+    return await execReviewer(
+      preset,
+      launch.file,
+      launch.args,
+      '/',
+      launch.env,
+      prompt,
+      opts.timeoutMs,
+    )
+  } catch (e) {
+    // the timeout kills sudo; the reviewer-uid child it started must not outlive the review
+    if (e instanceof BetweenApiError && /timed out after/.test(e.message)) {
+      await killReviewerProcesses(config)
+    }
+    throw e
+  } finally {
+    await removeIsolatedWorkdir(config, workdir)
+  }
+}
+
+async function execReviewer(
+  preset: 'claude' | 'codex',
+  command: string,
+  commandArgs: string[],
+  cwd: string,
+  env: Record<string, string>,
+  prompt: string,
+  timeoutMs: number,
+): Promise<string> {
   const r = await execa(command, commandArgs, {
-    cwd: workdir,
+    cwd,
     input: prompt,
     env,
     extendEnv: false,
-    timeout: opts.timeoutMs,
+    timeout: timeoutMs,
     reject: false,
   })
   if (r.timedOut) {
     throw new BetweenApiError(
       'reviewer_failed',
-      `${preset} reviewer timed out after ${Math.round(opts.timeoutMs / 1000)}s`,
+      `${preset} reviewer timed out after ${Math.round(timeoutMs / 1000)}s`,
     )
   }
   const cause: unknown = r.cause

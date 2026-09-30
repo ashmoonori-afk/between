@@ -99,9 +99,93 @@ What this does and does not stop:
   `between journal --verify` still prints VERIFIED for the chain but warns that the rollback check
   did not run (the API reports `anchor: "unavailable"`).
 
-Follow-ups for a full OS boundary: run agents as a separate OS user that cannot write `.between/`
-or the anchor store; restrict the keychain item's access list to a signed Between helper; sign
-anchors with a key only the broker's OS user holds.
+### Reviewer isolation (opt-in, Linux)
+
+By default every agent runs as your OS user, with the limits described above. On Linux (including
+WSL) you can opt in to running the **direct reviewer** (`between review`, MCP `between_review`) as a
+separate OS user:
+
+```sh
+between isolation setup     # prints every command and file, asks before changing anything
+between isolation status    # off | active | broken | unsupported (also a line in `between doctor`)
+between isolation remove    # prints what it will delete, asks, then undoes setup
+```
+
+Setup never runs silently. It prints the exact commands and file contents, then waits for `y`.
+Without a terminal it changes nothing unless you pass `--yes`, and even then the plan is printed.
+Every command it runs as root is an absolute path (`/usr/bin/sudo /usr/sbin/useradd ...`), so a fake
+`sudo` on a workspace-controlled `PATH` (npx, npm scripts) is never used. Setup creates:
+
+1. A **new** system user `between-reviewer` (`useradd --system`, shell `/usr/sbin/nologin`, home
+   `/var/lib/between-reviewer`). `--user` picks another name. Setup refuses `root` and any account
+   that already exists, so it never repurposes a real account.
+2. `/etc/sudoers.d/between-reviewer` with the single rule `#<your uid> ALL=(between-reviewer)
+   NOPASSWD:SETENV: ALL`. Setup refuses if that file already exists. The rule is first written as
+   `between-reviewer.pending`, which sudo ignores because of the dot, and only moves into place after
+   `visudo -cf` accepts it.
+3. The opt-in `/etc/between/reviewer-isolation/<your uid>.json`: root-owned, mode 0644 (its
+   directories are created with `install -d -m 0755` whatever root's umask), recording
+   the reviewer user and the uid `useradd` assigned. It is not read from any environment variable,
+   so a process running as you cannot switch isolation off without root.
+
+`remove` acts only on the recorded user. It first checks that the user still has the recorded uid
+and that the sudoers file is missing or holds exactly the rule setup wrote; if either check fails,
+it changes nothing.
+
+After setup, install the reviewer CLI where that user can run it. sudo looks the CLI up on its
+`secure_path` (Debian/Ubuntu include `/usr/local/bin`), or on `/usr/bin:/bin` when `secure_path` is
+not set. Then sign in as that user with `sudo -u between-reviewer -H codex login` (or `claude`).
+The launch uses `env -C`, so it needs GNU coreutils 8.28 or later (not busybox).
+
+Before **every** isolated review, Between re-runs the full status check, then runs
+`sudo -n -u between-reviewer --preserve-env=<vars> -- /usr/bin/env -C <dir> <cli> ...`. Here `<dir>`
+is a fresh `/tmp` directory owned by the reviewer user. Only the reviewer's own provider key,
+proxy/CA variables, and locale variables pass. Its `HOME`, `PATH`, and config directories
+(`CODEX_HOME`, `XDG_*`, ...) are its own. A reviewer that times out is killed, along with anything
+still running as the reviewer user. That kill covers every process of the reviewer user, so a
+timeout also ends any other isolated review running at the same time on this machine. If isolation
+is configured but not in force, the review fails
+with `reviewer_failed`; it never falls back to running as you.
+
+`between isolation status` reports **active** only when all of the following hold:
+
+- the opt-in exists;
+- the user still has the recorded uid;
+- `sudo -n` can switch to that user;
+- one probe, run as that user, answers read-only for every protected path.
+
+The protected paths are this project's anchor file, `events.jsonl`, and `state.json`, plus every
+existing directory above each of them, up to `/`. A writable parent would let the reviewer swap the
+whole subtree. A path counts as writable when the reviewer owns it (an owner can `chmod` it back),
+or when it is writable and either not sticky or the nearest existing parent of a protected entry
+that does not exist yet (the reviewer could create that entry first). A sticky directory such as
+`/tmp` above existing entries counts as safe. Any missing or unexpected probe answer is reported as
+**broken**, never as active. For example, with `BETWEEN_ANCHOR_DIR=/tmp/anchors`, status stays
+**broken** until that directory exists; create it, or pick a non-sticky location.
+
+If your account already has broad passwordless sudo (common on WSL and CI images), the dedicated
+rule is redundant: the reviewer still runs as `between-reviewer`, but any process running as you
+can already become root.
+
+What each mode does and does not prevent:
+
+| Mode | Prevents | Does not prevent |
+| --- | --- | --- |
+| Default (off) | Workspace-confined writers moving the anchor (see above). | Any unsandboxed process running as you, including a reviewer CLI whose own sandbox fails, rewriting the anchor, the journal, or `state.json`. |
+| Isolation active (Linux) | The direct reviewer, even with its own sandbox off or broken, writing or replacing your anchor file, the journal, `state.json`, or any directory above them. It runs as a different uid, and the probe checks this before every review. It also cannot read your non-world-readable files. The opt-in cannot be switched off without root. | The **developer** agent and any other process running as you. The NOPASSWD rule lets them act as `between-reviewer`: read its credentials, and edit its config or global instructions (`~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` in `/var/lib/between-reviewer`) to steer its verdicts. They can also rewrite your anchor directly and run `between journal --reset-anchor`, and, if you have sudo without a password, do anything as root. The broker-loop reviewer (`agent_mode` file/pty/oneshot through `reviewer_command`) still runs as you. Root. |
+| macOS / Windows | Nothing yet. `between isolation setup` refuses with "not implemented", and `status` reports `unsupported` (checked in CI). An opt-in file at the Linux path (`/etc/between/...`) on macOS makes direct reviews fail closed. | Everything listed for the default mode. |
+
+Follow-ups, not implemented and not claimed:
+
+- **Broker-loop reviewer on Linux.** Run `reviewer_command` as the isolation user. This needs ACLs
+  that let that user read the reviewer worktree and write only `.between/reviews` and signals.
+- **macOS.** A dedicated standard user created with `dscl` (or `sysadminctl`) and launched with
+  `sudo -u`, or a `sandbox-exec` profile that denies writes to the anchor store and `.between/`. The
+  keychain anchor would also need its access list restricted to a signed Between helper.
+- **Windows.** A separate local account (`CreateProcessWithLogonW`), or a restricted token or
+  AppContainer, plus an ACL deny-write entry on `%LOCALAPPDATA%\between\anchors` and `.between\`.
+- **Keyed anchors.** Sign anchors with a key that only the broker's OS user holds, so a same-user
+  process cannot forge an anchor.
 
 ### What stops the developer agent from writing review records
 
