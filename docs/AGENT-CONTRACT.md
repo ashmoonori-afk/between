@@ -59,18 +59,43 @@ The authority is the **running daemon**. It keeps the journal pin in memory, so 
 change to a sealed record, and any rewrite, truncation, or rollback of the on-disk journal, is caught
 on the next read. That is the process that moves the cycle forward and grants approvals.
 
-**Out of scope: rewriting or rolling back the on-disk journal and `state.json` together.** Both live in
-the same developer-writable workspace as the records. A process with write access there can:
+**Rolling back the on-disk journal and `state.json` together.** Both live in the same
+developer-writable workspace as the records. A process with write access there can restore older
+copies of `events.jsonl` and `state.json`, delete them, or rebuild the journal without its
+`record_sealed` entries and re-pin `state.json` to match - and do it while the daemon is stopped, so
+the files agree with each other.
 
-- restore older copies of `events.jsonl` and `state.json`, or delete them,
-- rebuild the journal without its `record_sealed` entries and re-pin `state.json` to match,
-- do either while the daemon is stopped, so that a restart or a fresh reader (`between evidence`,
-  `verify-push`, dashboards) trusts the rewritten files.
+**Journal anchor (first slice of an OS trust boundary).** Every journal append also records the new
+head (`{hash, count}`) in a store outside the workspace:
 
-Every such rewrite also discards the approvals recorded after the rolled-back point, but it is not
-detected. Closing this gap needs a trust anchor the developer agent cannot write: run agents as a
-separate OS user that cannot write `.between/`, or keep seals in an OS-protected store such as the
-macOS keychain. Between does not provide either today.
+| Platform | Store |
+| --- | --- |
+| macOS | login keychain, generic password, service `between-dev.journal-anchor`, account = hash of the project root |
+| Linux | `$XDG_STATE_HOME/between/anchors/<id>.json` (default `~/.local/state/...`), mode 0600 |
+| Windows | `%LOCALAPPDATA%\between\anchors\<id>.json` |
+
+`BETWEEN_JOURNAL_ANCHOR=auto|keychain|file|off` picks the store (`auto`: keychain on macOS, file
+elsewhere); `BETWEEN_ANCHOR_DIR` moves the file store. On broker start (`between start`), `between
+journal --verify`, and `between replay --verify`, a journal that no longer contains the anchored
+entry at its recorded position - rolled back, rebuilt, or deleted - fails closed with
+`integrity_error` instead of being recovered from. A journal that grew past the anchor (a crash
+between the append and the anchor write) is fine. After restoring `.between/` on purpose, a human
+runs `between journal --reset-anchor` (CLI only, not exposed over MCP).
+
+What this does and does not stop:
+
+- It stops a writer that is confined to the workspace: a sandboxed agent (for example Codex
+  `workspace-write`), or a restore/copy of the repository directory. They cannot move the anchor.
+- It does **not** stop a process running unsandboxed as the same OS user: it can run
+  `/usr/bin/security` or write the anchor file, and it can run `between journal --reset-anchor`.
+  The anchor turns a silent file rollback into a deliberate out-of-workspace act, not an
+  impossible one.
+- If the store is unavailable (locked keychain, unwritable directory), Between warns once on
+  stderr and runs without rollback detection rather than refusing to start.
+
+Follow-ups for a full OS boundary: run agents as a separate OS user that cannot write `.between/`
+or the anchor store; restrict the keychain item's access list to a signed Between helper; sign
+anchors with a key only the broker's OS user holds.
 
 ### What stops the developer agent from writing review records
 

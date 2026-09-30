@@ -12,6 +12,9 @@ export async function readRecoverableState(
     state.readBackup(),
     events.read(),
   ])
+  // before any recovery path: a journal rolled back or deleted behind its out-of-workspace anchor
+  // must stop the broker, not be recovered from
+  await events.assertAnchored(entries)
   if (entries.length === 0) return primary ?? backup
   try {
     return replayStateFromEvents(entries, primary?.journal ?? backup?.journal ?? null)

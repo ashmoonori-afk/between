@@ -42,10 +42,22 @@ export async function inspectJournal(
       },
     }
   }
-  return {
-    entries: events.length,
-    integrity: { status: 'tampered', reason: result.head.reason ?? 'head pin mismatch' },
-  }
+  const reason = !result.head.ok
+    ? (result.head.reason ?? 'head pin mismatch')
+    : (result.anchor.reason ?? 'journal anchor mismatch')
+  return { entries: events.length, integrity: { status: 'tampered', reason } }
+}
+
+/**
+ * Human recovery after an intentional restore of `.between/`: anchor the journal as it is now.
+ * Refuses a broken chain. Not exposed over MCP.
+ */
+export async function resetJournalAnchor(
+  root: string,
+): Promise<{ entries: number; anchor: 'keychain' | 'file' | null }> {
+  const log = new EventsLog(root)
+  const head = await log.resetAnchor()
+  return { entries: head?.count ?? 0, anchor: log.anchorKind }
 }
 
 /** Reconstruct state from the append-only journal; `verify` enforces the chain + pinned head. */
@@ -56,6 +68,7 @@ export async function replayState(
   const log = new EventsLog(root)
   const state = await new StateRepository(root).read()
   const events = await log.read()
+  if (opts.verify) await log.assertAnchored(events)
   if (!state && events.length === 0) throw noStateError()
   return replayStateFromEvents(events, opts.verify ? state?.journal : null)
 }
