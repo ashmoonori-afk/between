@@ -3,6 +3,7 @@ import { readFile, mkdir, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { homedir as systemHomedir } from 'node:os'
 import { dirname, posix, win32 } from 'node:path'
 import { execa } from 'execa'
+import { npmShimEntry, resolveReviewerBinary } from '../api/review'
 import { BETWEEN_VERSION } from '../core/version'
 import type { HostAgent } from '../review/direct'
 
@@ -15,7 +16,13 @@ export interface PathOptions {
   readonly homedir?: () => string
 }
 
-export type FileStatus = 'installed' | 'updated' | 'up_to_date' | 'removed' | 'skipped_user_edited'
+export type FileStatus =
+  | 'installed'
+  | 'updated'
+  | 'up_to_date'
+  | 'removed'
+  | 'not_installed'
+  | 'skipped_user_edited'
 
 export interface FileResult {
   readonly path: string
@@ -44,17 +51,24 @@ export type RegistrationStatus =
   | 'unregistered'
   | 'not_registered'
   | 'skipped_missing_cli'
+  | 'skipped_unsupported_batch'
+  | 'failed_scope_mismatch'
   | 'failed'
 
 export interface RegistrationResult {
   readonly status: RegistrationStatus
   readonly command?: CommandSpec
+  readonly hint?: string
 }
 
 export interface RegistrationOptions {
   readonly projectRoot: string
   readonly platform?: NodeJS.Platform
   readonly runner?: CommandRunner
+  readonly env?: NodeJS.ProcessEnv
+  readonly resolveBinary?: typeof resolveReviewerBinary
+  readonly resolveNpmShim?: typeof npmShimEntry
+  readonly nodePath?: string
 }
 
 export function quickReviewPath(host: HostAgent, options: PathOptions = {}): string {
@@ -119,7 +133,7 @@ export async function uninstallQuickReviewCommand(
 ): Promise<FileResult> {
   const path = quickReviewPath(host, options)
   const current = await readOptional(path)
-  if (current === null) return { path, status: 'removed' }
+  if (current === null) return { path, status: 'not_installed' }
   if (!isManagedUnmodified(current)) return { path, status: 'skipped_user_edited' }
   await unlink(path)
   if (host === 'codex') await removeEmptyDirectory(dirname(path))
@@ -133,12 +147,11 @@ export function registrationCommands(
 ): readonly [CommandSpec, CommandSpec] {
   const { projectRoot } = options
   const platform = options.platform ?? process.platform
-  const shell = platform === 'win32'
-  const get = { file: host, args: ['mcp', 'get', 'between'], cwd: projectRoot, shell }
+  const get = { file: host, args: ['mcp', 'get', 'between'], cwd: projectRoot, shell: false }
   if (action === 'uninstall') {
     const removeArgs =
       host === 'claude' ? ['mcp', 'remove', '-s', 'local', 'between'] : ['mcp', 'remove', 'between']
-    return [get, { file: host, args: removeArgs, cwd: projectRoot, shell }]
+    return [get, { file: host, args: removeArgs, cwd: projectRoot, shell: false }]
   }
   const server = [
     ...(platform === 'win32' ? ['cmd', '/c'] : []),
@@ -153,7 +166,7 @@ export function registrationCommands(
     host === 'claude'
       ? ['mcp', 'add', '-s', 'local', 'between', '--', ...server]
       : ['mcp', 'add', 'between', '--', ...server]
-  return [get, { file: host, args: addArgs, cwd: projectRoot, shell }]
+  return [get, { file: host, args: addArgs, cwd: projectRoot, shell: false }]
 }
 
 export async function manageMcpRegistration(
@@ -161,7 +174,33 @@ export async function manageMcpRegistration(
   host: HostAgent,
   options: RegistrationOptions,
 ): Promise<RegistrationResult> {
-  const [getCommand, changeCommand] = registrationCommands(action, host, options)
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(options.env ?? process.env)) {
+    if (value !== undefined) env[key] = value
+  }
+  const binary = await (options.resolveBinary ?? resolveReviewerBinary)(
+    host,
+    env,
+    options.projectRoot,
+  )
+  if (binary === null) return { status: 'skipped_missing_cli' }
+
+  let file = binary
+  let prefix: readonly string[] = []
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    const entry = await (options.resolveNpmShim ?? npmShimEntry)(binary)
+    if (entry === null) return { status: 'skipped_unsupported_batch' }
+    file = options.nodePath ?? process.execPath
+    prefix = [entry]
+  }
+
+  const [rawGetCommand, rawChangeCommand] = registrationCommands(action, host, options)
+  const getCommand = { ...rawGetCommand, file, args: [...prefix, ...rawGetCommand.args] }
+  const changeCommand = {
+    ...rawChangeCommand,
+    file,
+    args: [...prefix, ...rawChangeCommand.args],
+  }
   const runner = options.runner ?? commandRunner
   const get = await runner.execute(getCommand)
   if (get.errorCode === 'ENOENT') return { status: 'skipped_missing_cli' }
@@ -169,7 +208,16 @@ export async function manageMcpRegistration(
   if (action === 'uninstall' && get.exitCode !== 0) return { status: 'not_registered' }
   const result = await runner.execute(changeCommand)
   if (result.errorCode === 'ENOENT') return { status: 'skipped_missing_cli' }
-  if (result.exitCode !== 0) return { status: 'failed', command: changeCommand }
+  if (result.exitCode !== 0) {
+    if (action === 'uninstall' && host === 'claude') {
+      return {
+        status: 'failed_scope_mismatch',
+        command: changeCommand,
+        hint: 'run `claude mcp remove between -s <scope>`',
+      }
+    }
+    return { status: 'failed', command: changeCommand }
+  }
   return {
     status: action === 'install' ? 'registered' : 'unregistered',
     command: changeCommand,
@@ -181,21 +229,12 @@ const commandRunner: CommandRunner = {
     const result = await execa(spec.file, [...spec.args], {
       cwd: spec.cwd,
       reject: false,
-      shell: spec.shell,
+      shell: false,
     })
     const cause: unknown = result.cause
-    const missingFromShell =
-      spec.shell &&
-      /not recognized as an internal or external command|not recognized as the name/i.test(
-        String(result.stderr ?? ''),
-      )
     return {
       exitCode: result.exitCode ?? null,
-      ...(nodeErrorCode(cause) === 'ENOENT'
-        ? { errorCode: 'ENOENT' }
-        : missingFromShell
-          ? { errorCode: 'ENOENT' }
-          : {}),
+      ...(nodeErrorCode(cause) === 'ENOENT' ? { errorCode: 'ENOENT' } : {}),
     }
   },
 }

@@ -106,6 +106,10 @@ function printRegistrationResult(host: HostAgent, result: RegistrationResult): v
   const status =
     result.status === 'skipped_missing_cli'
       ? `skipped: ${host} CLI not found`
-      : result.status.replaceAll('_', ' ')
+      : result.status === 'skipped_unsupported_batch'
+        ? `skipped: ${host} is a batch file that is not an npm shim`
+        : result.status === 'failed_scope_mismatch'
+          ? `failed: local scope removal did not succeed; ${result.hint}`
+          : result.status.replaceAll('_', ' ')
   print(`between: ${label}: ${status}`)
 }

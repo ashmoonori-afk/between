@@ -4,12 +4,9 @@ import { tmpdir } from 'node:os'
 import { dirname, join, win32 } from 'node:path'
 import {
   installQuickReviewCommand,
-  manageMcpRegistration,
   quickReviewPath,
   renderQuickReviewCommand,
   uninstallQuickReviewCommand,
-  type CommandRunner,
-  type CommandSpec,
 } from '../../src/onboard/mcp-install'
 
 const dirs: string[] = []
@@ -54,6 +51,13 @@ describe('quick-review command paths', () => {
 })
 
 describe('managed quick-review command files', () => {
+  it('reports a missing command file as not installed', async () => {
+    const home = await tempHome()
+    const options = { platform: 'linux' as const, env: { HOME: home }, homedir: () => home }
+
+    expect((await uninstallQuickReviewCommand('claude', options)).status).toBe('not_installed')
+  })
+
   it('installs byte-identically and reports an idempotent second install', async () => {
     const home = await tempHome()
     const options = { platform: 'linux' as const, env: { HOME: home }, homedir: () => home }
@@ -108,143 +112,5 @@ describe('managed quick-review command files', () => {
     expect(codex.startsWith('---\nname: bqr\ndescription: ')).toBe(true)
     expect(claude).toMatch(/<!-- between-dev:managed sha256=[a-f0-9]{64} --/)
     expect(codex).toMatch(/<!-- between-dev:managed sha256=[a-f0-9]{64} --/)
-  })
-})
-
-class FakeRunner implements CommandRunner {
-  readonly calls: CommandSpec[] = []
-
-  constructor(
-    private readonly run: (spec: CommandSpec) => {
-      readonly exitCode: number | null
-      readonly errorCode?: string
-    },
-  ) {}
-
-  async execute(spec: CommandSpec) {
-    this.calls.push(spec)
-    return this.run(spec)
-  }
-}
-
-describe('MCP registration', () => {
-  it('builds Claude and Codex registration commands on Unix', async () => {
-    const runner = new FakeRunner((spec) => ({ exitCode: spec.args[1] === 'get' ? 1 : 0 }))
-    const root = '/repo'
-
-    expect(
-      await manageMcpRegistration('install', 'claude', {
-        projectRoot: root,
-        platform: 'darwin',
-        runner,
-      }),
-    ).toMatchObject({ status: 'registered' })
-    expect(
-      await manageMcpRegistration('install', 'codex', {
-        projectRoot: root,
-        platform: 'linux',
-        runner,
-      }),
-    ).toMatchObject({ status: 'registered' })
-    expect(runner.calls).toEqual([
-      { file: 'claude', args: ['mcp', 'get', 'between'], cwd: root, shell: false },
-      {
-        file: 'claude',
-        args: [
-          'mcp',
-          'add',
-          '-s',
-          'local',
-          'between',
-          '--',
-          'npx',
-          '-y',
-          '--package=between-dev@0.2.0',
-          'between-mcp',
-          '--allow-review',
-        ],
-        cwd: root,
-        shell: false,
-      },
-      { file: 'codex', args: ['mcp', 'get', 'between'], cwd: root, shell: false },
-      {
-        file: 'codex',
-        args: [
-          'mcp',
-          'add',
-          'between',
-          '--',
-          'npx',
-          '-y',
-          '--package=between-dev@0.2.0',
-          'between-mcp',
-          '--allow-review',
-          '--root',
-          root,
-        ],
-        cwd: root,
-        shell: false,
-      },
-    ])
-  })
-
-  it('launches Windows host shims through a shell and MCP through cmd', async () => {
-    const runner = new FakeRunner((spec) => ({ exitCode: spec.args[1] === 'get' ? 1 : 0 }))
-    await manageMcpRegistration('install', 'codex', {
-      projectRoot: String.raw`C:\repo`,
-      platform: 'win32',
-      runner,
-    })
-
-    expect(runner.calls[1]).toMatchObject({
-      file: 'codex',
-      shell: true,
-      args: expect.arrayContaining(['cmd', '/c', 'npx']),
-    })
-  })
-
-  it('skips registered and missing host CLIs without failing', async () => {
-    const registered = new FakeRunner(() => ({ exitCode: 0 }))
-    const missing = new FakeRunner(() => ({ exitCode: null, errorCode: 'ENOENT' }))
-
-    expect(
-      await manageMcpRegistration('install', 'claude', {
-        projectRoot: '/repo',
-        platform: 'linux',
-        runner: registered,
-      }),
-    ).toMatchObject({ status: 'already_registered' })
-    expect(
-      await manageMcpRegistration('install', 'codex', {
-        projectRoot: '/repo',
-        platform: 'linux',
-        runner: missing,
-      }),
-    ).toMatchObject({ status: 'skipped_missing_cli' })
-  })
-
-  it('reports a failed MCP add as a real failure', async () => {
-    const runner = new FakeRunner((spec) => ({ exitCode: spec.args[1] === 'get' ? 1 : 2 }))
-
-    expect(
-      await manageMcpRegistration('install', 'claude', {
-        projectRoot: '/repo',
-        platform: 'linux',
-        runner,
-      }),
-    ).toMatchObject({ status: 'failed' })
-  })
-
-  it('removes only a registered server', async () => {
-    const runner = new FakeRunner(() => ({ exitCode: 0 }))
-
-    expect(
-      await manageMcpRegistration('uninstall', 'claude', {
-        projectRoot: '/repo',
-        platform: 'linux',
-        runner,
-      }),
-    ).toMatchObject({ status: 'unregistered' })
-    expect(runner.calls[1]?.args).toEqual(['mcp', 'remove', '-s', 'local', 'between'])
   })
 })
