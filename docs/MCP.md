@@ -188,7 +188,9 @@ installation, `--no-register` to install command files only, or `--print` to pre
 changes. Managed files are updated or removed only while their sha256 marker still matches;
 unmarked and user-edited files are left untouched. Uninstall with
 `npx -y between-dev mcp-uninstall`. The client-specific commands below remain available as the
-manual alternative.
+manual alternative. Codex inherits the current session directory because its MCP registration
+does not set `cwd` or pass `--root`. If an existing registration is pinned with `--root`, the
+installer prints removal and reinstall instructions without changing it.
 
 ### Claude Code
 
@@ -224,8 +226,10 @@ On Windows, launch through `cmd`:
 ```toml
 [mcp_servers.between]
 command = "npx"
-args = ["-y", "--package=between-dev@0.2.0", "between-mcp", "--root", "/abs/path/to/repo"]
+args = ["-y", "--package=between-dev@0.2.0", "between-mcp"]
 ```
+
+With no `cwd` setting, the MCP server inherits the Codex session's working directory.
 
 ### Cursor
 

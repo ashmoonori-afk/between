@@ -3,7 +3,7 @@ import {
   manageMcpRegistration,
   type CommandRunner,
   type CommandSpec,
-} from '../../src/onboard/mcp-install'
+} from '../../src/onboard/mcp-registration'
 
 class FakeRunner implements CommandRunner {
   readonly calls: CommandSpec[] = []
@@ -12,6 +12,7 @@ class FakeRunner implements CommandRunner {
     private readonly run: (spec: CommandSpec) => {
       readonly exitCode: number | null
       readonly errorCode?: string
+      readonly stdout?: string
     },
   ) {}
 
@@ -76,8 +77,6 @@ describe('MCP registration', () => {
           '--package=between-dev@0.2.0',
           'between-mcp',
           '--allow-review',
-          '--root',
-          root,
         ],
         cwd: root,
         shell: false,
@@ -101,7 +100,7 @@ describe('MCP registration', () => {
       shell: false,
       args: expect.arrayContaining(['cmd', '/c', 'npx']),
     })
-    expect(runner.calls[1]?.args.slice(-2)).toEqual(['--root', root])
+    expect(runner.calls[1]?.args).not.toContain(root)
   })
 
   it('runs a Windows npm cmd shim through Node and its JavaScript entry', async () => {
@@ -161,6 +160,26 @@ describe('MCP registration', () => {
         resolveBinary: async () => null,
       }),
     ).toMatchObject({ status: 'skipped_missing_cli' })
+  })
+
+  it('warns when an existing Codex registration is pinned to a root', async () => {
+    const runner = new FakeRunner(() => ({
+      exitCode: 0,
+      stdout: 'args: -y between-mcp --allow-review --root /old/project',
+    }))
+
+    expect(
+      await manageMcpRegistration('install', 'codex', {
+        projectRoot: '/new/project',
+        platform: 'linux',
+        runner,
+        resolveBinary: async () => '/usr/bin/codex',
+      }),
+    ).toMatchObject({
+      status: 'already_registered_pinned',
+      hint: 'it is pinned with `--root`; to follow the current project, run `codex mcp remove between` then `between mcp-install codex`',
+    })
+    expect(runner.calls).toHaveLength(1)
   })
 
   it('reports a failed MCP add as a real failure', async () => {

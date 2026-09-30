@@ -2,9 +2,6 @@ import { createHash } from 'node:crypto'
 import { readFile, mkdir, rmdir, unlink, writeFile } from 'node:fs/promises'
 import { homedir as systemHomedir } from 'node:os'
 import { dirname, posix, win32 } from 'node:path'
-import { execa } from 'execa'
-import { npmShimEntry, resolveReviewerBinary } from '../api/review'
-import { BETWEEN_VERSION } from '../core/version'
 import type { HostAgent } from '../review/direct'
 
 const MARKER_PATTERN =
@@ -29,48 +26,6 @@ export interface FileResult {
   readonly status: FileStatus
 }
 
-export interface CommandSpec {
-  readonly file: string
-  readonly args: readonly string[]
-  readonly cwd: string
-  readonly shell: boolean
-}
-
-export interface CommandResult {
-  readonly exitCode: number | null
-  readonly errorCode?: string
-}
-
-export interface CommandRunner {
-  execute(spec: CommandSpec): Promise<CommandResult>
-}
-
-export type RegistrationStatus =
-  | 'registered'
-  | 'already_registered'
-  | 'unregistered'
-  | 'not_registered'
-  | 'skipped_missing_cli'
-  | 'skipped_unsupported_batch'
-  | 'failed_scope_mismatch'
-  | 'failed'
-
-export interface RegistrationResult {
-  readonly status: RegistrationStatus
-  readonly command?: CommandSpec
-  readonly hint?: string
-}
-
-export interface RegistrationOptions {
-  readonly projectRoot: string
-  readonly platform?: NodeJS.Platform
-  readonly runner?: CommandRunner
-  readonly env?: NodeJS.ProcessEnv
-  readonly resolveBinary?: typeof resolveReviewerBinary
-  readonly resolveNpmShim?: typeof npmShimEntry
-  readonly nodePath?: string
-}
-
 export function quickReviewPath(host: HostAgent, options: PathOptions = {}): string {
   const platform = options.platform ?? process.platform
   const env = options.env ?? process.env
@@ -93,8 +48,9 @@ Usage: ${invocation} [--model <name>] [focus...]
 
 Review the current working-tree diff against HEAD. Treat \`--base <ref>\` as the comparison
 base and remaining arguments as the focus. Call the \`between_review\` MCP tool with
-\`kind: "diff"\` and \`from: "${host}"\`. If \`--model <name>\` is present, pass \`model:
-"<name>"\`; when omitted, do not pass \`model\`.
+\`kind: "diff"\` and \`from: "${host}"\`. When provided, pass \`--base <ref>\` as the
+\`base\` field and the remaining focus text as the \`focus\` field. If \`--model <name>\`
+is present, pass \`model: "<name>"\`; when omitted, do not pass \`model\`.
 
 If the tool is unavailable and a model was provided, run
 \`npx -y between-dev review --from ${host} --model <name> --json\`; otherwise omit the
@@ -138,105 +94,6 @@ export async function uninstallQuickReviewCommand(
   await unlink(path)
   if (host === 'codex') await removeEmptyDirectory(dirname(path))
   return { path, status: 'removed' }
-}
-
-export function registrationCommands(
-  action: 'install' | 'uninstall',
-  host: HostAgent,
-  options: Pick<RegistrationOptions, 'projectRoot' | 'platform'>,
-): readonly [CommandSpec, CommandSpec] {
-  const { projectRoot } = options
-  const platform = options.platform ?? process.platform
-  const get = { file: host, args: ['mcp', 'get', 'between'], cwd: projectRoot, shell: false }
-  if (action === 'uninstall') {
-    const removeArgs =
-      host === 'claude' ? ['mcp', 'remove', '-s', 'local', 'between'] : ['mcp', 'remove', 'between']
-    return [get, { file: host, args: removeArgs, cwd: projectRoot, shell: false }]
-  }
-  const server = [
-    ...(platform === 'win32' ? ['cmd', '/c'] : []),
-    'npx',
-    '-y',
-    `--package=between-dev@${BETWEEN_VERSION}`,
-    'between-mcp',
-    '--allow-review',
-    ...(host === 'codex' ? ['--root', projectRoot] : []),
-  ]
-  const addArgs =
-    host === 'claude'
-      ? ['mcp', 'add', '-s', 'local', 'between', '--', ...server]
-      : ['mcp', 'add', 'between', '--', ...server]
-  return [get, { file: host, args: addArgs, cwd: projectRoot, shell: false }]
-}
-
-export async function manageMcpRegistration(
-  action: 'install' | 'uninstall',
-  host: HostAgent,
-  options: RegistrationOptions,
-): Promise<RegistrationResult> {
-  const env: Record<string, string> = {}
-  for (const [key, value] of Object.entries(options.env ?? process.env)) {
-    if (value !== undefined) env[key] = value
-  }
-  const binary = await (options.resolveBinary ?? resolveReviewerBinary)(
-    host,
-    env,
-    options.projectRoot,
-  )
-  if (binary === null) return { status: 'skipped_missing_cli' }
-
-  let file = binary
-  let prefix: readonly string[] = []
-  if (/\.(cmd|bat)$/i.test(binary)) {
-    const entry = await (options.resolveNpmShim ?? npmShimEntry)(binary)
-    if (entry === null) return { status: 'skipped_unsupported_batch' }
-    file = options.nodePath ?? process.execPath
-    prefix = [entry]
-  }
-
-  const [rawGetCommand, rawChangeCommand] = registrationCommands(action, host, options)
-  const getCommand = { ...rawGetCommand, file, args: [...prefix, ...rawGetCommand.args] }
-  const changeCommand = {
-    ...rawChangeCommand,
-    file,
-    args: [...prefix, ...rawChangeCommand.args],
-  }
-  const runner = options.runner ?? commandRunner
-  const get = await runner.execute(getCommand)
-  if (get.errorCode === 'ENOENT') return { status: 'skipped_missing_cli' }
-  if (action === 'install' && get.exitCode === 0) return { status: 'already_registered' }
-  if (action === 'uninstall' && get.exitCode !== 0) return { status: 'not_registered' }
-  const result = await runner.execute(changeCommand)
-  if (result.errorCode === 'ENOENT') return { status: 'skipped_missing_cli' }
-  if (result.exitCode !== 0) {
-    if (action === 'uninstall' && host === 'claude') {
-      return {
-        status: 'failed_scope_mismatch',
-        command: changeCommand,
-        hint: 'run `claude mcp remove between -s <scope>`',
-      }
-    }
-    return { status: 'failed', command: changeCommand }
-  }
-  return {
-    status: action === 'install' ? 'registered' : 'unregistered',
-    command: changeCommand,
-  }
-}
-
-const commandRunner: CommandRunner = {
-  async execute(spec) {
-    const result = await execa(spec.file, [...spec.args], {
-      cwd: spec.cwd,
-      reject: false,
-      shell: false,
-    })
-    const cause: unknown = result.cause
-    return {
-      exitCode: result.exitCode ?? null,
-      ...(nodeErrorCode(cause) === 'ENOENT' ? { errorCode: 'ENOENT' } : {}),
-    }
-  },
 }
 
 async function readOptional(path: string): Promise<string | null> {

@@ -20,10 +20,26 @@ async function fakeCli(bin: string, cli: string, record: string): Promise<void> 
     `const fs = require('fs')\n` +
       `const row = JSON.stringify({ cli: ${JSON.stringify(cli)}, argv: process.argv.slice(2) }) + '\\n'\n` +
       `fs.appendFileSync(${JSON.stringify(record)}, row)\n` +
-      `process.exit(process.argv[3] === 'get' ? 1 : 0)\n`,
+      `const action = process.argv[3]\n` +
+      `process.exit(action === 'get' ? (process.env.BETWEEN_FAKE_REGISTERED ? 0 : 1) : ` +
+      `(action === 'remove' && process.env.BETWEEN_FAKE_REMOVE_FAIL ? 1 : 0))\n`,
   )
   if (process.platform === 'win32') {
-    await writeFile(join(bin, `${cli}.cmd`), `@node "%~dp0${cli}-impl.cjs" %*\r\n`)
+    await writeFile(
+      join(bin, `${cli}.cmd`),
+      [
+        '@ECHO off',
+        'GOTO start',
+        ':find_dp0',
+        'SET dp0=%~dp0',
+        'EXIT /b',
+        ':start',
+        'SETLOCAL',
+        'CALL :find_dp0',
+        `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${cli}-impl.cjs" %*`,
+        '',
+      ].join('\r\n'),
+    )
     return
   }
   const shim = join(bin, cli)
@@ -33,7 +49,7 @@ async function fakeCli(bin: string, cli: string, record: string): Promise<void> 
 
 describe('between mcp-install CLI', () => {
   it('installs both command files and registers both MCP clients', async () => {
-    dir = await mkdtemp(join(tmpdir(), 'between-mcp-install-cli-'))
+    dir = realpathSync.native(await mkdtemp(join(tmpdir(), 'between-mcp-install-cli-')))
     const home = join(dir, 'home')
     const claudeHome = join(dir, 'claude')
     const codexHome = join(dir, 'codex')
@@ -105,15 +121,50 @@ describe('between mcp-install CLI', () => {
           'add',
           'between',
           '--',
+          ...(process.platform === 'win32' ? ['cmd', '/c'] : []),
           'npx',
           '-y',
           '--package=between-dev@0.2.0',
           'between-mcp',
           '--allow-review',
-          '--root',
-          realpathSync.native(project),
         ],
       },
     ])
+  })
+
+  it('exits nonzero when Claude is registered outside the local scope', async () => {
+    dir = realpathSync.native(await mkdtemp(join(tmpdir(), 'between-mcp-uninstall-cli-')))
+    const home = join(dir, 'home')
+    const bin = join(dir, 'bin')
+    const project = join(dir, 'project')
+    const record = join(dir, 'calls.jsonl')
+    await Promise.all([mkdir(home), mkdir(bin), mkdir(project)])
+    await fakeCli(bin, 'claude', record)
+
+    const result = await execa(
+      process.execPath,
+      [
+        '--import',
+        pathToFileURL(join(process.cwd(), 'node_modules/tsx/dist/loader.mjs')).href,
+        join(process.cwd(), 'src/cli.ts'),
+        'mcp-uninstall',
+        'claude',
+      ],
+      {
+        cwd: project,
+        reject: false,
+        env: {
+          ...process.env,
+          HOME: home,
+          CLAUDE_CONFIG_DIR: join(dir, 'claude'),
+          PATH: `${bin}${delimiter}${process.env.PATH ?? ''}`,
+          BETWEEN_FAKE_REGISTERED: '1',
+          BETWEEN_FAKE_REMOVE_FAIL: '1',
+        },
+      },
+    )
+
+    expect(result.exitCode).toBe(1)
+    expect(result.stdout).toContain('run `claude mcp remove between -s <scope>`')
   })
 })

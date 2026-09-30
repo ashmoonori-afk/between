@@ -387,7 +387,11 @@ npx -y between-dev mcp-install
 This adds `/bqr` to Claude Code and `$bqr` to Codex. Both review the current working-tree diff
 against `HEAD`; pass a focus, `--base <ref>`, or `--model <name>` when needed. Use
 `npx -y between-dev models` to list available models. The installer registers the `between` MCP
-server with `between_review` enabled and pins Codex to the current absolute project root.
+server with `between_review` enabled. Codex starts the server in each session's working directory,
+so `$bqr` follows the current project instead of a globally pinned root.
+
+If an older Codex registration contains `--root`, the installer leaves it untouched and explains
+how to remove it before reinstalling. It never silently repoints an existing registration.
 
 The generated files carry a managed sha256 marker. Re-running the installer updates only an
 unmodified managed file; an unmarked or user-edited file is reported and left byte-for-byte
@@ -443,7 +447,7 @@ Then in the session: `/between-review plan docs/plan.md`, `/between-review answe
 # 1. ~/.codex/config.toml
 #    [mcp_servers.between]
 #    command = "npx"
-#    args = ["-y", "--package=between-dev", "between-mcp", "--allow-review", "--root", "/abs/path/to/repo"]
+#    args = ["-y", "--package=between-dev", "between-mcp", "--allow-review"]
 # 2. optional prompt: writes $CODEX_HOME/prompts/between-review.md (default ~/.codex)
 npx -y between-dev review-shim codex
 ```

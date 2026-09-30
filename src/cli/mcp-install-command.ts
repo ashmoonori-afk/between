@@ -3,14 +3,16 @@ import type { Command } from 'commander'
 import { BetweenApiError } from '../api/errors'
 import type { HostAgent } from '../review/direct'
 import {
-  installQuickReviewCommand,
   manageMcpRegistration,
-  quickReviewPath,
   registrationCommands,
+  type RegistrationResult,
+} from '../onboard/mcp-registration'
+import {
+  installQuickReviewCommand,
+  quickReviewPath,
   renderQuickReviewCommand,
   uninstallQuickReviewCommand,
   type FileResult,
-  type RegistrationResult,
 } from '../onboard/mcp-install'
 import { print } from './output'
 import { root } from './shared'
@@ -56,7 +58,7 @@ function register(program: Command, action: 'install' | 'uninstall'): void {
         if (!options.register) continue
         const registration = await manageMcpRegistration(action, host, { projectRoot })
         printRegistrationResult(host, registration)
-        if (registration.status === 'failed') failed = true
+        if (registration.status.startsWith('failed')) failed = true
       }
       if (failed) process.exitCode = 1
     })
@@ -106,10 +108,12 @@ function printRegistrationResult(host: HostAgent, result: RegistrationResult): v
   const status =
     result.status === 'skipped_missing_cli'
       ? `skipped: ${host} CLI not found`
-      : result.status === 'skipped_unsupported_batch'
-        ? `skipped: ${host} is a batch file that is not an npm shim`
-        : result.status === 'failed_scope_mismatch'
-          ? `failed: local scope removal did not succeed; ${result.hint}`
-          : result.status.replaceAll('_', ' ')
+      : result.status === 'already_registered_pinned'
+        ? `already registered: ${result.hint}`
+        : result.status === 'skipped_unsupported_batch'
+          ? `skipped: ${host} is a batch file that is not an npm shim`
+          : result.status === 'failed_scope_mismatch'
+            ? `failed: local scope removal did not succeed; ${result.hint}`
+            : result.status.replaceAll('_', ' ')
   print(`between: ${label}: ${status}`)
 }
