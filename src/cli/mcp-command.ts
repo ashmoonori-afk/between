@@ -16,7 +16,7 @@ export function configureMcpCommand(command: Command): Command {
     .option('--allow-exec', 'expose tools that run repo-configured commands (verify, policy)')
     .option(
       '--allow-review',
-      'expose between_review (runs the claude/codex CLI; sends the subject to that provider)',
+      'expose between_review and between_models (runs the claude/codex CLI)',
     )
     .action(async (opts: McpCommandOptions) => {
       try {

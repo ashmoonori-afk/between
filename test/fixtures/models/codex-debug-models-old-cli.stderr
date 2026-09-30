@@ -1,0 +1,3 @@
+error: unrecognized subcommand 'models'
+
+Usage: codex debug [OPTIONS] <COMMAND>

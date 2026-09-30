@@ -166,6 +166,23 @@ describe('reviewer routing', () => {
       ],
     })
   })
+
+  it('adds a selected reviewer model exactly once and omits it by default', () => {
+    // Given/When: reviewer invocations are built with and without explicit models
+    const codexDefault = reviewerInvocation('codex', '/tmp/w')
+    const codexSelected = reviewerInvocation('codex', '/tmp/w', 'gpt-5.5')
+    const claudeDefault = reviewerInvocation('claude', '/tmp/w')
+    const claudeSelected = reviewerInvocation('claude', '/tmp/w', 'sonnet')
+
+    // Then: explicit models use each CLI's native flag without changing default behavior
+    expect(codexDefault.args).not.toContain('--model')
+    expect(codexDefault.args).not.toContain('-m')
+    expect(codexSelected.args.filter((arg) => arg === '-m')).toHaveLength(1)
+    expect(codexSelected.args[codexSelected.args.indexOf('-m') + 1]).toBe('gpt-5.5')
+    expect(claudeDefault.args).not.toContain('--model')
+    expect(claudeSelected.args.filter((arg) => arg === '--model')).toHaveLength(1)
+    expect(claudeSelected.args[claudeSelected.args.indexOf('--model') + 1]).toBe('sonnet')
+  })
 })
 
 describe('fake reviewer', () => {

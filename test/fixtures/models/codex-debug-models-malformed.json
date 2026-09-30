@@ -1,0 +1,12 @@
+{
+  "models": [
+    {
+      "slug": "--unsafe",
+      "visibility": "list"
+    },
+    {
+      "slug": "gpt-6-sol",
+      "visibility": "sometimes"
+    }
+  ]
+}

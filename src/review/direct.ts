@@ -338,6 +338,7 @@ export const CODEX_DISABLED_FEATURES = [
 export function reviewerInvocation(
   preset: HostAgent,
   workdir: string,
+  model?: string,
 ): { file: string; args: string[] } {
   if (preset === 'claude') {
     return {
@@ -347,6 +348,7 @@ export function reviewerInvocation(
       // sign-in still works (unlike --bare); --tools "": no built-in tools either
       args: [
         '-p',
+        ...(model ? ['--model', model] : []),
         '--output-format',
         'text',
         '--safe-mode',
@@ -364,6 +366,7 @@ export function reviewerInvocation(
       '--ask-for-approval',
       'never',
       'exec',
+      ...(model ? ['-m', model] : []),
       '--sandbox',
       'read-only',
       '--cd',

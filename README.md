@@ -458,13 +458,17 @@ Then in the session: `/prompts:between-review plan docs/plan.md`.
 
 ```bash
 between review --from claude                        # diff vs HEAD, reviewed by codex
-between review --kind plan docs/plan.md --reviewer codex
+between review --kind plan docs/plan.md --reviewer codex --model gpt-5.5
 echo "$ANSWER" | between review --kind answer - --context "the user's question" --json
 between review --kind plan --url https://example.com/spec.md --focus "rollback"
+between models                                      # add --refresh or --json when needed
 ```
 
-`--json` prints the structured verdict. The exit code is 0 whenever a review completes; read
-`verdict` to gate on it. Details: [`docs/MCP.md`](./docs/MCP.md#direct-review-between_review).
+Omit `--model` to keep the reviewer CLI's own default exactly. `between models` discovers Codex
+models from the installed CLI and shows verified static choices when discovery is unavailable;
+Claude Code uses documented aliases because it has no reliable listing command. `--json` prints
+the structured verdict. The exit code is 0 whenever a review completes; read `verdict` to gate
+on it. Details: [`docs/MCP.md`](./docs/MCP.md#direct-review-between_review).
 
 ## Forge Lifecycle
 

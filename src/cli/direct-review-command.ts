@@ -2,6 +2,7 @@ import type { Command } from 'commander'
 import { print, printJson } from './output'
 import { fail, root } from './shared'
 import { BetweenApiError } from '../api/errors'
+import type { ModelsResult, ReviewerModels } from '../api/models'
 import type { ReviewRequest, ReviewResult } from '../api/review'
 import {
   HOST_AGENTS,
@@ -21,6 +22,7 @@ interface ReviewCliOptions {
   focus?: string
   criterion: string[]
   reviewer?: string
+  model?: string
   from?: string
   json?: boolean
 }
@@ -38,6 +40,7 @@ export function registerDirectReviewCommands(program: Command): void {
     .option('--focus <text>', 'what the reviewer should look at hardest')
     .option('--criterion <text>', 'extra review criterion (repeatable)', collect, [])
     .option('--reviewer <agent>', 'claude | codex | fake (fake never consults a model)')
+    .option('--model <name>', 'reviewer model; omit for the reviewer CLI default')
     .option('--from <agent>', 'the calling agent (claude | codex); the other one reviews')
     .option('--json', 'print the structured verdict as JSON')
     .action(async (subject: string | undefined, opts: ReviewCliOptions) => {
@@ -47,6 +50,22 @@ export function registerDirectReviewCommands(program: Command): void {
         const result = await requestReview(root(), req)
         if (opts.json) printJson(result)
         else printResult(result)
+      } catch (e) {
+        await fail(e)
+      }
+    })
+
+  program
+    .command('models')
+    .description('List available direct-review models')
+    .option('--refresh', 'bypass the 24-hour model cache')
+    .option('--json', 'print model lists as JSON')
+    .action(async (opts: { refresh?: boolean; json?: boolean }) => {
+      try {
+        const { listModels } = await import('../api/models')
+        const result = await listModels({ refresh: opts.refresh, projectRoot: root() })
+        if (opts.json) printJson(result)
+        else printModels(result)
       } catch (e) {
         await fail(e)
       }
@@ -102,6 +121,7 @@ async function buildRequest(
     ...(opts.reviewer
       ? { reviewer: pick<ReviewerPreset>(opts.reviewer, REVIEWER_PRESETS, 'reviewer') }
       : {}),
+    ...(opts.model ? { model: opts.model } : {}),
     ...(opts.from ? { from: pick<HostAgent>(opts.from, HOST_AGENTS, 'from') } : {}),
   }
 }
@@ -122,7 +142,9 @@ async function readStdin(): Promise<string> {
 }
 
 function printResult(r: ReviewResult): void {
-  print(`between review: ${r.verdict} (${r.kind}, reviewed by ${r.reviewer})`)
+  const model = r.model ? `, model ${r.model}` : ''
+  print(`between review: ${r.verdict} (${r.kind}, reviewed by ${r.reviewer}${model})`)
+  if (r.model_note) print(`  model note: ${r.model_note}`)
   if (r.verdict_adjusted)
     print('  verdict raised to REQUEST_CHANGES: a critical/major finding exists')
   print(`  subject: ${r.subject.label} (${r.subject.bytes} bytes)`)
@@ -144,4 +166,17 @@ function printResult(r: ReviewResult): void {
     print('Questions:')
     for (const q of r.questions) print(`  - ${q}`)
   }
+}
+
+function printModels(result: ModelsResult): void {
+  printModelTable('claude', result.claude)
+  print('')
+  printModelTable('codex', result.codex)
+}
+
+function printModelTable(reviewer: string, result: ReviewerModels): void {
+  print(`${reviewer} (${result.source})`)
+  print('  MODEL')
+  for (const model of result.models) print(`  ${model}`)
+  if (result.note) print(`  note: ${result.note}`)
 }

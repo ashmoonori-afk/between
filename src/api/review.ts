@@ -5,6 +5,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
 import { fetchSubjectText } from '../review/fetch-subject'
+import {
+  CLAUDE_MODEL_NOTE,
+  ModelNameError,
+  suggestModels,
+  validateModelName,
+} from '../review/models'
 import { GitAdapter, GitError } from '../adapters/git'
 import { betweenPaths } from '../adapters/paths'
 import { redactSecrets } from '../core/redact'
@@ -25,6 +31,7 @@ import {
   type ReviewerRoute,
 } from '../review/direct'
 import { BetweenApiError } from './errors'
+import { listModels, type ListModelsOptions, type ModelsResult } from './models'
 
 export const MAX_REVIEW_SUBJECT_BYTES = 256 * 1024
 const DEFAULT_REVIEW_TIMEOUT_MS = 900_000
@@ -43,6 +50,8 @@ export interface ReviewRequest {
   focus?: string
   criteria?: string[]
   reviewer?: ReviewerPreset
+  /** reviewer CLI model; omitted to preserve the reviewer's own default */
+  model?: string
   /** the agent asking for the review; the other agent of the pair reviews */
   from?: HostAgent
 }
@@ -52,6 +61,8 @@ export type ReviewSubjectSource = 'git' | 'file' | 'url' | 'text'
 export interface ReviewResult extends ParsedReview {
   kind: ReviewKind
   reviewer: ReviewerPreset
+  model?: string
+  model_note?: string
   routed_by: ReviewerRoute
   rubric: string[]
   subject: {
@@ -66,6 +77,7 @@ export interface ReviewResult extends ParsedReview {
 
 export interface ReviewerRunOptions {
   timeoutMs: number
+  model?: string
   /** only used to keep project paths out of the reviewer's environment */
   projectRoot: string
 }
@@ -77,6 +89,7 @@ export interface ReviewDeps {
     opts: ReviewerRunOptions,
   ) => Promise<string>
   fetchText?: (url: string) => Promise<string>
+  listModels?: (options?: ListModelsOptions) => Promise<ModelsResult>
 }
 
 interface Subject {
@@ -111,6 +124,11 @@ export async function requestReview(
       'no reviewer agent: pass reviewer (claude | codex), or from (the calling agent) so the other agent reviews, or configure reviewer_command with a claude/codex agent',
     )
   }
+  const modelSelection = req.model
+    ? await selectModel(req.model, route.preset, () =>
+        (deps.listModels ?? listModels)({ projectRoot: realRoot }),
+      )
+    : null
 
   const subject = await loadSubject(realRoot, req, deps)
   const bytes = Buffer.byteLength(subject.text, 'utf8')
@@ -131,7 +149,11 @@ export async function requestReview(
   })
   const run = deps.runReviewer ?? runReviewerCli
   const timeoutMs = config ? config.review_timeout_seconds * 1000 : DEFAULT_REVIEW_TIMEOUT_MS
-  const reply = await run(route.preset, prompt, { timeoutMs, projectRoot: realRoot })
+  const reply = await run(route.preset, prompt, {
+    timeoutMs,
+    projectRoot: realRoot,
+    ...(modelSelection ? { model: modelSelection.model } : {}),
+  })
 
   let parsed: ParsedReview
   try {
@@ -146,6 +168,12 @@ export async function requestReview(
   return {
     kind: req.kind,
     reviewer: route.preset,
+    ...(modelSelection
+      ? {
+          model: modelSelection.model,
+          ...(modelSelection.note ? { model_note: modelSelection.note } : {}),
+        }
+      : {}),
     routed_by: route.routed_by,
     ...parsed,
     rubric: RUBRICS[req.kind].map((c) => c.name),
@@ -171,6 +199,37 @@ function validateRequest(req: ReviewRequest): void {
   }
   if (req.reviewer !== undefined && req.reviewer === req.from) {
     throw invalid(`${req.from} cannot review its own work; the other agent of the pair reviews`)
+  }
+  if (req.model !== undefined) {
+    try {
+      validateModelName(req.model)
+    } catch (error) {
+      if (error instanceof ModelNameError) throw invalid(error.message)
+      throw error
+    }
+  }
+}
+
+async function selectModel(
+  model: string,
+  reviewer: ReviewerPreset,
+  discover: () => Promise<ModelsResult>,
+): Promise<{ model: string; note?: string }> {
+  const validated = validateModelName(model)
+  if (reviewer === 'fake') return { model: validated }
+  if (reviewer === 'claude') return { model: validated, note: CLAUDE_MODEL_NOTE }
+  const available = (await discover())[reviewer]
+  const accepted = available.accepted ?? available.models
+  if (available.source !== 'static' && !accepted.includes(validated)) {
+    const suggestions = suggestModels(validated, available.models)
+    const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : ''
+    throw invalid(
+      `model "${validated}" is not available for ${reviewer}.${hint} Run \`between models --refresh\` to update the list.`,
+    )
+  }
+  return {
+    model: validated,
+    ...(available.source === 'static' && available.note ? { note: available.note } : {}),
   }
 }
 
@@ -351,6 +410,14 @@ function isInside(root: string, path: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+export function isPathInsideProject(projectRoot: string, path: string): boolean {
+  const lexical = resolve(path)
+  const canonical = canonicalOrSelf(lexical)
+  return projectRoots(projectRoot).some(
+    (root) => isInside(root, lexical) || isInside(root, canonical),
+  )
+}
+
 /**
  * Find the reviewer CLI on the (already filtered) PATH ourselves and refuse any candidate whose
  * canonical path lies inside the project, so a repository-controlled `claude`/`codex` binary can
@@ -479,7 +546,7 @@ async function spawnReviewer(
   workdir: string,
   opts: ReviewerRunOptions,
 ): Promise<string> {
-  const { file, args } = reviewerInvocation(preset, workdir)
+  const { file, args } = reviewerInvocation(preset, workdir, opts.model)
   const env = reviewerEnv(preset, opts.projectRoot)
   const binary = await resolveReviewerBinary(file, env, opts.projectRoot)
   if (!binary) {
@@ -492,8 +559,7 @@ async function spawnReviewer(
   let commandArgs = args
   if (/\.(cmd|bat)$/i.test(binary)) {
     const entry = await npmShimEntry(binary)
-    const roots = projectRoots(opts.projectRoot)
-    if (!entry || roots.some((root) => isInside(root, entry))) {
+    if (!entry || isPathInsideProject(opts.projectRoot, entry)) {
       throw new BetweenApiError(
         'reviewer_failed',
         `${preset} resolves to a batch file (${binary}) that is not an npm shim outside the project; install the native ${preset} CLI or pick another reviewer`,
