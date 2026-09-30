@@ -275,8 +275,8 @@ Between is alpha. It is useful now, but it is not pretending to be finished.
   verify records are sealed (read-only plus a sha256 in the hash-chained journal)
   and re-checked on every read, so later edits are detected and fail closed; OS/tool
   write denial for the developer is only applied where the host supports it.
-  Rolling back or rewriting the on-disk journal and `state.json` together is
-  detected through a journal anchor kept outside `.between/` (macOS keychain; a
+  Rolling back or rewriting the recorded part of the on-disk journal and
+  `state.json` together is detected through a journal anchor kept outside `.between/` (macOS keychain; a
   per-user state directory on Linux/Windows). That stops workspace-confined writers
   such as sandboxed agents, not an unsandboxed process running as your OS user; a
   full OS boundary (a separate OS user for agents) is future work. See

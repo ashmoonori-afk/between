@@ -13,6 +13,7 @@ import {
   anchorId,
   defaultJournalAnchor,
   type AnchorRunner,
+  type JournalAnchor,
 } from '../../src/adapters/journal-anchor'
 import { readRecoverableState } from '../../src/daemon/recover-state'
 import { inspectJournal, replayState, resetJournalAnchor } from '../../src/api/records'
@@ -116,6 +117,35 @@ describe('journal anchor outside .between/ (rollback detection)', () => {
     const log = new EventsLog(dir, { anchor: fileAnchor() })
     await appendPinned(log, 1, 4)
     expect((await fileAnchor().read())!.count).toBe(before!.count + 1)
+  })
+
+  it('a failed anchor read never lets a rolled-back journal overwrite the stored head', async () => {
+    await appendPinned(new EventsLog(dir, { anchor: fileAnchor() }), 3)
+    const restore = await snapshot()
+    await appendPinned(new EventsLog(dir, { anchor: fileAnchor() }), 2, 3)
+    await restore()
+    const stored = await fileAnchor().read()
+    expect(stored!.count).toBe(5)
+
+    const store = fileAnchor()
+    let failReads = 1
+    const flaky: JournalAnchor = {
+      kind: store.kind,
+      describe: () => store.describe(),
+      read: async () => {
+        if (failReads-- > 0) throw new Error('keychain locked')
+        return store.read()
+      },
+      write: (head) => store.write(head),
+      clear: () => store.clear(),
+    }
+    const log = new EventsLog(dir, { anchor: flaky })
+    await log.append({ ts: 't', cycle: 0, phase: 'idle', event: 'after-rollback' })
+
+    expect(await fileAnchor().read()).toEqual(stored)
+    await expect(new EventsLog(dir, { anchor: fileAnchor() }).prime()).rejects.toBeInstanceOf(
+      JournalRollbackError,
+    )
   })
 
   describe('API surfaces (default anchor from the environment)', () => {
@@ -236,6 +266,9 @@ describe('anchor stores', () => {
     )
     expect(anchorDir({ platform: 'linux', env: { XDG_STATE_HOME: '/xdg' }, home: '/home/u' })).toBe(
       join('/xdg', 'between', 'anchors'),
+    )
+    expect(anchorDir({ platform: 'linux', env: { XDG_STATE_HOME: 'rel' }, home: '/home/u' })).toBe(
+      join('/home/u', '.local', 'state', 'between', 'anchors'),
     )
     expect(
       anchorDir({

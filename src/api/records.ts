@@ -1,6 +1,6 @@
 import { SystemClock } from '../core/clock'
 import { replayStateFromEvents } from '../core/replay'
-import { EventsLog } from '../adapters/events-log'
+import { EventsLog, type AnchorStatus } from '../adapters/events-log'
 import { StateRepository } from '../adapters/state-repository'
 import { WorktreeProvider } from '../adapters/worktree'
 import { collectEvidence } from '../evidence/collect'
@@ -18,6 +18,8 @@ export interface JournalReport {
   entries: number
   /** present only when verification was requested. */
   integrity?: JournalIntegrity
+  /** present only when verification was requested: how the out-of-workspace anchor check went. */
+  anchor?: AnchorStatus
 }
 
 /** Count journal entries; with `verify`, walk the hash chain and check the head pinned in state. */
@@ -31,10 +33,12 @@ export async function inspectJournal(
   if (!state && events.length === 0) throw noStateError()
   if (!opts.verify) return { entries: events.length }
   const result = await log.verifyAll(state?.journal ?? null)
-  if (result.valid) return { entries: events.length, integrity: { status: 'verified' } }
+  const anchor = result.anchor.status
+  if (result.valid) return { entries: events.length, integrity: { status: 'verified' }, anchor }
   if (!result.chain.valid) {
     return {
       entries: events.length,
+      anchor,
       integrity: {
         status: 'broken',
         broken_at: result.chain.brokenAt ?? null,
@@ -45,7 +49,7 @@ export async function inspectJournal(
   const reason = !result.head.ok
     ? (result.head.reason ?? 'head pin mismatch')
     : (result.anchor.reason ?? 'journal anchor mismatch')
-  return { entries: events.length, integrity: { status: 'tampered', reason } }
+  return { entries: events.length, integrity: { status: 'tampered', reason }, anchor }
 }
 
 /**

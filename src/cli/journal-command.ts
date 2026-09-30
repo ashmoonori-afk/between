@@ -31,6 +31,12 @@ export function registerJournalCommand(program: Command): void {
         }
         if (integrity.status === 'verified') {
           print(`between: journal chain VERIFIED (${report.entries} entries, untampered + pinned)`)
+          if (report.anchor === 'unavailable') {
+            printErr(
+              'between: warning - the journal anchor store could not be read, so a rollback of ' +
+                '.between/ was NOT checked',
+            )
+          }
         } else if (integrity.status === 'broken') {
           printErr(
             `between: journal chain BROKEN at entry ${integrity.broken_at} - ${integrity.reason}`,

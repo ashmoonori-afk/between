@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { realpathSync } from 'node:fs'
 import { mkdir, readFile, rm } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { isAbsolute, join, resolve } from 'node:path'
 import { execa } from 'execa'
 import writeFileAtomic from 'write-file-atomic'
 import type { ChainHead } from '../core/journal'
@@ -203,7 +203,9 @@ export function anchorDir(opts: AnchorPlatform = {}): string {
   if (platform === 'darwin') {
     return join(home, 'Library', 'Application Support', 'between', 'anchors')
   }
-  return join(env.XDG_STATE_HOME || join(home, '.local', 'state'), 'between', 'anchors')
+  // the XDG spec says to ignore a relative XDG_STATE_HOME
+  const xdg = env.XDG_STATE_HOME && isAbsolute(env.XDG_STATE_HOME) ? env.XDG_STATE_HOME : ''
+  return join(xdg || join(home, '.local', 'state'), 'between', 'anchors')
 }
 
 /**

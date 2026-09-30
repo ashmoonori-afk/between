@@ -84,14 +84,20 @@ runs `between journal --reset-anchor` (CLI only, not exposed over MCP).
 
 What this does and does not stop:
 
-- It stops a writer that is confined to the workspace: a sandboxed agent (for example Codex
-  `workspace-write`), or a restore/copy of the repository directory. They cannot move the anchor.
+- It stops a writer that is confined to the workspace from rolling back or rewriting the journal
+  up to the anchored entry: a sandboxed agent (for example Codex `workspace-write`), or a
+  restore/copy of the repository directory. They cannot move the anchor. The chain hash is not
+  keyed, so such a writer can still append well-formed entries *after* the anchored head while the
+  broker is stopped; the anchor protects the recorded prefix, not future entries.
 - It does **not** stop a process running unsandboxed as the same OS user: it can run
   `/usr/bin/security` or write the anchor file, and it can run `between journal --reset-anchor`.
   The anchor turns a silent file rollback into a deliberate out-of-workspace act, not an
   impossible one.
-- If the store is unavailable (locked keychain, unwritable directory), Between warns once on
-  stderr and runs without rollback detection rather than refusing to start.
+- If the store cannot be read (locked keychain, unreadable or corrupt anchor), Between warns once
+  on stderr, runs without rollback detection rather than refusing to start, and does not write the
+  anchor from that process, so the stored head is never replaced by an unchecked one.
+  `between journal --verify` still prints VERIFIED for the chain but warns that the rollback check
+  did not run (the API reports `anchor: "unavailable"`).
 
 Follow-ups for a full OS boundary: run agents as a separate OS user that cannot write `.between/`
 or the anchor store; restrict the keychain item's access list to a signed Between helper; sign
