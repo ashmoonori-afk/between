@@ -2,9 +2,10 @@
 // Pack-and-run smoke test: proves the packed artifact works through `npx` and as a library,
 // independent of the source tree. Usage: `npm run build && npm run smoke:pack`.
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { withWorkDir } from './smoke-cleanup.mjs'
 
 const repo = resolve(import.meta.dirname, '..')
 const { name, version } = JSON.parse(readFileSync(join(repo, 'package.json'), 'utf8'))
@@ -75,7 +76,7 @@ function check(label, output, expected) {
   process.stdout.write(`ok - ${label}\n`)
 }
 
-try {
+await withWorkDir(work, async () => {
   // npm 10 still runs `prepare` on pack and its build log shares stdout, so locate the tarball
   // on disk instead of parsing `npm pack --json`.
   run('npm', ['pack', '--pack-destination', work], repo)
@@ -139,7 +140,4 @@ try {
     run('node', ['human.mjs'], consumer),
     'human=function core-approve=false',
   )
-} finally {
-  // Windows keeps a just-exited child's cwd locked briefly (EBUSY); rmSync retries those errors.
-  rmSync(work, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 })
-}
+})
