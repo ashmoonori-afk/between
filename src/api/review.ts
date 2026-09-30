@@ -5,7 +5,12 @@ import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { execa } from 'execa'
 import { fetchSubjectText } from '../review/fetch-subject'
-import { ModelNameError, suggestModels, validateModelName } from '../review/models'
+import {
+  CLAUDE_MODEL_NOTE,
+  ModelNameError,
+  suggestModels,
+  validateModelName,
+} from '../review/models'
 import { GitAdapter, GitError } from '../adapters/git'
 import { betweenPaths } from '../adapters/paths'
 import { redactSecrets } from '../core/redact'
@@ -212,8 +217,10 @@ async function selectModel(
 ): Promise<{ model: string; note?: string }> {
   const validated = validateModelName(model)
   if (reviewer === 'fake') return { model: validated }
+  if (reviewer === 'claude') return { model: validated, note: CLAUDE_MODEL_NOTE }
   const available = (await discover())[reviewer]
-  if (available.source !== 'static' && !available.models.includes(validated)) {
+  const accepted = available.accepted ?? available.models
+  if (available.source !== 'static' && !accepted.includes(validated)) {
     const suggestions = suggestModels(validated, available.models)
     const hint = suggestions.length > 0 ? ` Did you mean: ${suggestions.join(', ')}?` : ''
     throw invalid(
@@ -403,6 +410,14 @@ function isInside(root: string, path: string): boolean {
   return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
 }
 
+export function isPathInsideProject(projectRoot: string, path: string): boolean {
+  const lexical = resolve(path)
+  const canonical = canonicalOrSelf(lexical)
+  return projectRoots(projectRoot).some(
+    (root) => isInside(root, lexical) || isInside(root, canonical),
+  )
+}
+
 /**
  * Find the reviewer CLI on the (already filtered) PATH ourselves and refuse any candidate whose
  * canonical path lies inside the project, so a repository-controlled `claude`/`codex` binary can
@@ -544,8 +559,7 @@ async function spawnReviewer(
   let commandArgs = args
   if (/\.(cmd|bat)$/i.test(binary)) {
     const entry = await npmShimEntry(binary)
-    const roots = projectRoots(opts.projectRoot)
-    if (!entry || roots.some((root) => isInside(root, entry))) {
+    if (!entry || isPathInsideProject(opts.projectRoot, entry)) {
       throw new BetweenApiError(
         'reviewer_failed',
         `${preset} resolves to a batch file (${binary}) that is not an npm shim outside the project; install the native ${preset} CLI or pick another reviewer`,

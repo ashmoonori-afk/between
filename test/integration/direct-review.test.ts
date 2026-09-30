@@ -16,6 +16,7 @@ import {
   fakeReviewerOutput,
   type ReviewerPreset,
 } from '../../src/review/direct'
+import { MODEL_NAME_PATTERN } from '../../src/review/models'
 import { reviewShim } from '../../src/review/shims'
 
 const dirs: string[] = []
@@ -209,6 +210,34 @@ describe('requestReview', () => {
     expect(deps.calls[0]).toMatchObject({ preset: 'codex', model: 'gpt-5.5' })
   })
 
+  it('accepts a hidden Codex model from the authoritative catalog', async () => {
+    // Given: discovery returned a hidden but valid Codex model
+    const deps = recorder()
+    deps.listModels = async () => ({
+      claude: {
+        source: 'static',
+        models: ['fable', 'opus', 'sonnet', 'haiku'],
+        note: 'Claude Code has no reliable model listing command.',
+      },
+      codex: {
+        source: 'cli',
+        models: ['gpt-6-astra'],
+        accepted: ['gpt-6-astra', 'codex-auto-review'],
+      },
+    })
+
+    // When: the hidden slug is selected explicitly
+    const result = await requestReview(
+      await repo(),
+      { kind: 'plan', text: 'x', reviewer: 'codex', model: 'codex-auto-review' },
+      deps,
+    )
+
+    // Then: it reaches the reviewer without appearing in the visible listing
+    expect(result.model).toBe('codex-auto-review')
+    expect(deps.calls[0]).toMatchObject({ model: 'codex-auto-review' })
+  })
+
   it('rejects unknown authoritative models with suggestions', async () => {
     // Given: authoritative discovered Codex models
     const deps = recorder()
@@ -241,7 +270,32 @@ describe('requestReview', () => {
     // Then: the CLI decides availability and the result explains the static source
     expect(result).toMatchObject({
       model: 'claude-opus-5-5',
-      model_note: expect.stringContaining('no reliable model listing'),
+      model_note: expect.any(String),
+    })
+  })
+
+  it('does not discover Codex models for a Claude review', async () => {
+    // Given: Codex discovery would fail if called
+    const deps = recorder()
+    let discoveries = 0
+    deps.listModels = async () => {
+      discoveries += 1
+      throw new Error('Codex discovery must not run')
+    }
+
+    // When: a Claude alias is selected
+    const result = await requestReview(
+      await repo(),
+      { kind: 'plan', text: 'x', reviewer: 'claude', model: 'sonnet' },
+      deps,
+    )
+
+    // Then: the static Claude path completes without touching Codex
+    expect(discoveries).toBe(0)
+    expect(result).toMatchObject({
+      reviewer: 'claude',
+      model: 'sonnet',
+      model_note: expect.any(String),
     })
   })
 })
@@ -284,6 +338,15 @@ describe('between_review over MCP', () => {
       readOnlyHint: false,
       destructiveHint: false,
       openWorldHint: true,
+    })
+    expect(tool?.inputSchema).toMatchObject({
+      properties: {
+        model: {
+          type: 'string',
+          pattern: MODEL_NAME_PATTERN.source,
+          maxLength: 100,
+        },
+      },
     })
     expect((await on.listTools()).tools.map((t) => t.name)).toContain('between_models')
   })

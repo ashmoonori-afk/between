@@ -1,9 +1,11 @@
 import { z } from 'zod'
 
 export const CLAUDE_MODELS = ['fable', 'opus', 'sonnet', 'haiku'] as const
+export const CLAUDE_MODEL_NOTE =
+  'Claude Code does not provide a reliable machine-readable model listing command.'
 export const CODEX_FALLBACK_MODELS = ['gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna', 'gpt-5.5'] as const
 
-const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,99}$/
+export const MODEL_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:[\]-]{0,99}$/
 const ModelNameSchema = z.string().regex(MODEL_NAME_PATTERN)
 const CodexModelsSchema = z
   .object({
@@ -39,12 +41,17 @@ export class ModelNameError extends Error {
   }
 }
 
+export interface CodexModelCatalog {
+  readonly models: readonly string[]
+  readonly accepted: readonly string[]
+}
+
 export function validateModelName(model: string): string {
   if (!MODEL_NAME_PATTERN.test(model)) throw new ModelNameError(model)
   return model
 }
 
-export function parseCodexModels(output: string): readonly string[] {
+export function parseCodexModels(output: string): CodexModelCatalog {
   let value: unknown
   try {
     value = JSON.parse(output)
@@ -56,8 +63,10 @@ export function parseCodexModels(output: string): readonly string[] {
   const models = parsed.data.models
     .filter((model) => model.visibility === 'list')
     .map((model) => model.slug)
-  if (models.length === 0) throw new ModelDataError('Codex model listing had no visible models')
-  return [...new Set(models)]
+  return {
+    models: [...new Set(models)],
+    accepted: [...new Set(parsed.data.models.map((model) => model.slug))],
+  }
 }
 
 export function suggestModels(requested: string, available: readonly string[]): readonly string[] {

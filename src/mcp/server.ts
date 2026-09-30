@@ -16,6 +16,7 @@ import { evaluatePolicy, runConfiguredVerification } from '../api/checks'
 import { submitBrokerCommand, type BrokerControl } from '../api/broker'
 import { requestReview, type ReviewDeps } from '../api/review'
 import { HOST_AGENTS, REVIEW_KINDS, hostFromClientName } from '../review/direct'
+import { MODEL_NAME_PATTERN } from '../review/models'
 
 export interface BetweenMcpOptions {
   /** absolute, canonical project root; every tool is pinned to it (tools take no `root`). */
@@ -77,6 +78,8 @@ const ReviewArgs = z
     reviewer: z.enum(HOST_AGENTS).optional().describe('force a reviewer agent'),
     model: z
       .string()
+      .regex(MODEL_NAME_PATTERN)
+      .max(100)
       .optional()
       .describe('reviewer model; omit for the reviewer CLI default. See between_models.'),
     from: z

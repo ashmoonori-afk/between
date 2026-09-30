@@ -88,12 +88,13 @@ Routing: `reviewer` > the other agent of `from` > the preset in `reviewer_comman
 `.between/config.yaml`. A fake reviewer is never picked implicitly and cannot be chosen over MCP.
 When `model` is omitted, Between passes no model flag, so the reviewer CLI keeps its current
 default. `between_models` runs only `codex debug models` with a five-second timeout and bounded
-output, caches valid visible models for 24 hours in the platform user cache, and falls back to a
-small verified static list if the CLI is missing, old, timed out, failed, or returned malformed
-data. `refresh: true` bypasses that cache. Claude Code has no reliable machine-readable listing,
-so its list is the documented aliases from
-[Claude Code model configuration](https://docs.anthropic.com/en/docs/claude-code/model-config);
-safe full model names are also accepted and delegated to Claude Code.
+output, caches the valid catalog for 24 hours in the platform user cache, lists only visible
+models, and still accepts valid hidden slugs. It falls back to a small verified static list if the
+CLI is missing, old, timed out, failed, or returned malformed data. `refresh: true` bypasses that
+cache. Claude Code has no reliable machine-readable listing, so its list is the documented
+aliases from
+[Claude Code model configuration](https://code.claude.com/docs/en/model-config); safe full model
+names are also accepted and delegated to Claude Code.
 The reviewer is the same CLI the broker wrappers use, with your existing sign-in (no new keys),
 started in an empty temporary directory, never the project, with no way to read the disk:
 `claude -p --safe-mode --tools "" --strict-mcp-config --disable-slash-commands` (no built-in

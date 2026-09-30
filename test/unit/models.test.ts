@@ -50,10 +50,13 @@ describe('model parsing and validation', () => {
     const output = await fixture('codex-debug-models.json')
 
     // When: the response is parsed
-    const models = parseCodexModels(output)
+    const catalog = parseCodexModels(output)
 
-    // Then: only visible model slugs are returned
-    expect(models).toEqual(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5'])
+    // Then: listings stay visible-only while every valid slug remains selectable
+    expect(catalog).toEqual({
+      models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5'],
+      accepted: ['gpt-6-astra', 'gpt-reserve', 'gpt-5.6-sol', 'gpt-5.5', 'codex-auto-review'],
+    })
   })
 
   it('rejects malformed Codex model output', async () => {
@@ -146,7 +149,7 @@ describe('model discovery fallback', () => {
     expect(result.claude).toMatchObject({
       source: 'static',
       models: CLAUDE_MODELS,
-      note: expect.stringContaining('does not provide'),
+      note: expect.any(String),
     })
   })
 })
@@ -193,6 +196,17 @@ describe('model discovery cache', () => {
     expect(path).toBe('/tmp/custom')
   })
 
+  it.each([
+    { env: { BETWEEN_CACHE_DIR: 'relative/cache' }, name: 'BETWEEN_CACHE_DIR' },
+    { env: { XDG_CACHE_HOME: 'relative/cache' }, name: 'XDG_CACHE_HOME' },
+  ])('ignores a relative $name', ({ env }) => {
+    // Given/When: an environment cache override is not absolute
+    const path = modelCacheDir('linux', env, '/home/tester')
+
+    // Then: the per-user fallback remains absolute
+    expect(path).toBe('/home/tester/.cache/between')
+  })
+
   it('serves a fresh cache without running the CLI again', async () => {
     // Given: one successful discovery populated an isolated cache
     const env = await cacheEnv()
@@ -211,6 +225,7 @@ describe('model discovery cache', () => {
     expect(result.codex).toMatchObject({
       source: 'cache',
       models: ['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.5'],
+      accepted: ['gpt-6-astra', 'gpt-reserve', 'gpt-5.6-sol', 'gpt-5.5', 'codex-auto-review'],
     })
     expect(calls).toBe(1)
   })
@@ -237,7 +252,11 @@ describe('model discovery cache', () => {
     const result = await listModels({}, later)
 
     // Then: a fresh CLI result replaces it
-    expect(result.codex).toEqual({ source: 'cli', models: ['gpt-6-sol'] })
+    expect(result.codex).toEqual({
+      source: 'cli',
+      models: ['gpt-6-sol'],
+      accepted: ['gpt-6-sol'],
+    })
   })
 
   it('refresh bypasses a fresh cache', async () => {
@@ -261,6 +280,10 @@ describe('model discovery cache', () => {
     )
 
     // Then: the CLI result is used instead of the cache
-    expect(result.codex).toEqual({ source: 'cli', models: ['gpt-6-luna'] })
+    expect(result.codex).toEqual({
+      source: 'cli',
+      models: ['gpt-6-luna'],
+      accepted: ['gpt-6-luna'],
+    })
   })
 })

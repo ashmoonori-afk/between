@@ -141,6 +141,34 @@ describe('guarded Codex model discovery', () => {
     })
   })
 
+  it('falls back when an npm shim entry resolves inside the project', async () => {
+    // Given: an external cmd-shim points to repository-controlled JavaScript
+    const projectRoot = '/work/repo'
+    let ran = false
+
+    // When: models are refreshed
+    const result = await listModels(
+      { refresh: true, projectRoot },
+      {
+        ...(await baseDeps('darwin')),
+        reviewerEnv: () => ({ PATH: '/tools/bin' }),
+        resolveReviewerBinary: async () => '/tools/bin/codex.cmd',
+        npmShimEntry: async () => `${projectRoot}/scripts/codex.js`,
+        runModelCommand: async () => {
+          ran = true
+          throw new Error('must not execute')
+        },
+      },
+    )
+
+    // Then: repository JavaScript never receives Codex credentials
+    expect(ran).toBe(false)
+    expect(result.codex).toMatchObject({
+      source: 'static',
+      note: expect.stringContaining('inside the project'),
+    })
+  })
+
   it('falls back when guarded resolution cannot find Codex', async () => {
     // Given: no installed Codex binary can be resolved
     const result = await listModels(

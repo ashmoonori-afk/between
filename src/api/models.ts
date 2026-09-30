@@ -1,24 +1,31 @@
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile } from 'node:fs/promises'
 import { homedir as osHomedir } from 'node:os'
 import { join, posix, win32 } from 'node:path'
-import { execa } from 'execa'
+import writeFileAtomic from 'write-file-atomic'
 import { z } from 'zod'
 import {
+  CLAUDE_MODEL_NOTE,
   CLAUDE_MODELS,
   CODEX_FALLBACK_MODELS,
   parseCodexModels,
   validateModelName,
+  type CodexModelCatalog,
 } from '../review/models'
+import {
+  ModelDiscoveryUnavailable,
+  runCodexModelCommand,
+  type CodexModelCommandDeps,
+  type ModelCommandResult,
+} from './model-command'
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000
-const DISCOVERY_TIMEOUT_MS = 5_000
-const MAX_DISCOVERY_OUTPUT_BYTES = 1024 * 1024
 const CACHE_FILE = 'review-models.json'
 
 const CacheSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   fetched_at: z.string().datetime(),
-  models: z.array(z.string()).min(1),
+  models: z.array(z.string()),
+  accepted: z.array(z.string()).min(1),
 })
 
 export type ModelSource = 'cli' | 'cache' | 'static'
@@ -26,6 +33,7 @@ export type ModelSource = 'cli' | 'cache' | 'static'
 export interface ReviewerModels {
   readonly source: ModelSource
   readonly models: readonly string[]
+  readonly accepted?: readonly string[]
   readonly note?: string
 }
 
@@ -34,38 +42,14 @@ export interface ModelsResult {
   readonly codex: ReviewerModels
 }
 
-export interface ModelCommandResult {
-  readonly stdout: string
-  readonly stderr: string
-  readonly exitCode: number | null
-  readonly timedOut: boolean
-}
+export type { ModelCommandInvocation, ModelCommandResult } from './model-command'
 
-export interface ModelCommandInvocation {
-  readonly command: string
-  readonly args: readonly string[]
-  readonly cwd: string
-  readonly env: Readonly<Record<string, string>>
-}
-
-export interface ModelDiscoveryDeps {
+export interface ModelDiscoveryDeps extends CodexModelCommandDeps {
   readonly env?: NodeJS.ProcessEnv
   readonly homedir?: () => string
   readonly now?: () => Date
   readonly platform?: NodeJS.Platform
   readonly runCodexModels?: () => Promise<ModelCommandResult>
-  readonly reviewerEnv?: (
-    preset: 'codex',
-    projectRoot: string,
-    baseEnv: NodeJS.ProcessEnv,
-  ) => Record<string, string>
-  readonly resolveReviewerBinary?: (
-    name: string,
-    env: Record<string, string>,
-    projectRoot: string,
-  ) => Promise<string | null>
-  readonly npmShimEntry?: (shimPath: string) => Promise<string | null>
-  readonly runModelCommand?: (invocation: ModelCommandInvocation) => Promise<ModelCommandResult>
 }
 
 export interface ListModelsOptions {
@@ -78,12 +62,19 @@ export function modelCacheDir(
   env: NodeJS.ProcessEnv,
   home: string,
 ): string {
-  if (env.BETWEEN_CACHE_DIR) return env.BETWEEN_CACHE_DIR
+  const paths = platform === 'win32' ? win32 : posix
+  if (env.BETWEEN_CACHE_DIR && paths.isAbsolute(env.BETWEEN_CACHE_DIR)) {
+    return env.BETWEEN_CACHE_DIR
+  }
   if (platform === 'win32') {
     return win32.join(env.LOCALAPPDATA ?? win32.join(home, 'AppData', 'Local'), 'between', 'Cache')
   }
   if (platform === 'darwin') return posix.join(home, 'Library', 'Caches', 'between')
-  return posix.join(env.XDG_CACHE_HOME ?? posix.join(home, '.cache'), 'between')
+  const xdgCache =
+    env.XDG_CACHE_HOME && posix.isAbsolute(env.XDG_CACHE_HOME)
+      ? env.XDG_CACHE_HOME
+      : posix.join(home, '.cache')
+  return posix.join(xdgCache, 'between')
 }
 
 export async function listModels(
@@ -99,15 +90,16 @@ export async function listModels(
   const claude: ReviewerModels = {
     source: 'static',
     models: CLAUDE_MODELS,
-    note: 'Claude Code does not provide a reliable machine-readable model listing command.',
+    note: CLAUDE_MODEL_NOTE,
   }
 
   if (!options.refresh) {
     const cached = await readCache(cachePath, now)
-    if (cached) return { claude, codex: { source: 'cache', models: cached } }
+    if (cached) return { claude, codex: { source: 'cache', ...cached } }
   }
 
-  const run = deps.runCodexModels ?? (() => runCodexModelCommand(env, home, projectRoot, deps))
+  const run =
+    deps.runCodexModels ?? (() => runCodexModelCommand({ baseEnv: env, home, projectRoot }, deps))
   let result: ModelCommandResult
   try {
     result = await run()
@@ -129,9 +121,9 @@ export async function listModels(
     }
   }
 
-  let models: readonly string[]
+  let catalog: CodexModelCatalog
   try {
-    models = parseCodexModels(result.stdout)
+    catalog = parseCodexModels(result.stdout)
   } catch (error) {
     return {
       claude,
@@ -146,26 +138,24 @@ export async function listModels(
   let note: string | undefined
   try {
     await mkdir(cacheDir, { recursive: true })
-    await writeFile(
+    await writeFileAtomic(
       cachePath,
-      JSON.stringify({ version: 1, fetched_at: now.toISOString(), models }),
-      'utf8',
+      JSON.stringify({ version: 2, fetched_at: now.toISOString(), ...catalog }),
     )
   } catch (error) {
     note = `Models were discovered, but the cache could not be updated: ${errorMessage(error)}`
   }
   return {
     claude,
-    codex: { source: 'cli', models, ...(note ? { note } : {}) },
+    codex: { source: 'cli', ...catalog, ...(note ? { note } : {}) },
   }
 }
 
-async function readCache(path: string, now: Date): Promise<readonly string[] | null> {
+async function readCache(path: string, now: Date): Promise<CodexModelCatalog | null> {
   let text: string
   try {
     text = await readFile(path, 'utf8')
-  } catch (error) {
-    if (errorCode(error) === 'ENOENT') return null
+  } catch {
     return null
   }
   let value: unknown
@@ -179,64 +169,12 @@ async function readCache(path: string, now: Date): Promise<readonly string[] | n
   const age = now.getTime() - new Date(parsed.data.fetched_at).getTime()
   if (age < 0 || age > CACHE_TTL_MS) return null
   try {
-    return parsed.data.models.map(validateModelName)
+    return {
+      models: parsed.data.models.map(validateModelName),
+      accepted: parsed.data.accepted.map(validateModelName),
+    }
   } catch {
     return null
-  }
-}
-
-async function runCodexModelCommand(
-  baseEnv: NodeJS.ProcessEnv,
-  home: string,
-  projectRoot: string,
-  deps: ModelDiscoveryDeps,
-): Promise<ModelCommandResult> {
-  const guards = await import('./review')
-  const env = (deps.reviewerEnv ?? guards.reviewerEnv)('codex', projectRoot, baseEnv)
-  const binary = await (deps.resolveReviewerBinary ?? guards.resolveReviewerBinary)(
-    'codex',
-    env,
-    projectRoot,
-  )
-  if (!binary) {
-    throw new ModelDiscoveryUnavailable('Codex CLI was not found on PATH outside the project.')
-  }
-
-  let command = binary
-  let args = ['debug', 'models']
-  if (/\.(cmd|bat)$/i.test(binary)) {
-    const entry = await (deps.npmShimEntry ?? guards.npmShimEntry)(binary)
-    if (!entry) {
-      throw new ModelDiscoveryUnavailable(
-        `Codex resolves to a batch file (${binary}) that is not a trusted npm shim outside the project.`,
-      )
-    }
-    command = process.execPath
-    args = [entry, ...args]
-  }
-
-  const invocation: ModelCommandInvocation = { command, args, cwd: home, env }
-  if (deps.runModelCommand) return deps.runModelCommand(invocation)
-  const result = await execa(invocation.command, [...invocation.args], {
-    cwd: invocation.cwd,
-    env: { ...invocation.env },
-    extendEnv: false,
-    timeout: DISCOVERY_TIMEOUT_MS,
-    maxBuffer: MAX_DISCOVERY_OUTPUT_BYTES,
-    reject: false,
-  })
-  return {
-    stdout: String(result.stdout ?? ''),
-    stderr: String(result.stderr ?? ''),
-    exitCode: result.exitCode ?? null,
-    timedOut: result.timedOut,
-  }
-}
-
-class ModelDiscoveryUnavailable extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'ModelDiscoveryUnavailable'
   }
 }
 
