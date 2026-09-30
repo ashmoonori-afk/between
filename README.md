@@ -330,6 +330,8 @@ between journal
 between replay
 between cockpit
 between mcp [--root <path>] [--allow-control] [--allow-exec] [--allow-review]
+between mcp-install [claude|codex...] [--no-register] [--print]
+between mcp-uninstall [claude|codex...] [--no-register] [--print]
 between review [file|-] [--kind diff|answer|plan] [--text <t>] [--url <u>] [--base <ref>] [--context <t>] [--focus <t>] [--criterion <t>]... [--reviewer claude|codex|fake] [--from claude|codex] [--json]
 between review-shim claude|codex [--force] [--print]
 between ide [--builder-agents <n>] [--reviewer-agents <n>] [--rules-mode project_only|inherit_global] [--permission-mode read_only|guard|full_access] [--working-folder <relative-path>] [--followup-mode steer|queue] [--print-cli builder|reviewer|builder:n|reviewer:n] [--json]
@@ -373,6 +375,29 @@ From inside a running Claude Code or Codex session you can ask the *other* agent
 independent review without starting the broker. The subject does not have to be a repo diff:
 it can be an agent's answer or a plan/spec.
 
+Install the review-enabled MCP server and short quick-review commands for both clients from the
+repository you want to review:
+
+```bash
+npx -y between-dev mcp-install
+```
+
+This adds `/bqr` to Claude Code and `$bqr` to Codex. Both review the current working-tree diff
+against `HEAD`; pass a focus, `--base <ref>`, or `--model <name>` when needed. Use
+`npx -y between-dev models` to list available models. The installer registers the `between` MCP
+server with `between_review` enabled and pins Codex to the current absolute project root.
+
+The generated files carry a managed sha256 marker. Re-running the installer updates only an
+unmodified managed file; an unmarked or user-edited file is reported and left byte-for-byte
+unchanged. Remove only managed, unmodified files and registrations with:
+
+```bash
+npx -y between-dev mcp-uninstall
+```
+
+Pass `claude` or `codex` to either command to limit the host, `--no-register` to manage files
+only, or `--print` to preview every file and command without changing anything.
+
 | Kind | Subject | Rubric |
 | --- | --- | --- |
 | `diff` | working tree vs `HEAD` (or `--base <ref>`), or a diff as text/file | correctness, regressions, security, tests, maintainability |
@@ -398,7 +423,7 @@ A review sends the subject to the reviewer's model provider and costs a model ca
 tool is off until you start the server with `--allow-review`. URL subjects are fetched only
 from public addresses (loopback, private, and link-local ranges are refused on every redirect).
 
-**Claude Code**
+**Manual alternative: Claude Code**
 
 ```bash
 # 1. register the MCP server with the review tool enabled
@@ -410,7 +435,7 @@ npx -y between-dev review-shim claude
 Then in the session: `/between-review plan docs/plan.md`, `/between-review answer`, or just ask
 "get a between review of this diff".
 
-**Codex**
+**Manual alternative: Codex**
 
 ```bash
 # 1. ~/.codex/config.toml

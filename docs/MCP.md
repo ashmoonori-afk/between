@@ -174,6 +174,22 @@ written to the server's stderr only.
 Replace `/abs/path/to/repo` with the repository Between manages. Add `--allow-control` and/or
 `--allow-exec` to the args only if you want those tools.
 
+### Install with the CLI
+
+From the repository to review, install the review-enabled `between` server and the short
+quick-review commands for Claude Code and Codex:
+
+```bash
+npx -y between-dev mcp-install
+```
+
+This installs `/bqr` for Claude Code and `$bqr` for Codex. Pass a host name to limit the
+installation, `--no-register` to install command files only, or `--print` to preview without
+changes. Managed files are updated or removed only while their sha256 marker still matches;
+unmarked and user-edited files are left untouched. Uninstall with
+`npx -y between-dev mcp-uninstall`. The client-specific commands below remain available as the
+manual alternative.
+
 ### Claude Code
 
 Run from the repository (Claude Code starts the server in the project directory):
