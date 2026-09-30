@@ -106,6 +106,7 @@ describe('between mcp-install CLI', () => {
           'local',
           'between',
           '--',
+          ...(process.platform === 'win32' ? ['cmd', '/c'] : []),
           'npx',
           '-y',
           '--package=between-dev@0.2.0',

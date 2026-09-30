@@ -84,7 +84,7 @@ describe('MCP registration', () => {
     ])
   })
 
-  it('passes a space-containing Windows root as one argv entry without a shell', async () => {
+  it('runs a Windows host without a shell from a space-containing root, never pinning it', async () => {
     const runner = new FakeRunner((spec) => ({ exitCode: spec.args.includes('get') ? 1 : 0 }))
     const root = String.raw`C:\Users\John Doe\proj`
 
@@ -101,6 +101,7 @@ describe('MCP registration', () => {
       args: expect.arrayContaining(['cmd', '/c', 'npx']),
     })
     expect(runner.calls[1]?.args).not.toContain(root)
+    expect(runner.calls[1]?.cwd).toBe(root)
   })
 
   it('runs a Windows npm cmd shim through Node and its JavaScript entry', async () => {
