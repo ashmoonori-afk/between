@@ -20,6 +20,8 @@ function run(cmd, args, cwd, input) {
     encoding: 'utf8',
     timeout: 180_000,
     shell: process.platform === 'win32',
+    // keep throwaway smoke projects out of the developer's keychain / per-user anchor store
+    env: { ...process.env, BETWEEN_JOURNAL_ANCHOR: 'off' },
   }).trim()
 }
 
@@ -39,9 +41,19 @@ function mcpSession(npxArgs, cwd) {
     },
     { jsonrpc: '2.0', method: 'notifications/initialized' },
     { jsonrpc: '2.0', id: 2, method: 'tools/list' },
-    { jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'between_status', arguments: {} } },
+    {
+      jsonrpc: '2.0',
+      id: 3,
+      method: 'tools/call',
+      params: { name: 'between_status', arguments: {} },
+    },
   ]
-  const stdout = run('npx', ['--yes', ...npxArgs], cwd, requests.map((r) => JSON.stringify(r)).join('\n') + '\n')
+  const stdout = run(
+    'npx',
+    ['--yes', ...npxArgs],
+    cwd,
+    requests.map((r) => JSON.stringify(r)).join('\n') + '\n',
+  )
   const messages = stdout
     .split('\n')
     .filter((line) => line.trim())
@@ -67,7 +79,10 @@ try {
   // npm 10 still runs `prepare` on pack and its build log shares stdout, so locate the tarball
   // on disk instead of parsing `npm pack --json`.
   run('npm', ['pack', '--pack-destination', work], repo)
-  const tarball = join(work, readdirSync(work).find((f) => f.endsWith('.tgz')))
+  const tarball = join(
+    work,
+    readdirSync(work).find((f) => f.endsWith('.tgz')),
+  )
   const npx = (...args) => run('npx', ['--yes', '--package', tarball, 'between', ...args], project)
 
   mkdirSync(project)

@@ -8,6 +8,9 @@ export default defineConfig({
     testTimeout: 60_000,
     // serialize test FILES so the real-git integration suites don't contend on Windows (P3-11)
     fileParallelism: false,
+    // never write journal anchors into the developer's keychain / per-user state dir from tests;
+    // journal-anchor.test.ts injects its own temp store
+    env: { BETWEEN_JOURNAL_ANCHOR: 'off' },
     coverage: {
       provider: 'v8',
       include: ['src/core/**'],

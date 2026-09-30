@@ -3,6 +3,10 @@ import { existsSync } from 'node:fs'
 import type { BetweenEvent } from '../core/types'
 import { EVENT_SCHEMA_VERSION } from '../core/types'
 import { betweenPaths } from './paths'
+import { defaultJournalAnchor, JournalRollbackError, type JournalAnchor } from './journal-anchor'
+
+/** Outcome of the anchor check: `none` = no anchor recorded yet; `off` = anchoring disabled. */
+export type AnchorStatus = 'verified' | 'none' | 'unavailable' | 'off' | 'rolled_back'
 import {
   sealEntry,
   verifyChain,
@@ -29,9 +33,16 @@ export class EventsLog {
   private queue: Promise<void> = Promise.resolve()
   private lastHash: string | undefined // undefined until initialized from disk
   private lastSeq = -1
+  private readonly anchor: JournalAnchor | null
+  private anchoredCount = 0
+  private anchorChecked = false
+  private anchorUnavailable = false
+  private anchorWarned = false
 
-  constructor(root: string) {
+  /** `anchor` defaults to the per-user store chosen by `BETWEEN_JOURNAL_ANCHOR`; null disables it. */
+  constructor(root: string, opts: { anchor?: JournalAnchor | null } = {}) {
     this.path = betweenPaths(root).events
+    this.anchor = opts.anchor === undefined ? defaultJournalAnchor(root) : opts.anchor
   }
 
   append(event: Omit<BetweenEvent, 'v'>): Promise<void> {
@@ -47,6 +58,7 @@ export class EventsLog {
       await this.writeLine(JSON.stringify(sealed) + '\n')
       this.lastHash = sealed.hash
       this.lastSeq = seq
+      await this.advanceAnchor()
     })
     // queue advances with a swallowed copy so one failed write doesn't poison future appends
     this.queue = write.catch(() => {})
@@ -69,6 +81,7 @@ export class EventsLog {
   /** Seed the chain head from the last persisted entry (once, inside the write queue). */
   private async initChain(): Promise<void> {
     const entries = await this.read()
+    await this.assertAnchored(entries)
     const last = entries.at(-1) as { hash?: string; seq?: number } | undefined
     this.lastHash = typeof last?.hash === 'string' ? last.hash : GENESIS_HASH
     this.lastSeq = typeof last?.seq === 'number' ? last.seq : entries.length - 1
@@ -94,13 +107,115 @@ export class EventsLog {
    * Combined integrity check (single read): the hash chain AND the pinned head from state.json.
    * `valid` is true only when both hold — so tail-truncation (caught only by the pin) fails too.
    */
-  async verifyAll(
-    pin: ChainHead | null,
-  ): Promise<{ chain: ChainVerification; head: HeadVerification; valid: boolean }> {
+  async verifyAll(pin: ChainHead | null): Promise<{
+    chain: ChainVerification
+    head: HeadVerification
+    anchor: HeadVerification & { status: AnchorStatus }
+    valid: boolean
+  }> {
     const entries = (await this.read()) as unknown as JournalPayload[]
     const chain = verifyChain(entries)
     const head = verifyChainHead(entries, pin)
-    return { chain, head, valid: chain.valid && head.ok }
+    let anchor: HeadVerification & { status: AnchorStatus }
+    try {
+      anchor = { ok: true, status: await this.assertAnchored(entries) }
+    } catch (e) {
+      if (!(e instanceof JournalRollbackError)) throw e
+      anchor = { ok: false, reason: e.message, status: 'rolled_back' }
+    }
+    return { chain, head, anchor, valid: chain.valid && head.ok && anchor.ok }
+  }
+
+  /**
+   * Fail closed when the on-disk journal no longer contains the entry recorded in the anchor
+   * outside `.between/` (rollback or deletion of events.jsonl + state.json together). An anchor
+   * store that cannot be read (locked keychain, unreadable or corrupt anchor) is reported once and
+   * skipped, so a missing OS facility degrades detection instead of stopping the broker; this
+   * instance then also stops writing the anchor, so an unchecked (possibly rolled-back) journal can
+   * never overwrite the stored head with a lower one.
+   */
+  async assertAnchored(
+    entries?: ReadonlyArray<BetweenEvent | JournalPayload>,
+  ): Promise<Exclude<AnchorStatus, 'rolled_back'>> {
+    if (!this.anchor) return 'off'
+    let anchored: ChainHead | null
+    try {
+      anchored = await this.anchor.read()
+    } catch (e) {
+      this.anchorChecked = false
+      this.anchorUnavailable = true
+      this.warnAnchor(e)
+      return 'unavailable'
+    }
+    if (!anchored) {
+      if (!this.anchorUnavailable) this.anchorChecked = true
+      return 'none'
+    }
+    const onDisk = (entries ?? (await this.read())) as unknown as JournalPayload[]
+    if (!verifyChainHead(onDisk, anchored).ok) {
+      throw new JournalRollbackError(
+        `journal rolled back: events.jsonl has ${onDisk.length} entries and does not contain entry ` +
+          `#${anchored.count} (${anchored.hash.slice(0, 12)}) anchored in ${this.anchor.describe()}. ` +
+          'If you restored .between/ on purpose, run `between journal --reset-anchor`.',
+      )
+    }
+    this.anchoredCount = Math.max(this.anchoredCount, anchored.count)
+    if (!this.anchorUnavailable) this.anchorChecked = true
+    return 'verified'
+  }
+
+  /**
+   * Re-anchor to the journal as it is now (human recovery after an intentional restore). The chain
+   * itself must be intact; an empty journal clears the anchor. Returns the anchored head.
+   */
+  async resetAnchor(): Promise<ChainHead | null> {
+    if (!this.anchor) return null
+    const entries = (await this.read()) as unknown as JournalPayload[]
+    const chain = verifyChain(entries)
+    if (!chain.valid) {
+      throw new JournalRollbackError(
+        `journal chain is broken (${chain.reason ?? 'invalid'}); refusing to anchor it`,
+      )
+    }
+    const last = entries.at(-1) as { hash?: string } | undefined
+    if (!last?.hash) {
+      await this.anchor.clear()
+      this.anchoredCount = 0
+      return null
+    }
+    const head = { hash: last.hash, count: entries.length }
+    await this.anchor.write(head)
+    this.anchoredCount = head.count
+    this.anchorUnavailable = false
+    this.anchorChecked = true
+    return head
+  }
+
+  get anchorKind(): JournalAnchor['kind'] | null {
+    return this.anchor?.kind ?? null
+  }
+
+  /**
+   * Move the anchor forward to the in-memory head; never backwards, never fatal. Only after this
+   * instance has read the store and checked the journal against it: writing after a failed read
+   * could replace a higher stored head with a rolled-back one.
+   */
+  private async advanceAnchor(): Promise<void> {
+    const head = this.head()
+    if (!this.anchor || !this.anchorChecked || !head || head.count <= this.anchoredCount) return
+    try {
+      await this.anchor.write(head)
+      this.anchoredCount = head.count
+    } catch (e) {
+      this.warnAnchor(e)
+    }
+  }
+
+  private warnAnchor(e: unknown): void {
+    if (this.anchorWarned) return
+    this.anchorWarned = true
+    const msg = e instanceof Error ? e.message : String(e)
+    process.emitWarning(`between: journal anchor unavailable (${msg}); rollback detection is off`)
   }
 
   /** protected so tests can inject a write failure to exercise the append fail-safe (finding #2). */
