@@ -12,6 +12,14 @@ import {
   validateModelName,
 } from '../review/models'
 import { GitAdapter, GitError } from '../adapters/git'
+import {
+  isolatedReviewerLaunch,
+  isolationConfigPath,
+  makeIsolatedWorkdir,
+  readIsolationConfig,
+  removeIsolatedWorkdir,
+  type IsolationConfig,
+} from '../adapters/reviewer-isolation'
 import { betweenPaths } from '../adapters/paths'
 import { redactSecrets } from '../core/redact'
 import { isDeniedUntrackedPath } from '../core/untracked-policy'
@@ -532,6 +540,8 @@ async function runReviewerCli(
   opts: ReviewerRunOptions,
 ): Promise<string> {
   if (preset === 'fake') return fakeReviewerOutput(prompt)
+  const isolation = await loadReviewerIsolation()
+  if (isolation) return runIsolatedReviewer(isolation, preset, prompt, opts)
   const { created, workdir } = await makeReviewerWorkdir(opts.projectRoot)
   try {
     return await spawnReviewer(preset, prompt, workdir, opts)
@@ -568,18 +578,90 @@ async function spawnReviewer(
     command = process.execPath
     commandArgs = [entry, ...args]
   }
+  return execReviewer(preset, command, commandArgs, workdir, env, prompt, opts.timeoutMs)
+}
+
+/**
+ * Opt-in OS-user isolation (`between isolation setup`). A config that exists but cannot be used
+ * here fails the review closed instead of silently running the reviewer as the current user.
+ */
+async function loadReviewerIsolation(): Promise<IsolationConfig | null> {
+  const path = isolationConfigPath()
+  let config: IsolationConfig | null
+  try {
+    config = await readIsolationConfig(path)
+  } catch (e) {
+    throw new BetweenApiError('reviewer_failed', `reviewer isolation: ${(e as Error).message}`)
+  }
+  if (config && process.platform !== 'linux') {
+    throw new BetweenApiError(
+      'reviewer_failed',
+      `reviewer isolation is configured (${path}) but only supported on Linux; run \`between isolation remove\``,
+    )
+  }
+  return config
+}
+
+/**
+ * Run the reviewer CLI as the isolation user, in a temp dir that user owns. The CLI is resolved on
+ * sudo's secure_path (root-controlled), not the caller's PATH.
+ */
+async function runIsolatedReviewer(
+  config: IsolationConfig,
+  preset: 'claude' | 'codex',
+  prompt: string,
+  opts: ReviewerRunOptions,
+): Promise<string> {
+  let workdir: string
+  try {
+    workdir = await makeIsolatedWorkdir(config)
+  } catch (e) {
+    throw new BetweenApiError('reviewer_failed', `reviewer isolation: ${(e as Error).message}`)
+  }
+  try {
+    const { file, args } = reviewerInvocation(preset, workdir, opts.model)
+    const launch = isolatedReviewerLaunch(
+      config,
+      file,
+      args,
+      workdir,
+      reviewerEnv(preset, opts.projectRoot),
+    )
+    return await execReviewer(
+      preset,
+      launch.file,
+      launch.args,
+      '/',
+      launch.env,
+      prompt,
+      opts.timeoutMs,
+    )
+  } finally {
+    await removeIsolatedWorkdir(config, workdir)
+  }
+}
+
+async function execReviewer(
+  preset: 'claude' | 'codex',
+  command: string,
+  commandArgs: string[],
+  cwd: string,
+  env: Record<string, string>,
+  prompt: string,
+  timeoutMs: number,
+): Promise<string> {
   const r = await execa(command, commandArgs, {
-    cwd: workdir,
+    cwd,
     input: prompt,
     env,
     extendEnv: false,
-    timeout: opts.timeoutMs,
+    timeout: timeoutMs,
     reject: false,
   })
   if (r.timedOut) {
     throw new BetweenApiError(
       'reviewer_failed',
-      `${preset} reviewer timed out after ${Math.round(opts.timeoutMs / 1000)}s`,
+      `${preset} reviewer timed out after ${Math.round(timeoutMs / 1000)}s`,
     )
   }
   const cause: unknown = r.cause

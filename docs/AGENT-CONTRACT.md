@@ -99,9 +99,72 @@ What this does and does not stop:
   `between journal --verify` still prints VERIFIED for the chain but warns that the rollback check
   did not run (the API reports `anchor: "unavailable"`).
 
-Follow-ups for a full OS boundary: run agents as a separate OS user that cannot write `.between/`
-or the anchor store; restrict the keychain item's access list to a signed Between helper; sign
-anchors with a key only the broker's OS user holds.
+### Reviewer isolation (opt-in, Linux)
+
+By default every agent runs as your OS user, with the limits described above. On Linux (including
+WSL) you can opt in to running the **direct reviewer** (`between review`, MCP `between_review`) as a
+separate OS user:
+
+```sh
+between isolation setup     # prints every command and file, asks before changing anything
+between isolation status    # off | active | broken | unsupported (also a line in `between doctor`)
+between isolation remove    # prints what it will delete, asks, then undoes setup
+```
+
+Setup never runs silently. It prints the exact commands and file contents, then waits for `y`.
+Without a terminal it changes nothing unless you pass `--yes`, and even then the plan is printed.
+It creates only what is missing:
+
+1. A system user `between-reviewer` (`useradd --system`, shell `/usr/sbin/nologin`, home
+   `/var/lib/between-reviewer`). `--user` picks another name.
+2. `/etc/sudoers.d/between-reviewer` with the single rule `<you> ALL=(between-reviewer) NOPASSWD:SETENV: ALL`.
+   The rule is first written as `between-reviewer.pending`, which sudo ignores because of the dot,
+   and only moves into place after `visudo -cf` accepts it.
+3. The opt-in file `~/.config/between/reviewer-isolation.json` (`$XDG_CONFIG_HOME` is respected).
+   It lives outside every project.
+
+After setup, install the reviewer CLI where that user can run it: a system-wide install on sudo's
+`secure_path`, for example `/usr/local/bin`. Then sign in as that user with
+`sudo -u between-reviewer -H codex login` (or `claude`).
+
+With isolation active, the review runs
+`sudo -n -u between-reviewer --preserve-env=<reviewer credential/network vars> -- env -C <dir> <cli> ...`.
+Here `<dir>` is a fresh `/tmp` directory owned by the reviewer user. The reviewer's own provider
+key is passed along; `PATH`, `HOME`, and temp variables are not. The CLI is looked up on sudo's
+root-controlled `secure_path`, not on your `PATH`. If isolation is configured but unusable (the user
+is missing, sudo would ask for a password, or the platform is not Linux), the review fails with
+`reviewer_failed`. It never falls back to running as you.
+
+`between isolation status` reports **active** only when all of the following hold:
+
+- the opt-in file exists;
+- the user exists;
+- `sudo -n` can switch to that user;
+- that user cannot write the anchor store, `.between/`, `events.jsonl`, or `state.json`.
+
+A path that does not exist yet is checked at its nearest existing parent. If your account already
+has broad passwordless sudo (common on WSL and CI images), the dedicated rule is redundant: the
+reviewer still runs as `between-reviewer`, but any process running as you can already become root.
+
+What each mode does and does not prevent:
+
+| Mode | Prevents | Does not prevent |
+| --- | --- | --- |
+| Default (off) | Workspace-confined writers moving the anchor (see above). | Any unsandboxed process running as you, including a reviewer CLI whose own sandbox fails, rewriting the anchor, the journal, or `state.json`. |
+| Isolation active (Linux) | The direct reviewer, even with its own sandbox off or broken, writing your anchor store, `.between/`, the journal, or `state.json`: it runs as a different uid that the probe shows cannot write them. It also has no access to your home directory's files beyond what is world-readable. | The **developer** agent and any other process running as you. They can delete the opt-in file, edit the sudoers rule with your sudo rights, or run `between journal --reset-anchor`. The broker-loop reviewer (`agent_mode` file/pty/oneshot through `reviewer_command`) still runs as you. Root. Anything world-writable on the machine. |
+| macOS / Windows | Nothing yet. `between isolation setup` refuses with "not implemented", and `status` reports `unsupported` (checked in CI). If an opt-in file exists anyway, direct reviews fail closed. | Everything listed for the default mode. |
+
+Follow-ups, not implemented and not claimed:
+
+- **Broker-loop reviewer on Linux.** Run `reviewer_command` as the isolation user. This needs ACLs
+  that let that user read the reviewer worktree and write only `.between/reviews` and signals.
+- **macOS.** A dedicated standard user created with `dscl` (or `sysadminctl`) and launched with
+  `sudo -u`, or a `sandbox-exec` profile that denies writes to the anchor store and `.between/`. The
+  keychain anchor would also need its access list restricted to a signed Between helper.
+- **Windows.** A separate local account (`CreateProcessWithLogonW`), or a restricted token or
+  AppContainer, plus an ACL deny-write entry on `%LOCALAPPDATA%\between\anchors` and `.between\`.
+- **Keyed anchors.** Sign anchors with a key that only the broker's OS user holds, so a same-user
+  process cannot forge an anchor.
 
 ### What stops the developer agent from writing review records
 

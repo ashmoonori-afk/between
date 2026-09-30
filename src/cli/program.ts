@@ -12,6 +12,7 @@ import { registerCockpitCommand } from './cockpit-command'
 import { registerForgeCommands } from './forge-commands'
 import { registerGatewayCommand } from './gateway-command'
 import { registerSetupCommands } from './setup-commands'
+import { registerIsolationCommand } from './isolation-command'
 import { registerIdeCommand } from './ide-command'
 import { registerMcpCommand } from './mcp-command'
 import { registerMcpInstallCommands } from './mcp-install-command'
@@ -24,6 +25,7 @@ export function buildProgram(): Command {
     .version(VERSION)
 
   registerSetupCommands(program)
+  registerIsolationCommand(program)
   registerBrokerCommands(program)
   registerEvidenceCommand(program)
   registerReviewCommand(program)

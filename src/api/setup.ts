@@ -5,6 +5,13 @@ import { AGENT_PRESETS, type AgentPreset } from '../core/constants'
 import { initProject, type InitResult } from '../adapters/init-project'
 import { GitAdapter } from '../adapters/git'
 import { StateRepository } from '../adapters/state-repository'
+import {
+  checkIsolation,
+  isolationConfigPath,
+  probeRunner,
+  protectedPathsFor,
+  type IsolationStatus,
+} from '../adapters/reviewer-isolation'
 import { loadConfig } from '../runtime'
 import { BetweenApiError } from './errors'
 
@@ -115,5 +122,21 @@ export async function runDoctor(
       ? '@lydell/node-pty available (terminal mode ready)'
       : 'node-pty unavailable (headless file-signal mode only)',
   })
+  checks.push(
+    isolationDoctorCheck(
+      await checkIsolation({
+        platform: process.platform,
+        configPath: isolationConfigPath(),
+        protectedPaths: protectedPathsFor(root),
+        runner: probeRunner,
+      }),
+    ),
+  )
   return { checks, ok: !checks.some((c) => c.ok === false) }
+}
+
+/** Off is the default and fine; configured-but-not-in-force fails so it is never mistaken for on. */
+export function isolationDoctorCheck(status: IsolationStatus): DoctorCheck {
+  const failed = status.state === 'broken' || (status.state === 'unsupported' && !!status.user)
+  return { ok: failed ? false : true, label: `reviewer isolation: ${status.detail}` }
 }
