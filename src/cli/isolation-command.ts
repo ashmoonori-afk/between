@@ -1,5 +1,4 @@
 import * as readline from 'node:readline/promises'
-import { userInfo } from 'node:os'
 import type { Command } from 'commander'
 import {
   DEFAULT_REVIEWER_USER,
@@ -52,22 +51,23 @@ export function registerIsolationCommand(program: Command): void {
   isolation
     .command('setup')
     .description(
-      'Print what will be created (user, sudoers rule, opt-in file), confirm, then create it',
+      'Print what will be created (user, sudoers rule, root-owned opt-in), confirm, then create it',
     )
-    .option('--user <name>', 'reviewer OS user to create or reuse', DEFAULT_REVIEWER_USER)
+    .option('--user <name>', 'new reviewer OS user to create', DEFAULT_REVIEWER_USER)
     .option('--yes', 'confirm without prompting (the plan is still printed)')
     .action(async (opts: { user: string; yes?: boolean }) => {
       try {
         const configPath = isolationConfigPath()
+        const invokingUid = process.getuid?.() ?? -1
         const plan = planIsolationSetup({
           platform: process.platform,
           user: opts.user,
-          invokingUser: userInfo().username,
+          invokingUid,
           configPath,
           facts:
-            process.platform === 'linux'
+            process.platform === 'linux' && configPath
               ? await probeHostFacts(opts.user, configPath)
-              : { userExists: false, sudoersExists: false, configExists: false },
+              : { userExists: false, configExists: false },
         })
         await confirmAndRun(plan, Boolean(opts.yes))
       } catch (e) {
@@ -78,23 +78,16 @@ export function registerIsolationCommand(program: Command): void {
   isolation
     .command('remove')
     .description(
-      'Print what will be removed (sudoers rule, user, opt-in file), confirm, then remove it',
+      'Print what will be removed (sudoers rule, user, opt-in), confirm, then remove it; only touches what setup created',
     )
-    .option('--user <name>', 'reviewer OS user (default: the configured one)')
     .option('--yes', 'confirm without prompting (the plan is still printed)')
-    .action(async (opts: { user?: string; yes?: boolean }) => {
+    .action(async (opts: { yes?: boolean }) => {
       try {
         const configPath = isolationConfigPath()
-        const configured = await readIsolationConfig(configPath).catch(() => null)
-        const user = opts.user ?? configured?.user ?? DEFAULT_REVIEWER_USER
         const plan = planIsolationRemoval({
           platform: process.platform,
-          user,
           configPath,
-          facts:
-            process.platform === 'linux'
-              ? await probeHostFacts(user, configPath)
-              : { userExists: false, sudoersExists: false, configExists: false },
+          config: await readIsolationConfig(configPath),
         })
         await confirmAndRun(plan, Boolean(opts.yes))
       } catch (e) {

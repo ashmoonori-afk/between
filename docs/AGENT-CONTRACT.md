@@ -113,46 +113,60 @@ between isolation remove    # prints what it will delete, asks, then undoes setu
 
 Setup never runs silently. It prints the exact commands and file contents, then waits for `y`.
 Without a terminal it changes nothing unless you pass `--yes`, and even then the plan is printed.
-It creates only what is missing:
+Every command it runs as root is an absolute path (`/usr/bin/sudo /usr/sbin/useradd ...`), so a fake
+`sudo` on a workspace-controlled `PATH` (npx, npm scripts) is never used. Setup creates:
 
-1. A system user `between-reviewer` (`useradd --system`, shell `/usr/sbin/nologin`, home
-   `/var/lib/between-reviewer`). `--user` picks another name.
-2. `/etc/sudoers.d/between-reviewer` with the single rule `<you> ALL=(between-reviewer) NOPASSWD:SETENV: ALL`.
-   The rule is first written as `between-reviewer.pending`, which sudo ignores because of the dot,
-   and only moves into place after `visudo -cf` accepts it.
-3. The opt-in file `~/.config/between/reviewer-isolation.json` (`$XDG_CONFIG_HOME` is respected).
-   It lives outside every project.
+1. A **new** system user `between-reviewer` (`useradd --system`, shell `/usr/sbin/nologin`, home
+   `/var/lib/between-reviewer`). `--user` picks another name. Setup refuses `root` and any account
+   that already exists, so it never repurposes a real account.
+2. `/etc/sudoers.d/between-reviewer` with the single rule `#<your uid> ALL=(between-reviewer)
+   NOPASSWD:SETENV: ALL`. Setup refuses if that file already exists. The rule is first written as
+   `between-reviewer.pending`, which sudo ignores because of the dot, and only moves into place after
+   `visudo -cf` accepts it.
+3. The opt-in `/etc/between/reviewer-isolation/<your uid>.json`: root-owned, mode 0644, recording
+   the reviewer user and the uid `useradd` assigned. It is not read from any environment variable,
+   so a process running as you cannot switch isolation off without root.
 
-After setup, install the reviewer CLI where that user can run it: a system-wide install on sudo's
-`secure_path`, for example `/usr/local/bin`. Then sign in as that user with
-`sudo -u between-reviewer -H codex login` (or `claude`).
+`remove` acts only on the recorded user. It first checks that the user still has the recorded uid
+and that the sudoers file is missing or holds exactly the rule setup wrote; if either check fails,
+it changes nothing.
 
-With isolation active, the review runs
-`sudo -n -u between-reviewer --preserve-env=<reviewer credential/network vars> -- env -C <dir> <cli> ...`.
-Here `<dir>` is a fresh `/tmp` directory owned by the reviewer user. The reviewer's own provider
-key is passed along; `PATH`, `HOME`, and temp variables are not. The CLI is looked up on sudo's
-root-controlled `secure_path`, not on your `PATH`. If isolation is configured but unusable (the user
-is missing, sudo would ask for a password, or the platform is not Linux), the review fails with
-`reviewer_failed`. It never falls back to running as you.
+After setup, install the reviewer CLI where that user can run it. sudo looks the CLI up on its
+`secure_path` (Debian/Ubuntu include `/usr/local/bin`), or on `/usr/bin:/bin` when `secure_path` is
+not set. Then sign in as that user with `sudo -u between-reviewer -H codex login` (or `claude`).
+The launch uses `env -C`, so it needs GNU coreutils 8.28 or later (not busybox).
+
+Before **every** isolated review, Between re-runs the full status check, then runs
+`sudo -n -u between-reviewer --preserve-env=<vars> -- /usr/bin/env -C <dir> <cli> ...`. Here `<dir>`
+is a fresh `/tmp` directory owned by the reviewer user. Only the reviewer's own provider key,
+proxy/CA variables, and locale variables pass. Its `HOME`, `PATH`, and config directories
+(`CODEX_HOME`, `XDG_*`, ...) are its own. A reviewer that times out is killed, along with anything
+still running as the reviewer user. If isolation is configured but not in force, the review fails
+with `reviewer_failed`; it never falls back to running as you.
 
 `between isolation status` reports **active** only when all of the following hold:
 
-- the opt-in file exists;
-- the user exists;
+- the opt-in exists;
+- the user still has the recorded uid;
 - `sudo -n` can switch to that user;
-- that user cannot write the anchor store, `.between/`, `events.jsonl`, or `state.json`.
+- one probe, run as that user, answers read-only for every protected path.
 
-A path that does not exist yet is checked at its nearest existing parent. If your account already
-has broad passwordless sudo (common on WSL and CI images), the dedicated rule is redundant: the
-reviewer still runs as `between-reviewer`, but any process running as you can already become root.
+The protected paths are this project's anchor file, `events.jsonl`, and `state.json`, plus every
+existing directory above each of them, up to `/`. A writable parent would let the reviewer swap the
+whole subtree. A sticky directory such as `/tmp` counts as safe unless the reviewer owns it. Any
+missing or unexpected probe answer is reported as **broken**, never as active.
+
+If your account already has broad passwordless sudo (common on WSL and CI images), the dedicated
+rule is redundant: the reviewer still runs as `between-reviewer`, but any process running as you
+can already become root.
 
 What each mode does and does not prevent:
 
 | Mode | Prevents | Does not prevent |
 | --- | --- | --- |
 | Default (off) | Workspace-confined writers moving the anchor (see above). | Any unsandboxed process running as you, including a reviewer CLI whose own sandbox fails, rewriting the anchor, the journal, or `state.json`. |
-| Isolation active (Linux) | The direct reviewer, even with its own sandbox off or broken, writing your anchor store, `.between/`, the journal, or `state.json`: it runs as a different uid that the probe shows cannot write them. It also has no access to your home directory's files beyond what is world-readable. | The **developer** agent and any other process running as you. They can delete the opt-in file, edit the sudoers rule with your sudo rights, or run `between journal --reset-anchor`. The broker-loop reviewer (`agent_mode` file/pty/oneshot through `reviewer_command`) still runs as you. Root. Anything world-writable on the machine. |
-| macOS / Windows | Nothing yet. `between isolation setup` refuses with "not implemented", and `status` reports `unsupported` (checked in CI). If an opt-in file exists anyway, direct reviews fail closed. | Everything listed for the default mode. |
+| Isolation active (Linux) | The direct reviewer, even with its own sandbox off or broken, writing or replacing your anchor file, the journal, `state.json`, or any directory above them. It runs as a different uid, and the probe checks this before every review. It also cannot read your non-world-readable files. The opt-in cannot be switched off without root. | The **developer** agent and any other process running as you. The NOPASSWD rule lets them act as `between-reviewer`: read its credentials, and edit its config or global instructions (`~/.codex/AGENTS.md`, `~/.claude/CLAUDE.md` in `/var/lib/between-reviewer`) to steer its verdicts. They can also rewrite your anchor directly and run `between journal --reset-anchor`, and, if you have sudo without a password, do anything as root. The broker-loop reviewer (`agent_mode` file/pty/oneshot through `reviewer_command`) still runs as you. Root. |
+| macOS / Windows | Nothing yet. `between isolation setup` refuses with "not implemented", and `status` reports `unsupported` (checked in CI). An opt-in file at the Linux path (`/etc/between/...`) on macOS makes direct reviews fail closed. | Everything listed for the default mode. |
 
 Follow-ups, not implemented and not claimed:
 

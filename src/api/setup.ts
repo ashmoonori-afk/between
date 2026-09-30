@@ -137,6 +137,6 @@ export async function runDoctor(
 
 /** Off is the default and fine; configured-but-not-in-force fails so it is never mistaken for on. */
 export function isolationDoctorCheck(status: IsolationStatus): DoctorCheck {
-  const failed = status.state === 'broken' || (status.state === 'unsupported' && !!status.user)
+  const failed = status.state === 'broken' || (status.state === 'unsupported' && !!status.config)
   return { ok: failed ? false : true, label: `reviewer isolation: ${status.detail}` }
 }

@@ -1,28 +1,28 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, rm } from 'node:fs/promises'
-import { homedir } from 'node:os'
-import { dirname, isAbsolute, join, resolve } from 'node:path'
+import { readFile } from 'node:fs/promises'
+import { dirname, join, resolve } from 'node:path'
 import { execa } from 'execa'
-import writeFileAtomic from 'write-file-atomic'
-import { anchorDir } from './journal-anchor'
+import { anchorDir, anchorId } from './journal-anchor'
 import { betweenPaths } from './paths'
 
 /**
  * Opt-in reviewer isolation: run the direct-review reviewer CLI as a dedicated OS user that
  * cannot write the invoking user's journal anchor, `.between/` journal, or `state.json`.
  *
- * Linux only for now: a system user plus a sudoers rule that lets the invoking user (and nobody
- * else) start commands as that user without a password. macOS and Windows are documented
- * follow-ups (docs/AGENT-CONTRACT.md); setup refuses there instead of claiming isolation.
+ * Linux only for now: a system user plus a sudoers rule that lets the invoking uid (and nobody
+ * else) start commands as that user without a password. The opt-in is a root-owned file under
+ * /etc, so a process running as the invoking user cannot switch isolation off without root.
+ * macOS and Windows are documented follow-ups (docs/AGENT-CONTRACT.md); setup refuses there.
  *
- * The switch lives outside the workspace (per-user config dir), so a workspace-confined writer
- * cannot turn it off. It does not stop a process running as the invoking user, which can delete
- * the config file; see the threat model.
+ * Every command run as root is an absolute path: `between` may be started with a
+ * workspace-controlled PATH (npx, npm scripts), and a fake `sudo` or `useradd` there must not run.
  */
 export interface IsolationConfig {
   schema_version: 1
   platform: 'linux'
   user: string
+  uid: number
+  invoking_uid: number
   method: 'sudo'
 }
 
@@ -34,16 +34,20 @@ export interface IsolationRunResult {
 export type IsolationRunner = (
   file: string,
   args: string[],
-  opts?: { input?: string },
+  opts?: { input?: string; capture?: boolean },
 ) => Promise<IsolationRunResult>
 
-export interface IsolationStep {
-  description: string
-  command?: string[]
-  input?: string
-  writeConfig?: { path: string; content: IsolationConfig }
-  removeFile?: string
-}
+export type IsolationStep =
+  | { kind: 'run'; description: string; command: string[]; input?: string }
+  | { kind: 'verify-uid'; description: string; user: string; uid: number }
+  | { kind: 'verify-file'; description: string; path: string; content: string }
+  | {
+      kind: 'write-config'
+      description: string
+      path: string
+      user: string
+      invokingUid: number
+    }
 
 export type IsolationPlan =
   | { supported: true; user: string; steps: IsolationStep[]; after: string[] }
@@ -51,12 +55,15 @@ export type IsolationPlan =
 
 export interface HostFacts {
   userExists: boolean
-  sudoersExists: boolean
   configExists: boolean
 }
 
 export const DEFAULT_REVIEWER_USER = 'between-reviewer'
-const SUDO = '/usr/bin/sudo'
+export const ISOLATION_CONFIG_DIR = '/etc/between/reviewer-isolation'
+export const SUDO = '/usr/bin/sudo'
+const ID = '/usr/bin/id'
+const SH = '/bin/sh'
+const ENV = '/usr/bin/env'
 const USER_NAME = /^[a-z_][a-z0-9_-]{0,30}$/
 const UNSUPPORTED =
   'reviewer isolation is not implemented on this platform yet (Linux only); see "Reviewer isolation" in docs/AGENT-CONTRACT.md for the planned macOS/Windows design'
@@ -65,34 +72,31 @@ const sudoersPath = (user: string) => `/etc/sudoers.d/${user}`
 // sudo ignores sudoers.d entries containing a '.', so the rule is inert until visudo accepts it
 const pendingSudoersPath = (user: string) => `${sudoersPath(user)}.pending`
 const reviewerHome = (user: string) => `/var/lib/${user}`
+export const sudoersRule = (invokingUid: number, user: string) =>
+  `#${invokingUid} ALL=(${user}) NOPASSWD:SETENV: ALL\n`
 
 function assertUserName(user: string): void {
-  if (!USER_NAME.test(user)) {
-    throw new Error(`invalid reviewer user name ${JSON.stringify(user)}: use [a-z_][a-z0-9_-]*`)
+  if (!USER_NAME.test(user) || user === 'root') {
+    throw new Error(
+      `invalid reviewer user name ${JSON.stringify(user)}: use [a-z_][a-z0-9_-]* (not root)`,
+    )
   }
 }
 
-/** Per-user config dir, outside any project. `BETWEEN_REVIEWER_ISOLATION_CONFIG` overrides. */
+/** The root-owned opt-in for `uid`, or null where isolation cannot exist (Windows). */
 export function isolationConfigPath(
-  opts: { env?: NodeJS.ProcessEnv; home?: string; platform?: NodeJS.Platform } = {},
-): string {
-  const env = opts.env ?? process.env
-  if (env.BETWEEN_REVIEWER_ISOLATION_CONFIG) return env.BETWEEN_REVIEWER_ISOLATION_CONFIG
-  const home = opts.home ?? homedir()
+  opts: { platform?: NodeJS.Platform; uid?: number } = {},
+): string | null {
   const platform = opts.platform ?? process.platform
-  if (platform === 'win32') {
-    return join(
-      env.APPDATA || join(home, 'AppData', 'Roaming'),
-      'between',
-      'reviewer-isolation.json',
-    )
-  }
-  const xdg = env.XDG_CONFIG_HOME && isAbsolute(env.XDG_CONFIG_HOME) ? env.XDG_CONFIG_HOME : ''
-  return join(xdg || join(home, '.config'), 'between', 'reviewer-isolation.json')
+  if (platform === 'win32') return null
+  const uid = opts.uid ?? process.getuid?.()
+  if (uid === undefined) return null
+  return `${ISOLATION_CONFIG_DIR}/${uid}.json`
 }
 
 /** The saved isolation config, or null when isolation was never set up. Malformed throws. */
-export async function readIsolationConfig(path: string): Promise<IsolationConfig | null> {
+export async function readIsolationConfig(path: string | null): Promise<IsolationConfig | null> {
+  if (!path) return null
   let raw: string
   try {
     raw = await readFile(path, 'utf8')
@@ -106,79 +110,118 @@ export async function readIsolationConfig(path: string): Promise<IsolationConfig
   } catch {
     throw new Error(`reviewer isolation config ${path} is not valid JSON`)
   }
+  const positiveInt = (n: unknown) => typeof n === 'number' && Number.isInteger(n) && n > 0
   if (
     !v ||
     v.schema_version !== 1 ||
     v.platform !== 'linux' ||
     v.method !== 'sudo' ||
     typeof v.user !== 'string' ||
-    !USER_NAME.test(v.user)
+    !USER_NAME.test(v.user) ||
+    v.user === 'root' ||
+    !positiveInt(v.uid) ||
+    typeof v.invoking_uid !== 'number' ||
+    !Number.isInteger(v.invoking_uid) ||
+    v.uid === v.invoking_uid
   ) {
     throw new Error(`reviewer isolation config ${path} is malformed`)
   }
-  return { schema_version: 1, platform: 'linux', user: v.user, method: 'sudo' }
+  return {
+    schema_version: 1,
+    platform: 'linux',
+    user: v.user,
+    uid: v.uid as number,
+    invoking_uid: v.invoking_uid,
+    method: 'sudo',
+  }
 }
 
 export function planIsolationSetup(opts: {
   platform: NodeJS.Platform
   user: string
-  invokingUser: string
-  configPath: string
+  invokingUid: number
+  configPath: string | null
   facts: HostFacts
 }): IsolationPlan {
   assertUserName(opts.user)
-  if (opts.platform !== 'linux') return { supported: false, reason: UNSUPPORTED }
-  assertUserName(opts.invokingUser)
-  const { user } = opts
-  const steps: IsolationStep[] = []
-  if (!opts.facts.userExists) {
-    steps.push({
-      description: `create the system user ${user} (no login shell, home ${reviewerHome(user)})`,
-      command: [
-        'sudo',
-        'useradd',
-        '--system',
-        '--create-home',
-        '--home-dir',
-        reviewerHome(user),
-        '--shell',
-        '/usr/sbin/nologin',
-        user,
-      ],
-    })
+  if (opts.platform !== 'linux' || !opts.configPath) {
+    return { supported: false, reason: UNSUPPORTED }
   }
-  if (!opts.facts.sudoersExists) {
-    const pending = pendingSudoersPath(user)
-    steps.push(
-      {
-        description: `write the sudoers rule letting ${opts.invokingUser} run commands as ${user} without a password (inert until checked)`,
-        command: ['sudo', 'tee', pending],
-        input: `${opts.invokingUser} ALL=(${user}) NOPASSWD:SETENV: ALL\n`,
-      },
-      {
-        description: 'make the rule root-only readable',
-        command: ['sudo', 'chmod', '0440', pending],
-      },
-      { description: 'check the rule with visudo', command: ['sudo', 'visudo', '-cf', pending] },
-      {
-        description: 'activate the checked rule',
-        command: ['sudo', 'mv', pending, sudoersPath(user)],
-      },
+  const { user } = opts
+  if (opts.facts.configExists) {
+    return {
+      supported: true,
+      user,
+      steps: [],
+      after: ['Isolation is already set up. Check it with: between isolation status'],
+    }
+  }
+  if (opts.facts.userExists) {
+    throw new Error(
+      `the user ${user} already exists and was not created by \`between isolation setup\`; refusing to reuse it. Pick another --user, or remove that account yourself if it is a leftover.`,
     )
   }
-  steps.push({
-    description: 'record the opt-in (outside any project)',
-    writeConfig: {
-      path: opts.configPath,
-      content: { schema_version: 1, platform: 'linux', user, method: 'sudo' },
-    },
-  })
+  const pending = pendingSudoersPath(user)
   return {
     supported: true,
     user,
-    steps,
+    steps: [
+      {
+        kind: 'run',
+        description: `create the system user ${user} (no login shell, home ${reviewerHome(user)})`,
+        command: [
+          SUDO,
+          '/usr/sbin/useradd',
+          '--system',
+          '--create-home',
+          '--home-dir',
+          reviewerHome(user),
+          '--shell',
+          '/usr/sbin/nologin',
+          user,
+        ],
+      },
+      {
+        kind: 'run',
+        description: `refuse to overwrite an existing ${sudoersPath(user)}`,
+        command: [SUDO, SH, '-c', 'test ! -e "$1"', 'sh', sudoersPath(user)],
+      },
+      {
+        kind: 'run',
+        description: `write the sudoers rule letting uid ${opts.invokingUid} (you) run commands as ${user} without a password (inert until checked)`,
+        command: [SUDO, '/usr/bin/tee', pending],
+        input: sudoersRule(opts.invokingUid, user),
+      },
+      {
+        kind: 'run',
+        description: 'make the rule root-only readable',
+        command: [SUDO, '/bin/chmod', '0440', pending],
+      },
+      {
+        kind: 'run',
+        description: 'check the rule with visudo',
+        command: [SUDO, '/usr/sbin/visudo', '-cf', pending],
+      },
+      {
+        kind: 'run',
+        description: 'activate the checked rule',
+        command: [SUDO, '/bin/mv', pending, sudoersPath(user)],
+      },
+      {
+        kind: 'run',
+        description: 'create the root-owned opt-in directory',
+        command: [SUDO, '/bin/mkdir', '-p', ISOLATION_CONFIG_DIR],
+      },
+      {
+        kind: 'write-config',
+        description: 'record the opt-in (root-owned, mode 0644, outside any project)',
+        path: opts.configPath,
+        user,
+        invokingUid: opts.invokingUid,
+      },
+    ],
     after: [
-      `Install the reviewer CLI where ${user} can run it (a system-wide install on sudo's secure_path, e.g. /usr/local/bin), then sign it in as that user: sudo -u ${user} -H codex login (or claude). Between passes only the reviewer's own provider API key from your environment.`,
+      `Install the reviewer CLI where ${user} can run it: on sudo's secure_path (e.g. /usr/local/bin on Debian/Ubuntu) or in /usr/bin. Then sign it in as that user: sudo -u ${user} -H codex login (or claude). Between passes only the reviewer's own provider API key, proxy/CA, and locale variables from your environment.`,
       'Check with: between isolation status (or between doctor).',
     ],
   }
@@ -186,44 +229,138 @@ export function planIsolationSetup(opts: {
 
 export function planIsolationRemoval(opts: {
   platform: NodeJS.Platform
-  user: string
-  configPath: string
-  facts: HostFacts
+  configPath: string | null
+  config: IsolationConfig | null
 }): IsolationPlan {
-  assertUserName(opts.user)
-  if (opts.platform !== 'linux') return { supported: false, reason: UNSUPPORTED }
-  const { user } = opts
-  const steps: IsolationStep[] = []
-  if (opts.facts.sudoersExists) {
-    steps.push({
-      description: `remove the sudoers rule for ${user}`,
-      command: ['sudo', 'rm', '-f', sudoersPath(user)],
-    })
+  if (opts.platform !== 'linux' || !opts.configPath) {
+    return { supported: false, reason: UNSUPPORTED }
   }
-  if (opts.facts.userExists) {
-    steps.push({
-      description: `delete the user ${user} and its home (its reviewer CLI sign-in goes too)`,
-      command: ['sudo', 'userdel', '--remove', user],
-    })
+  const { config } = opts
+  if (!config) {
+    return {
+      supported: true,
+      user: DEFAULT_REVIEWER_USER,
+      steps: [],
+      after: ['Reviewer isolation is not set up; nothing to remove.'],
+    }
   }
-  if (opts.facts.configExists) {
-    steps.push({ description: 'forget the opt-in', removeFile: opts.configPath })
+  const { user } = config
+  return {
+    supported: true,
+    user,
+    steps: [
+      {
+        kind: 'verify-uid',
+        description: `check that ${user} is still the account setup created (uid ${config.uid})`,
+        user,
+        uid: config.uid,
+      },
+      {
+        kind: 'verify-file',
+        description: `check that ${sudoersPath(user)} is missing or holds exactly the rule setup wrote`,
+        path: sudoersPath(user),
+        content: sudoersRule(config.invoking_uid, user),
+      },
+      {
+        kind: 'run',
+        description: `remove the sudoers rule for ${user}`,
+        command: [SUDO, '/bin/rm', '-f', sudoersPath(user)],
+      },
+      {
+        kind: 'run',
+        description: `delete the user ${user} and its home (its reviewer CLI sign-in goes too)`,
+        command: [SUDO, '/usr/sbin/userdel', '--remove', user],
+      },
+      {
+        kind: 'run',
+        description: 'remove the opt-in',
+        command: [SUDO, '/bin/rm', '-f', opts.configPath],
+      },
+    ],
+    after: [],
   }
-  return { supported: true, user, steps, after: [] }
+}
+
+function configPreview(step: Extract<IsolationStep, { kind: 'write-config' }>): string {
+  return `{"schema_version":1,"platform":"linux","user":"${step.user}","uid":<uid useradd assigned>,"invoking_uid":${step.invokingUid},"method":"sudo"}`
 }
 
 function describeStep(step: IsolationStep): string[] {
   const lines = [`  - ${step.description}`]
-  if (step.command) lines.push(`      $ ${step.command.join(' ')}`)
-  if (step.input !== undefined) {
-    for (const l of step.input.trimEnd().split('\n')) lines.push(`      | ${l}`)
+  if (step.kind === 'run') {
+    lines.push(`      $ ${step.command.join(' ')}`)
+    if (step.input !== undefined) {
+      for (const l of step.input.trimEnd().split('\n')) lines.push(`      | ${l}`)
+    }
+  } else if (step.kind === 'write-config') {
+    lines.push(`      $ ${SUDO} /usr/bin/tee ${step.path}`)
+    lines.push(`      | ${configPreview(step)}`)
+    lines.push(`      $ ${SUDO} /bin/chmod 0644 ${step.path}`)
+  } else if (step.kind === 'verify-uid') {
+    lines.push(`      $ ${ID} -u ${step.user}   (must print ${step.uid})`)
+  } else {
+    lines.push(`      $ ${SUDO} ${SH} -c '[ ! -e "$1" ] || cat "$1"' sh ${step.path}`)
   }
-  if (step.writeConfig) {
-    lines.push(`      write ${step.writeConfig.path}:`)
-    lines.push(`      | ${JSON.stringify(step.writeConfig.content)}`)
-  }
-  if (step.removeFile) lines.push(`      delete ${step.removeFile}`)
   return lines
+}
+
+function firstLine(r: IsolationRunResult): string {
+  return r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`
+}
+
+async function uidOf(user: string, runner: IsolationRunner): Promise<number | null> {
+  const r = await runner(ID, ['-u', user], { capture: true })
+  const uid = Number(r.stdout.trim())
+  return r.exitCode === 0 && Number.isInteger(uid) && r.stdout.trim() !== '' ? uid : null
+}
+
+async function runStep(step: IsolationStep, runner: IsolationRunner): Promise<void> {
+  if (step.kind === 'run') {
+    const [file, ...args] = step.command
+    const r = await runner(file!, args, step.input === undefined ? {} : { input: step.input })
+    if (r.exitCode !== 0) {
+      throw new Error(`step failed: ${step.command.join(' ')}: ${firstLine(r)}`)
+    }
+    return
+  }
+  if (step.kind === 'verify-uid') {
+    const uid = await uidOf(step.user, runner)
+    if (uid !== step.uid) {
+      throw new Error(
+        `refusing: ${step.user} has uid ${uid ?? 'none'}, not the uid ${step.uid} that setup created`,
+      )
+    }
+    return
+  }
+  if (step.kind === 'verify-file') {
+    const r = await runner(SUDO, [SH, '-c', '[ ! -e "$1" ] || cat "$1"', 'sh', step.path], {
+      capture: true,
+    })
+    if (r.exitCode !== 0) throw new Error(`could not read ${step.path}: ${firstLine(r)}`)
+    if (r.stdout !== '' && r.stdout !== step.content) {
+      throw new Error(`refusing: ${step.path} is not the rule setup wrote; left untouched`)
+    }
+    return
+  }
+  const uid = await uidOf(step.user, runner)
+  if (uid === null || uid <= 0 || uid === step.invokingUid) {
+    throw new Error(`refusing to record ${step.user}: unexpected uid ${uid ?? 'none'}`)
+  }
+  const content: IsolationConfig = {
+    schema_version: 1,
+    platform: 'linux',
+    user: step.user,
+    uid,
+    invoking_uid: step.invokingUid,
+    method: 'sudo',
+  }
+  for (const [args, input] of [
+    [['/usr/bin/tee', step.path], `${JSON.stringify(content, null, 2)}\n`],
+    [['/bin/chmod', '0644', step.path], undefined],
+  ] as const) {
+    const r = await runner(SUDO, [...args], input === undefined ? {} : { input })
+    if (r.exitCode !== 0) throw new Error(`step failed: sudo ${args.join(' ')}: ${firstLine(r)}`)
+  }
 }
 
 export type PlanOutcome = 'applied' | 'declined' | 'nothing-to-do'
@@ -243,7 +380,7 @@ export async function runIsolationPlan(
   },
 ): Promise<PlanOutcome> {
   if (plan.steps.length === 0) {
-    io.print('between: nothing to do')
+    for (const line of plan.after) io.print(`between: ${line}`)
     return 'nothing-to-do'
   }
   io.print('between: this will run exactly the following (sudo may ask for your password):')
@@ -259,24 +396,17 @@ export async function runIsolationPlan(
       return 'declined'
     }
   }
-  for (const step of plan.steps) {
-    if (step.command) {
-      const [file, ...args] = step.command
-      const r = await io.runner(file!, args, step.input === undefined ? {} : { input: step.input })
-      if (r.exitCode !== 0) {
-        const detail = r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`
-        throw new Error(`step failed: ${step.command.join(' ')}: ${detail}`)
+  for (const [i, step] of plan.steps.entries()) {
+    try {
+      await runStep(step, io.runner)
+    } catch (e) {
+      if (i > 0) {
+        io.print(
+          `between: stopped after ${i} of ${plan.steps.length} steps; the earlier steps were applied (see the list above).`,
+        )
       }
+      throw e
     }
-    if (step.writeConfig) {
-      await mkdir(dirname(step.writeConfig.path), { recursive: true, mode: 0o700 })
-      await writeFileAtomic(
-        step.writeConfig.path,
-        `${JSON.stringify(step.writeConfig.content, null, 2)}\n`,
-        { mode: 0o600 },
-      )
-    }
-    if (step.removeFile) await rm(step.removeFile, { force: true })
   }
   for (const line of plan.after) io.print(line)
   return 'applied'
@@ -286,16 +416,21 @@ export type IsolationState = 'off' | 'active' | 'broken' | 'unsupported'
 export interface IsolationStatus {
   state: IsolationState
   detail: string
-  user?: string
+  config?: IsolationConfig
 }
 
+// W when the reviewer could replace the entry: writable, and not a sticky dir it does not own
+const PROBE =
+  'for p; do if test -w "$p" && { ! test -k "$p" || test -O "$p"; }; then echo W; else echo R; fi; done'
+
 /**
- * Whether isolation is really in force: the config exists, the reviewer user exists, sudo can
- * switch to it without a password, and that user cannot write any of `protectedPaths`.
+ * Whether isolation is really in force: the opt-in exists, the reviewer user still has the
+ * recorded uid, sudo can switch to it without a password, and that user cannot write (or replace)
+ * any of `protectedPaths`. A probe that does not answer for every path counts as broken.
  */
 export async function checkIsolation(opts: {
   platform: NodeJS.Platform
-  configPath: string
+  configPath: string | null
   protectedPaths: string[]
   runner: IsolationRunner
 }): Promise<IsolationStatus> {
@@ -313,35 +448,74 @@ export async function checkIsolation(opts: {
   }
   const { user } = config
   if (opts.platform !== 'linux') {
-    return { state: 'unsupported', detail: `configured for ${user}, but ${UNSUPPORTED}`, user }
+    return { state: 'unsupported', detail: `configured for ${user}, but ${UNSUPPORTED}`, config }
   }
-  if ((await opts.runner('id', ['-u', user])).exitCode !== 0) {
-    return { state: 'broken', detail: `the reviewer user ${user} does not exist`, user }
-  }
-  if ((await opts.runner(SUDO, ['-n', '-u', user, '--', 'true'])).exitCode !== 0) {
+  const uid = await uidOf(user, opts.runner)
+  if (uid !== config.uid) {
     return {
       state: 'broken',
-      detail: `sudo cannot run commands as ${user} without a password (sudoers rule missing?)`,
-      user,
+      detail: `the reviewer user ${user} ${uid === null ? 'does not exist' : `has uid ${uid}, not ${config.uid}`}`,
+      config,
     }
   }
-  const writable: string[] = []
-  for (const path of opts.protectedPaths) {
-    const r = await opts.runner(SUDO, ['-n', '-u', user, '--', 'test', '-w', path])
-    if (r.exitCode === 0) writable.push(path)
+  const r = await opts.runner(
+    SUDO,
+    ['-n', '-u', user, '--', SH, '-c', PROBE, 'sh', ...opts.protectedPaths],
+    { capture: true },
+  )
+  const answers = r.stdout.trim() === '' ? [] : r.stdout.trim().split('\n')
+  if (
+    r.exitCode !== 0 ||
+    answers.length !== opts.protectedPaths.length ||
+    answers.some((a) => a !== 'R' && a !== 'W')
+  ) {
+    return {
+      state: 'broken',
+      detail: `could not probe as ${user} (sudo -n failed or no answer: ${firstLine(r)})`,
+      config,
+    }
   }
+  const writable = opts.protectedPaths.filter((_, i) => answers[i] === 'W')
   if (writable.length > 0) {
-    return { state: 'broken', detail: `${user} can write ${writable.join(', ')}`, user }
+    return { state: 'broken', detail: `${user} can write ${writable.join(', ')}`, config }
   }
-  return { state: 'active', detail: `active: direct reviews run as ${user}`, user }
+  return { state: 'active', detail: `active: direct reviews run as ${user}`, config }
 }
 
-// the reviewer user keeps its own HOME/PATH/temp dir; only credentials and network settings pass
-const NOT_PASSED = new Set(['PATH', 'HOME', 'TMPDIR', 'TMP', 'TEMP', 'USER', 'LOGNAME', 'SHELL'])
+/**
+ * The config to run the reviewer under, or null when isolation is off (or cannot exist here).
+ * Throws when isolation is configured but not fully in force, so the review fails closed.
+ */
+export async function requireActiveIsolation(opts: {
+  platform: NodeJS.Platform
+  configPath: string | null
+  protectedPaths: string[]
+  runner: IsolationRunner
+}): Promise<IsolationConfig | null> {
+  const status = await checkIsolation(opts)
+  if (status.state === 'off' || (status.state === 'unsupported' && !status.config)) return null
+  if (status.state !== 'active' || !status.config) {
+    throw new Error(`reviewer isolation is configured but not in force: ${status.detail}`)
+  }
+  return status.config
+}
+
+const NETWORK_ENV = new Set([
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'NODE_EXTRA_CA_CERTS',
+  'SSL_CERT_FILE',
+  'SSL_CERT_DIR',
+])
+const LOCALE_ENV = new Set(['LANG', 'LANGUAGE', 'TZ'])
+const EXTRA_ENV = new Set(['CLAUDE_CODE_SUBPROCESS_ENV_SCRUB'])
 
 /**
- * The sudo invocation that runs `command` as the reviewer user in `workdir` with a filtered
- * environment. sudo keeps the caller's cwd, which the reviewer user cannot enter (and the caller
+ * The sudo invocation that runs `command` as the reviewer user in `workdir`. Only the reviewer's
+ * own credential variables plus proxy/CA and locale settings pass; its HOME, PATH, and config dirs
+ * are its own. sudo keeps the caller's cwd, which the reviewer user cannot enter (and the caller
  * cannot enter the reviewer's 0700 workdir), so `env -C` changes directory as the reviewer.
  */
 export function isolatedReviewerLaunch(
@@ -350,9 +524,22 @@ export function isolatedReviewerLaunch(
   args: string[],
   workdir: string,
   env: Record<string, string>,
+  credentialVars: readonly string[],
 ): { file: string; args: string[]; env: Record<string, string> } {
+  const credentials = new Set(credentialVars.map((k) => k.toUpperCase()))
   const passed: Record<string, string> = {}
-  for (const [k, v] of Object.entries(env)) if (!NOT_PASSED.has(k.toUpperCase())) passed[k] = v
+  for (const [k, v] of Object.entries(env)) {
+    const upper = k.toUpperCase()
+    if (
+      credentials.has(upper) ||
+      NETWORK_ENV.has(upper) ||
+      LOCALE_ENV.has(upper) ||
+      EXTRA_ENV.has(upper) ||
+      upper.startsWith('LC_')
+    ) {
+      passed[k] = v
+    }
+  }
   const keys = Object.keys(passed)
   return {
     file: SUDO,
@@ -362,7 +549,7 @@ export function isolatedReviewerLaunch(
       config.user,
       ...(keys.length ? [`--preserve-env=${keys.join(',')}`] : []),
       '--',
-      'env',
+      ENV,
       '-C',
       workdir,
       command,
@@ -372,10 +559,35 @@ export function isolatedReviewerLaunch(
   }
 }
 
+/**
+ * What the reviewer user must not be able to write or replace: this project's anchor file, its
+ * journal and `state.json`, and every existing directory above them (a writable ancestor would let
+ * it swap the whole subtree). A path that does not exist yet is covered by its existing ancestors.
+ */
+export function protectedPathsFor(root: string, anchorStore: string = anchorDir()): string[] {
+  const p = betweenPaths(root)
+  const targets = [join(anchorStore, `${anchorId(root)}.json`), p.events, p.state]
+  const out = new Set<string>()
+  for (const target of targets) {
+    let current = resolve(target)
+    if (existsSync(current)) out.add(current)
+    for (;;) {
+      const up = dirname(current)
+      if (up === current) break
+      current = up
+      if (existsSync(current)) out.add(current)
+    }
+  }
+  return [...out]
+}
+
 export const probeRunner: IsolationRunner = async (file, args, opts = {}) => {
   const r = await execa(file, args, {
     reject: false,
+    stripFinalNewline: false,
     timeout: 15_000,
+    extendEnv: false,
+    env: {},
     ...(opts.input === undefined ? { stdin: 'ignore' as const } : { input: opts.input }),
   })
   return {
@@ -385,15 +597,20 @@ export const probeRunner: IsolationRunner = async (file, args, opts = {}) => {
   }
 }
 
-/** Setup runner: sudo may prompt on the terminal; command output is shown, tee's echo is not. */
+/** Setup/remove runner: sudo may prompt on the terminal; output is shown unless captured. */
 export const interactiveRunner: IsolationRunner = async (file, args, opts = {}) => {
   const r = await execa(file, args, {
     reject: false,
-    stdout: opts.input === undefined ? 'inherit' : 'ignore',
+    stripFinalNewline: false,
+    stdout: opts.capture ? 'pipe' : opts.input === undefined ? 'inherit' : 'ignore',
     stderr: 'inherit',
     ...(opts.input === undefined ? { stdin: 'inherit' as const } : { input: opts.input }),
   })
-  return { exitCode: typeof r.exitCode === 'number' ? r.exitCode : -1, stdout: '', stderr: '' }
+  return {
+    exitCode: typeof r.exitCode === 'number' ? r.exitCode : -1,
+    stdout: opts.capture ? String(r.stdout ?? '') : '',
+    stderr: '',
+  }
 }
 
 export async function probeHostFacts(
@@ -402,40 +619,28 @@ export async function probeHostFacts(
   runner: IsolationRunner = probeRunner,
 ): Promise<HostFacts> {
   assertUserName(user)
-  const [id, sudoers, config] = await Promise.all([
-    runner('id', ['-u', user]),
-    // /etc/sudoers.d is root-only readable on most distros: ask sudo -n, fall back to "missing"
-    runner(SUDO, ['-n', '-u', user, '--', 'true']),
+  const [uid, config] = await Promise.all([
+    uidOf(user, runner),
     readFile(configPath).then(
       () => true,
       () => false,
     ),
   ])
-  return {
-    userExists: id.exitCode === 0,
-    sudoersExists: sudoers.exitCode === 0,
-    configExists: config,
-  }
+  return { userExists: uid !== null, configExists: config }
 }
 
 export async function makeIsolatedWorkdir(
   config: IsolationConfig,
   runner: IsolationRunner = probeRunner,
 ): Promise<string> {
-  const r = await runner(SUDO, [
-    '-n',
-    '-u',
-    config.user,
-    '--',
-    'mktemp',
-    '-d',
-    '/tmp/between-review-XXXXXXXX',
-  ])
+  const r = await runner(
+    SUDO,
+    ['-n', '-u', config.user, '--', '/bin/mktemp', '-d', '/tmp/between-review-XXXXXXXX'],
+    { capture: true },
+  )
   const path = r.stdout.trim()
-  if (r.exitCode !== 0 || !path.startsWith('/tmp/between-review-')) {
-    throw new Error(
-      `could not create the reviewer workdir as ${config.user}: ${r.stderr.trim().split('\n')[0] || `exit ${r.exitCode}`}`,
-    )
+  if (r.exitCode !== 0 || !/^\/tmp\/between-review-[A-Za-z0-9]{8}$/.test(path)) {
+    throw new Error(`could not create the reviewer workdir as ${config.user}: ${firstLine(r)}`)
   }
   return path
 }
@@ -445,28 +650,16 @@ export async function removeIsolatedWorkdir(
   path: string,
   runner: IsolationRunner = probeRunner,
 ): Promise<void> {
-  const r = await runner(SUDO, ['-n', '-u', config.user, '--', 'rm', '-rf', '--', path])
+  const r = await runner(SUDO, ['-n', '-u', config.user, '--', '/bin/rm', '-rf', '--', path])
   if (r.exitCode !== 0) {
     process.stderr.write(`between: could not remove reviewer temp dir ${path} as ${config.user}\n`)
   }
 }
 
-/**
- * What the reviewer user must not be able to write: the journal anchor store, `.between/`, the
- * journal, and `state.json`. A path that does not exist yet is checked at its nearest existing
- * ancestor, since a writable parent would let the reviewer create it.
- */
-export function protectedPathsFor(root: string, anchor: string = anchorDir()): string[] {
-  const p = betweenPaths(root)
-  return [...new Set([anchor, p.dir, p.events, p.state].map(nearestExisting))]
-}
-
-function nearestExisting(path: string): string {
-  let current = resolve(path)
-  while (!existsSync(current)) {
-    const up = dirname(current)
-    if (up === current) break
-    current = up
-  }
-  return current
+/** After a timeout: execa kills sudo, so also kill whatever still runs as the reviewer user. */
+export async function killReviewerProcesses(
+  config: IsolationConfig,
+  runner: IsolationRunner = probeRunner,
+): Promise<void> {
+  await runner(SUDO, ['-n', '-u', config.user, '--', '/usr/bin/pkill', '-KILL', '-u', config.user])
 }
