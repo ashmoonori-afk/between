@@ -244,8 +244,8 @@ export function createBetweenMcpServer(opts: BetweenMcpOptions): McpServer {
     z.object({ refresh: z.boolean().default(false) }).strict(),
     ({ refresh }) =>
       opts.reviewDeps?.listModels
-        ? opts.reviewDeps.listModels({ refresh })
-        : listModels({ refresh }),
+        ? opts.reviewDeps.listModels({ refresh, projectRoot: root })
+        : listModels({ refresh, projectRoot: root }),
   )
 
   tool(

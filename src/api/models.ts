@@ -41,16 +41,36 @@ export interface ModelCommandResult {
   readonly timedOut: boolean
 }
 
+export interface ModelCommandInvocation {
+  readonly command: string
+  readonly args: readonly string[]
+  readonly cwd: string
+  readonly env: Readonly<Record<string, string>>
+}
+
 export interface ModelDiscoveryDeps {
   readonly env?: NodeJS.ProcessEnv
   readonly homedir?: () => string
   readonly now?: () => Date
   readonly platform?: NodeJS.Platform
   readonly runCodexModels?: () => Promise<ModelCommandResult>
+  readonly reviewerEnv?: (
+    preset: 'codex',
+    projectRoot: string,
+    baseEnv: NodeJS.ProcessEnv,
+  ) => Record<string, string>
+  readonly resolveReviewerBinary?: (
+    name: string,
+    env: Record<string, string>,
+    projectRoot: string,
+  ) => Promise<string | null>
+  readonly npmShimEntry?: (shimPath: string) => Promise<string | null>
+  readonly runModelCommand?: (invocation: ModelCommandInvocation) => Promise<ModelCommandResult>
 }
 
 export interface ListModelsOptions {
   readonly refresh?: boolean
+  readonly projectRoot?: string
 }
 
 export function modelCacheDir(
@@ -73,6 +93,7 @@ export async function listModels(
   const env = deps.env ?? process.env
   const home = (deps.homedir ?? osHomedir)()
   const now = (deps.now ?? (() => new Date()))()
+  const projectRoot = options.projectRoot ?? process.cwd()
   const cacheDir = modelCacheDir(deps.platform ?? process.platform, env, home)
   const cachePath = join(cacheDir, CACHE_FILE)
   const claude: ReviewerModels = {
@@ -86,7 +107,7 @@ export async function listModels(
     if (cached) return { claude, codex: { source: 'cache', models: cached } }
   }
 
-  const run = deps.runCodexModels ?? (() => runCodexModelCommand(env, home))
+  const run = deps.runCodexModels ?? (() => runCodexModelCommand(env, home, projectRoot, deps))
   let result: ModelCommandResult
   try {
     result = await run()
@@ -165,12 +186,40 @@ async function readCache(path: string, now: Date): Promise<readonly string[] | n
 }
 
 async function runCodexModelCommand(
-  env: NodeJS.ProcessEnv,
+  baseEnv: NodeJS.ProcessEnv,
   home: string,
+  projectRoot: string,
+  deps: ModelDiscoveryDeps,
 ): Promise<ModelCommandResult> {
-  const result = await execa('codex', ['debug', 'models'], {
-    cwd: home,
-    env: discoveryEnv(env),
+  const guards = await import('./review')
+  const env = (deps.reviewerEnv ?? guards.reviewerEnv)('codex', projectRoot, baseEnv)
+  const binary = await (deps.resolveReviewerBinary ?? guards.resolveReviewerBinary)(
+    'codex',
+    env,
+    projectRoot,
+  )
+  if (!binary) {
+    throw new ModelDiscoveryUnavailable('Codex CLI was not found on PATH outside the project.')
+  }
+
+  let command = binary
+  let args = ['debug', 'models']
+  if (/\.(cmd|bat)$/i.test(binary)) {
+    const entry = await (deps.npmShimEntry ?? guards.npmShimEntry)(binary)
+    if (!entry) {
+      throw new ModelDiscoveryUnavailable(
+        `Codex resolves to a batch file (${binary}) that is not a trusted npm shim outside the project.`,
+      )
+    }
+    command = process.execPath
+    args = [entry, ...args]
+  }
+
+  const invocation: ModelCommandInvocation = { command, args, cwd: home, env }
+  if (deps.runModelCommand) return deps.runModelCommand(invocation)
+  const result = await execa(invocation.command, [...invocation.args], {
+    cwd: invocation.cwd,
+    env: { ...invocation.env },
     extendEnv: false,
     timeout: DISCOVERY_TIMEOUT_MS,
     maxBuffer: MAX_DISCOVERY_OUTPUT_BYTES,
@@ -184,40 +233,11 @@ async function runCodexModelCommand(
   }
 }
 
-function discoveryEnv(base: NodeJS.ProcessEnv): Record<string, string> {
-  const allowed = new Set([
-    'PATH',
-    'PATHEXT',
-    'SYSTEMROOT',
-    'WINDIR',
-    'HOME',
-    'USER',
-    'LOGNAME',
-    'USERPROFILE',
-    'HOMEDRIVE',
-    'HOMEPATH',
-    'APPDATA',
-    'LOCALAPPDATA',
-    'TEMP',
-    'TMP',
-    'TMPDIR',
-    'LANG',
-    'LC_ALL',
-    'LC_CTYPE',
-    'TZ',
-    'TERM',
-    'NO_COLOR',
-    'CODEX_HOME',
-    'XDG_CONFIG_HOME',
-    'XDG_DATA_HOME',
-    'XDG_CACHE_HOME',
-  ])
-  return Object.fromEntries(
-    Object.entries(base).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && allowed.has(entry[0].toUpperCase()),
-    ),
-  )
+class ModelDiscoveryUnavailable extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ModelDiscoveryUnavailable'
+  }
 }
 
 function codexFallback(reason: string): ReviewerModels {
@@ -229,6 +249,7 @@ function codexFallback(reason: string): ReviewerModels {
 }
 
 function commandFailureNote(error: unknown): string {
+  if (error instanceof ModelDiscoveryUnavailable) return error.message
   if (errorCode(error) === 'ENOENT') return 'Codex CLI was not found.'
   return `Codex model discovery could not start: ${errorMessage(error)}`
 }

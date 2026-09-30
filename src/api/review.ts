@@ -120,7 +120,9 @@ export async function requestReview(
     )
   }
   const modelSelection = req.model
-    ? await selectModel(req.model, route.preset, deps.listModels ?? listModels)
+    ? await selectModel(req.model, route.preset, () =>
+        (deps.listModels ?? listModels)({ projectRoot: realRoot }),
+      )
     : null
 
   const subject = await loadSubject(realRoot, req, deps)

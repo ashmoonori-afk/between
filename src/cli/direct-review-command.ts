@@ -63,7 +63,7 @@ export function registerDirectReviewCommands(program: Command): void {
     .action(async (opts: { refresh?: boolean; json?: boolean }) => {
       try {
         const { listModels } = await import('../api/models')
-        const result = await listModels({ refresh: opts.refresh })
+        const result = await listModels({ refresh: opts.refresh, projectRoot: root() })
         if (opts.json) printJson(result)
         else printModels(result)
       } catch (e) {
