@@ -131,6 +131,17 @@ describe('planIsolationSetup', () => {
     ).toThrow(/user name/)
   })
 
+  it('refuses on Windows as not implemented even without a uid', () => {
+    const plan = planIsolationSetup({
+      platform: 'win32',
+      user: 'between-reviewer',
+      invokingUid: -1,
+      configPath: isolationConfigPath({ platform: 'win32' }),
+      facts: { userExists: false, configExists: false },
+    })
+    expect(!plan.supported && plan.reason).toMatch(/not implemented/)
+  })
+
   it.each([-1, 1.5, Number.NaN])('rejects the invoking uid %s', (invokingUid) => {
     expect(() =>
       planIsolationSetup({

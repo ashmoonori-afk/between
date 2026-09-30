@@ -160,7 +160,8 @@ whole subtree. A path counts as writable when the reviewer owns it (an owner can
 or when it is writable and either not sticky or the nearest existing parent of a protected entry
 that does not exist yet (the reviewer could create that entry first). A sticky directory such as
 `/tmp` above existing entries counts as safe. Any missing or unexpected probe answer is reported as
-**broken**, never as active.
+**broken**, never as active. For example, with `BETWEEN_ANCHOR_DIR=/tmp/anchors`, status stays
+**broken** until that directory exists; create it, or pick a non-sticky location.
 
 If your account already has broad passwordless sudo (common on WSL and CI images), the dedicated
 rule is redundant: the reviewer still runs as `between-reviewer`, but any process running as you

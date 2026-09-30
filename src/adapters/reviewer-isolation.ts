@@ -144,11 +144,11 @@ export function planIsolationSetup(opts: {
   facts: HostFacts
 }): IsolationPlan {
   assertUserName(opts.user)
-  if (!Number.isInteger(opts.invokingUid) || opts.invokingUid < 0) {
-    throw new Error(`invalid invoking uid ${opts.invokingUid}`)
-  }
   if (opts.platform !== 'linux' || !opts.configPath) {
     return { supported: false, reason: UNSUPPORTED }
+  }
+  if (!Number.isInteger(opts.invokingUid) || opts.invokingUid < 0) {
+    throw new Error(`invalid invoking uid ${opts.invokingUid}`)
   }
   const { user } = opts
   if (opts.facts.configExists) {
