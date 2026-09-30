@@ -2,6 +2,7 @@ import { NotInitializedError } from '../runtime'
 import { ReplayError } from '../core/replay'
 import { BundleIntegrityError } from '../review/store'
 import { RecordIntegrityError } from '../review/record-seal'
+import { JournalRollbackError } from '../adapters/journal-anchor'
 
 export type BetweenApiErrorCode =
   | 'no_state'
@@ -44,7 +45,8 @@ export function toApiError(err: unknown): BetweenApiError {
   if (
     err instanceof ReplayError ||
     err instanceof BundleIntegrityError ||
-    err instanceof RecordIntegrityError
+    err instanceof RecordIntegrityError ||
+    err instanceof JournalRollbackError
   ) {
     return new BetweenApiError('integrity_error', err.message)
   }

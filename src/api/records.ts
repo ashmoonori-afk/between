@@ -1,6 +1,6 @@
 import { SystemClock } from '../core/clock'
 import { replayStateFromEvents } from '../core/replay'
-import { EventsLog } from '../adapters/events-log'
+import { EventsLog, type AnchorStatus } from '../adapters/events-log'
 import { StateRepository } from '../adapters/state-repository'
 import { WorktreeProvider } from '../adapters/worktree'
 import { collectEvidence } from '../evidence/collect'
@@ -18,6 +18,8 @@ export interface JournalReport {
   entries: number
   /** present only when verification was requested. */
   integrity?: JournalIntegrity
+  /** present only when verification was requested: how the out-of-workspace anchor check went. */
+  anchor?: AnchorStatus
 }
 
 /** Count journal entries; with `verify`, walk the hash chain and check the head pinned in state. */
@@ -31,10 +33,12 @@ export async function inspectJournal(
   if (!state && events.length === 0) throw noStateError()
   if (!opts.verify) return { entries: events.length }
   const result = await log.verifyAll(state?.journal ?? null)
-  if (result.valid) return { entries: events.length, integrity: { status: 'verified' } }
+  const anchor = result.anchor.status
+  if (result.valid) return { entries: events.length, integrity: { status: 'verified' }, anchor }
   if (!result.chain.valid) {
     return {
       entries: events.length,
+      anchor,
       integrity: {
         status: 'broken',
         broken_at: result.chain.brokenAt ?? null,
@@ -42,10 +46,22 @@ export async function inspectJournal(
       },
     }
   }
-  return {
-    entries: events.length,
-    integrity: { status: 'tampered', reason: result.head.reason ?? 'head pin mismatch' },
-  }
+  const reason = !result.head.ok
+    ? (result.head.reason ?? 'head pin mismatch')
+    : (result.anchor.reason ?? 'journal anchor mismatch')
+  return { entries: events.length, integrity: { status: 'tampered', reason }, anchor }
+}
+
+/**
+ * Human recovery after an intentional restore of `.between/`: anchor the journal as it is now.
+ * Refuses a broken chain. Not exposed over MCP.
+ */
+export async function resetJournalAnchor(
+  root: string,
+): Promise<{ entries: number; anchor: 'keychain' | 'file' | null }> {
+  const log = new EventsLog(root)
+  const head = await log.resetAnchor()
+  return { entries: head?.count ?? 0, anchor: log.anchorKind }
 }
 
 /** Reconstruct state from the append-only journal; `verify` enforces the chain + pinned head. */
@@ -56,6 +72,7 @@ export async function replayState(
   const log = new EventsLog(root)
   const state = await new StateRepository(root).read()
   const events = await log.read()
+  if (opts.verify) await log.assertAnchored(events)
   if (!state && events.length === 0) throw noStateError()
   return replayStateFromEvents(events, opts.verify ? state?.journal : null)
 }
