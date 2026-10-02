@@ -167,6 +167,18 @@ describe('review/verify record sealing', () => {
     TIMEOUT_MS,
   )
 
+  it('reads and seals an ordinary regular record', async () => {
+    const path = join(dir, 'record.json')
+    const raw = JSON.stringify({ cycle: 1, diff_hash: 'a'.repeat(64) })
+    await writeFile(path, raw)
+    try {
+      expect(await readRecordBytes(path)).toEqual({ status: 'ok', raw, sha256: sha256(raw) })
+      expect(await makeRecordReadOnly(path, sha256(raw))).toBe(true)
+    } finally {
+      await chmod(path, 0o644).catch(() => {})
+    }
+  })
+
   it(
     'a reviewer may still rewrite its record BEFORE the broker accepts it',
     async () => {
