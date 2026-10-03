@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { readFile } from 'node:fs/promises'
+import { execFile } from 'node:child_process'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHmac } from 'node:crypto'
+import { promisify } from 'node:util'
+import { verifyApproval, type ApprovalClaim } from '../../../src/core/approval.js'
 import {
   buildBrokerInputCommand,
   buildEvidenceMarkdown,
@@ -9,6 +13,39 @@ import {
   submitBetweenAction,
 } from '../src/workspace.js'
 import { readCommands, seedWorkspace } from './workspace-fixtures'
+
+const execFileAsync = promisify(execFile)
+const GIT_ENV = { ...process.env, GIT_PAGER: 'cat', LC_ALL: 'C', TZ: 'UTC' }
+
+function gitIn(cwd: string, args: string[]) {
+  return execFileAsync('git', ['-c', 'core.autocrlf=false', ...args], { cwd, env: GIT_ENV })
+}
+
+async function headTree(root: string): Promise<string> {
+  const { stdout } = await gitIn(root, ['rev-parse', 'HEAD^{tree}'])
+  return stdout.trim()
+}
+
+async function expectedWorktreeTree(root: string): Promise<string> {
+  const { stdout: gitDirOut } = await gitIn(root, ['rev-parse', '--absolute-git-dir'])
+  const tempIndex = join(gitDirOut.trim(), `between-expected-index-${Date.now()}`)
+  const env = { ...GIT_ENV, GIT_INDEX_FILE: tempIndex }
+  try {
+    await execFileAsync('git', ['-c', 'core.autocrlf=false', 'add', '-A'], { cwd: root, env })
+    const { stdout } = await execFileAsync('git', ['write-tree'], { cwd: root, env })
+    return stdout.trim()
+  } finally {
+    await execFileAsync('git', ['-c', 'core.autocrlf=false', 'update-index', '--refresh'], {
+      cwd: root,
+      env,
+    }).catch(() => {})
+  }
+}
+
+async function stagedEntry(root: string): Promise<string> {
+  const { stdout } = await gitIn(root, ['ls-files', '-s'])
+  return stdout.trim()
+}
 
 describe('workspace actions', () => {
   it('reads current cockpit findings from .between state, review, and bundle', async () => {
@@ -30,9 +67,16 @@ describe('workspace actions', () => {
 
   it('writes daemon command files for review, fix, and exact bundle approval', async () => {
     const root = await seedWorkspace()
+    await gitIn(root, ['init', '-q'])
+    await gitIn(root, ['config', 'user.email', 'test@example.com'])
+    await gitIn(root, ['config', 'user.name', 'Test'])
+    await writeFile(join(root, '.gitignore'), '.between/\n', 'utf8')
+    await writeFile(join(root, 'app.ts'), 'const a = 1\n', 'utf8')
+    await gitIn(root, ['add', '-A'])
     const expiresAt = new Date(Date.parse('2026-06-20T00:00:00.000Z') + 3_600_000).toISOString()
     const previousSecret = process.env.BETWEEN_APPROVAL_SECRET
-    delete process.env.BETWEEN_APPROVAL_SECRET
+    process.env.BETWEEN_APPROVAL_SECRET = 'ide-secret'
+    const expectedTree = await expectedWorktreeTree(root)
 
     try {
       await submitBetweenAction(root, { kind: 'request_second_review' })
@@ -67,9 +111,10 @@ describe('workspace actions', () => {
     expect(commands[2]).toEqual({ kind: 'steer_goal', goal: 'keep broker-only IDE' })
     expect(commands[3].bundle_id).toBe('b'.repeat(64))
     expect(commands[3].expires_at).toBe(expiresAt)
+    expect(commands[3].tree).toBe(expectedTree)
     expect(commands[3].sig).toBe(
       createHmac('sha256', 'ide-secret')
-        .update(`merge:${'d'.repeat(64)}:1:${'b'.repeat(64)}:${expiresAt}`)
+        .update(`merge:${'d'.repeat(64)}:1:${'b'.repeat(64)}:${expiresAt}:tree=${expectedTree}`)
         .digest('hex'),
     )
     const config = await readFile(join(root, '.between', 'config.yaml'), 'utf8')
@@ -78,6 +123,99 @@ describe('workspace actions', () => {
     expect(config).toContain('ide_permission_mode: full_access')
     expect(config).toContain('ide_working_folder: "packages/worker"')
     expect(config).toContain('ide_followup_mode: queue')
+  })
+
+  it('signs exact bundle approval for the working tree without changing the index', async () => {
+    const root = await seedWorkspace()
+    await gitIn(root, ['init', '-q'])
+    await gitIn(root, ['config', 'user.email', 'test@example.com'])
+    await gitIn(root, ['config', 'user.name', 'Test'])
+    await writeFile(join(root, '.gitignore'), '.between/\n', 'utf8')
+    await writeFile(join(root, 'head.txt'), 'head\n', 'utf8')
+    await gitIn(root, ['add', 'head.txt'])
+    await gitIn(root, ['commit', '-q', '-m', 'head'])
+    const head = await headTree(root)
+    await writeFile(join(root, 'app.ts'), 'const a = 1\nconst staged = true\n', 'utf8')
+    await gitIn(root, ['add', 'app.ts'])
+    await writeFile(join(root, 'app.ts'), 'const a = 1\nconst staged = true\nconst unstaged = 2\n', 'utf8')
+    await writeFile(join(root, 'untracked.txt'), 'brand new\n', 'utf8')
+    const indexBefore = await stagedEntry(root)
+    const expected = await expectedWorktreeTree(root)
+    expect(expected).not.toBe(head)
+
+    const previousSecret = process.env.BETWEEN_APPROVAL_SECRET
+    process.env.BETWEEN_APPROVAL_SECRET = 'ide-secret'
+    let command: Record<string, unknown>
+    try {
+      await submitBetweenAction(
+        root,
+        { kind: 'approve_exact_bundle' },
+        Date.parse('2026-06-20T00:00:00.000Z'),
+      )
+      command = (await readCommands(root))[0]
+    } finally {
+      if (previousSecret === undefined) delete process.env.BETWEEN_APPROVAL_SECRET
+      else process.env.BETWEEN_APPROVAL_SECRET = previousSecret
+    }
+
+    expect(command.tree).toBe(expected)
+    expect(await stagedEntry(root)).toBe(indexBefore)
+
+    const claim: ApprovalClaim = {
+      scope: 'merge',
+      diff_hash: 'd'.repeat(64),
+      cycle: 1,
+      bundle_id: 'b'.repeat(64),
+      expires_at: command.expires_at as string,
+      tree: command.tree as string,
+    }
+    expect(verifyApproval('ide-secret', String(command.sig), claim)).toBe(true)
+    expect(verifyApproval('ide-secret', String(command.sig), { ...claim, tree: head })).toBe(false)
+  })
+
+  it('ignores repository approval keys without an environment secret', async () => {
+    const root = await seedWorkspace()
+    await writeFile(join(root, '.git', 'between-approval.key'), 'ide-secret\n', 'utf8')
+    await gitIn(root, ['init', '-q'])
+    await gitIn(root, ['config', 'user.email', 'test@example.com'])
+    await gitIn(root, ['config', 'user.name', 'Test'])
+    await writeFile(join(root, '.gitignore'), '.between/\n', 'utf8')
+    await writeFile(join(root, 'app.ts'), 'const a = 1\n', 'utf8')
+    await gitIn(root, ['add', '-A'])
+    const previousSecret = process.env.BETWEEN_APPROVAL_SECRET
+    delete process.env.BETWEEN_APPROVAL_SECRET
+
+    try {
+      await submitBetweenAction(
+        root,
+        { kind: 'approve_exact_bundle' },
+        Date.parse('2026-06-20T00:00:00.000Z'),
+      )
+    } finally {
+      if (previousSecret === undefined) delete process.env.BETWEEN_APPROVAL_SECRET
+      else process.env.BETWEEN_APPROVAL_SECRET = previousSecret
+    }
+
+    const [command] = await readCommands(root)
+    expect(command.kind).toBe('approve')
+    expect(command.sig).toBeUndefined()
+  })
+
+  it('does not queue approval when the tree cannot be computed', async () => {
+    const root = await seedWorkspace()
+    const previousSecret = process.env.BETWEEN_APPROVAL_SECRET
+    process.env.BETWEEN_APPROVAL_SECRET = 'ide-secret'
+
+    try {
+      await expect(
+        submitBetweenAction(root, { kind: 'approve_exact_bundle' }),
+      ).rejects.toThrow(/working tree/)
+    } finally {
+      if (previousSecret === undefined) delete process.env.BETWEEN_APPROVAL_SECRET
+      else process.env.BETWEEN_APPROVAL_SECRET = previousSecret
+    }
+
+    await expect(readCommands(root).catch(() => [])).resolves.toEqual([])
   })
 
   it('rejects invalid topology values without changing config', async () => {
