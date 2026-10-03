@@ -43,8 +43,9 @@ const NON_BLOCK = constants.O_NONBLOCK ?? 0
 /**
  * Read a record's exact bytes without following a symlink or blocking on a FIFO. POSIX: O_NOFOLLOW
  * refuses a symlink at open time and O_NONBLOCK keeps a named pipe from hanging the open. After
- * opening, the handle must be a regular file whose identity (dev + ino) matches a fresh lstat of
- * the path; on Windows (no O_NOFOLLOW) that comparison is what rejects a symlink/reparse swap.
+ * opening, the handle must be a regular file whose identity matches a fresh lstat of the path: on
+ * POSIX that is dev + ino, on Windows only ino (the handle's dev is a volume/device id that never
+ * equals lstat's 0, and the path/regular-file/inode checks are what reject a symlink/reparse swap).
  */
 export function readRecordBytes(path: string): Promise<RecordBytes> {
   return withRecordHandle(path, async (fh) => {
@@ -78,7 +79,8 @@ async function withRecordHandle(
       const opened = await fh.stat({ bigint: true })
       if (!opened.isFile()) return { status: 'not_regular' }
       const linked = await lstat(path, { bigint: true })
-      if (!linked.isFile() || linked.dev !== opened.dev || linked.ino !== opened.ino) {
+      const sameDevice = process.platform === 'win32' || linked.dev === opened.dev
+      if (!linked.isFile() || !sameDevice || linked.ino !== opened.ino) {
         return { status: 'not_regular' }
       }
       return await use(fh)
