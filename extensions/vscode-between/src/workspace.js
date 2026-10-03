@@ -1,12 +1,28 @@
 import { createHmac, randomUUID } from 'node:crypto'
+import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readdir, readFile, rename, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { copyFile, mkdir, readdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import { isAbsolute, join } from 'node:path'
+import { promisify } from 'node:util'
+
+const execFileAsync = promisify(execFile)
 import { buildFindingModel } from './finding-model.js'
 import { BetweenWorkspaceError } from './workspace-errors.js'
 import { configureTopology, readIdeProfile } from './workspace-topology.js'
 
 export const APPROVAL_TTL_MS = 3_600_000
+
+/** git config pinned so the tree snapshot is deterministic across machines. */
+const GIT_PIN = [
+  '-c',
+  'core.autocrlf=false',
+  '-c',
+  'core.quotepath=false',
+  '-c',
+  'core.fileMode=false',
+]
+/** Kill-switch env for the tree snapshot; the process env is never mutated. */
+const GIT_PINNED_ENV = { ...process.env, GIT_PAGER: 'cat', LC_ALL: 'C', TZ: 'UTC' }
 export { BetweenWorkspaceError } from './workspace-errors.js'
 
 export function findWorkspaceRoot(vscodeApi) {
@@ -161,6 +177,15 @@ async function submitApproveExactBundle(root, nowMs) {
   if (!isMatchingBundle(bundle, bundleId, state.diff?.hash ?? null)) {
     throw new BetweenWorkspaceError('Exact bundle approval requires the current sealed bundle.')
   }
+  // A protected push is only authorized when the pushed commit's tree equals the approved tree
+  // (see the installed pre-push hook), so the approval must bind the exact working tree. Fail
+  // closed: an approval that cannot be bound to a tree must not be queued at all.
+  const tree = await resolveWorktreeTree(root)
+  if (!tree) {
+    throw new BetweenWorkspaceError(
+      'Exact bundle approval requires the working tree (git write-tree failed).',
+    )
+  }
   const expiresAt = new Date(nowMs + APPROVAL_TTL_MS).toISOString()
   const claim = {
     scope: 'merge',
@@ -168,16 +193,18 @@ async function submitApproveExactBundle(root, nowMs) {
     cycle: Number(state.workflow?.cycle ?? 0),
     bundle_id: bundleId,
     expires_at: expiresAt,
+    tree,
   }
-  const secret = await resolveApprovalSecret(root)
+  const secret = resolveApprovalSecret()
   await writeCommand(root, {
     kind: 'approve',
     scope: 'merge',
     sig: secret ? signApproval(secret, claim) : undefined,
     bundle_id: bundleId,
     expires_at: expiresAt,
+    tree,
   })
-  return { ok: true, signed: Boolean(secret), bundleId }
+  return { ok: true, signed: Boolean(secret), bundleId, tree }
 }
 
 async function writeCommand(root, command) {
@@ -190,19 +217,58 @@ async function writeCommand(root, command) {
   await rename(tmp, file)
 }
 
-async function resolveApprovalSecret(root) {
-  if (process.env.BETWEEN_APPROVAL_SECRET) return process.env.BETWEEN_APPROVAL_SECRET
-  const path = join(root, '.git', 'between-approval.key')
-  if (!existsSync(path)) return ''
-  return (await readFile(path, 'utf8')).trim()
+/** The env-only human approval secret; a repository key file is NOT trusted as a signature. */
+function resolveApprovalSecret() {
+  return process.env.BETWEEN_APPROVAL_SECRET ?? ''
 }
 
 function signApproval(secret, claim) {
-  return createHmac('sha256', secret)
-    .update(
-      `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}:${claim.bundle_id ?? ''}:${claim.expires_at}`,
-    )
-    .digest('hex')
+  const base = `${claim.scope}:${claim.diff_hash ?? ''}:${claim.cycle}:${claim.bundle_id ?? ''}:${claim.expires_at}`
+  const payload = claim.tree ? `${base}:tree=${claim.tree}` : base
+  return createHmac('sha256', secret).update(payload).digest('hex')
+}
+
+/**
+ * Tree OID of the whole working tree as `git add -A` would commit it (tracked + untracked,
+ * honoring .gitignore), built in a throwaway index so the user's index is never touched. Mirrors
+ * the daemon adapter's algorithm: resolve the real Git directory (linked worktrees use a file),
+ * copy the real index when present so already-staged-but-unchanged content is preserved, then
+ * `add -A` + `write-tree`. Returns null when it cannot be computed (no repo, no git, failure).
+ */
+async function resolveWorktreeTree(root) {
+  let gitDir
+  try {
+    gitDir = await resolveGitDir(root)
+  } catch {
+    return null
+  }
+  if (!gitDir) return null
+  const tempIndex = join(gitDir, `between-approval-index-${randomUUID()}`)
+  const env = { ...GIT_PINNED_ENV, GIT_INDEX_FILE: tempIndex }
+  const git = (args) => execFileAsync('git', [...GIT_PIN, ...args], { cwd: root, env })
+  try {
+    const realIndex = join(gitDir, 'index')
+    if (existsSync(realIndex)) await copyFile(realIndex, tempIndex)
+    await git(['add', '-A'])
+    const { stdout } = await git(['write-tree'])
+    const tree = String(stdout).trim()
+    return tree || null
+  } catch {
+    return null
+  } finally {
+    await rm(tempIndex, { force: true }).catch(() => {})
+  }
+}
+
+/** Absolute Git directory for `root`, resolving a linked-worktree `.git` file; null when not a repo. */
+async function resolveGitDir(root) {
+  const { stdout } = await execFileAsync('git', [...GIT_PIN, 'rev-parse', '--git-dir'], {
+    cwd: root,
+    env: GIT_PINNED_ENV,
+  })
+  const dir = String(stdout).trim()
+  if (!dir) return null
+  return isAbsolute(dir) ? dir : join(root, dir)
 }
 
 function deriveEvidenceVerdict(state, findings) {

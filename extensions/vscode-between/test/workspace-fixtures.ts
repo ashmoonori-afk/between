@@ -10,9 +10,14 @@ export async function readCommands(root: string): Promise<Array<Record<string, u
   )
 }
 
-export async function seedWorkspace(
-  options: { evidenceTrust?: 'real' | 'simulated'; writeBundle?: boolean } = {},
-): Promise<string> {
+export interface SeedWorkspaceOptions {
+  evidenceTrust?: 'real' | 'simulated'
+  writeBundle?: boolean
+  /** provision `.git/between-approval.key`; opt-in only (the env secret is the real contract). */
+  legacyApprovalKey?: string
+}
+
+export async function seedWorkspace(options: SeedWorkspaceOptions = {}): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), 'between-vscode-workspace-'))
   await mkdir(join(root, '.git'), { recursive: true })
   await mkdir(join(root, '.between', 'reviews'), { recursive: true })
@@ -27,7 +32,9 @@ ide_working_folder: packages/app
 ide_followup_mode: steer
 `,
   )
-  await writeFile(join(root, '.git', 'between-approval.key'), 'ide-secret\n')
+  if (options.legacyApprovalKey !== undefined) {
+    await writeFile(join(root, '.git', 'between-approval.key'), `${options.legacyApprovalKey}\n`)
+  }
   await writeFile(join(root, 'app.ts'), 'const a = 1\nconst b = 2\n')
   await writeFile(join(root, '.between', 'state.json'), stateJson(root, options))
   await writeFile(join(root, '.between', 'reviews', 'cycle-0001.json'), reviewJson())
@@ -37,10 +44,7 @@ ide_followup_mode: steer
   return root
 }
 
-function stateJson(
-  root: string,
-  options: { evidenceTrust?: 'real' | 'simulated'; writeBundle?: boolean },
-): string {
+function stateJson(root: string, options: SeedWorkspaceOptions): string {
   return JSON.stringify({
     project: { name: 'demo', root, obsidian_project_path: null },
     workflow: { phase: 'human_gate', cycle: 1 },
