@@ -14,13 +14,23 @@ export interface SecretScanResult {
  * conservative rules as the snapshot redactor. Pure + unit-tested.
  */
 export function scanDiffForSecrets(trackedPatch: string): SecretScanResult {
-  const added = trackedPatch
-    .split('\n')
-    .filter((l) => l.startsWith('+') && !l.startsWith('+++')) // added lines, not the +++ file header
-    .map((l) => l.slice(1))
-    .join('\n')
-  const r = redactSecrets(added)
-  return { hits: r.redactedCount, rules: r.rulesHit }
+  let hits = 0
+  const rules = new Set<string>()
+  for (const file of trackedPatch.split(/^diff --git /m)) {
+    const added: string[] = []
+    let inHunk = false
+    for (const line of file.split('\n')) {
+      if (line.startsWith('@@ ')) inHunk = true
+      // A +++ file header precedes hunks; inside a hunk, ++ is literal added text.
+      if (line.startsWith('+') && (inHunk || !line.startsWith('+++ '))) {
+        added.push(line.slice(1))
+      }
+    }
+    const scan = redactSecrets(added.join('\n'))
+    hits += scan.redactedCount
+    for (const rule of scan.rulesHit) rules.add(rule)
+  }
+  return { hits, rules: [...rules] }
 }
 
 /** Scan only immutable captured content, keeping each untracked file's text separate. */
