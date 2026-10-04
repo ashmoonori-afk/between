@@ -2,11 +2,11 @@ import type { BetweenState } from '../core/types'
 import type { CommandRunner } from '../verify/runner'
 import type { ReviewBundle } from '../review/bundle'
 import type { PolicyEvaluation } from './engine'
-import { evaluatePolicy, classifyRisk, changedPathsFromRaw } from './engine'
+import { evaluatePolicy, classifyRisk, changedPathsFromDiff } from './engine'
 import { loadPolicy } from './load'
 import { collectEvidence } from '../evidence/collect'
 import { readBundle } from '../review/store'
-import { scanDiffForSecrets } from '../verify/secret-scan'
+import { scanBundleForSecrets } from '../verify/secret-scan'
 import { runDepAudit } from '../verify/dep-audit'
 import { shellRunner } from '../verify/runner'
 
@@ -49,7 +49,8 @@ export async function evaluateCyclePolicy(
       )
     }
   }
-  const changedPaths = bundle ? changedPathsFromRaw(bundle.diff.trackedRaw) : []
+  const changedPaths = bundle ? changedPathsFromDiff(bundle.diff) : []
+  const secretScan = bundle ? scanBundleForSecrets(bundle) : null
 
   // run npm audit only when the active (risk-based) gate set actually needs it.
   const activeGates =
@@ -63,7 +64,8 @@ export async function evaluateCyclePolicy(
     changedPaths,
     blockingFindings: manifest?.findings.blocking ?? 0,
     verifyPassed: manifest?.verify ? manifest.verify.passed : null,
-    secretScanHits: bundle ? scanDiffForSecrets(bundle.diff.tracked).hits : null,
+    secretScanHits: secretScan?.hits ?? null,
+    secretScanIncomplete: secretScan?.incomplete ?? false,
     depAuditVulns,
   })
   const reason = evaluation.gates

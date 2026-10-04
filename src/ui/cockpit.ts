@@ -3,8 +3,8 @@ import { EventsLog } from '../adapters/events-log'
 import { collectEvidence } from '../evidence/collect'
 import { readBundle } from '../review/store'
 import { loadPolicy } from '../policy/load'
-import { evaluatePolicy, changedPathsFromRaw } from '../policy/engine'
-import { scanDiffForSecrets } from '../verify/secret-scan'
+import { evaluatePolicy, changedPathsFromDiff } from '../policy/engine'
+import { scanBundleForSecrets } from '../verify/secret-scan'
 import type { CockpitData, CockpitGate } from './cockpit-frame'
 import { buildCockpitModel, type CockpitModel, type ReplayCycleSnapshot } from './cockpit-model'
 
@@ -24,11 +24,13 @@ export async function collectCockpitData(
   let policySatisfied: boolean | null = null
   if (bundle) {
     const policy = await loadPolicy(root)
+    const secretScan = scanBundleForSecrets(bundle)
     const ev = evaluatePolicy(policy, {
-      changedPaths: changedPathsFromRaw(bundle.diff.trackedRaw),
+      changedPaths: changedPathsFromDiff(bundle.diff),
       blockingFindings: manifest?.findings.blocking ?? 0,
       verifyPassed: manifest?.verify ? manifest.verify.passed : null,
-      secretScanHits: scanDiffForSecrets(bundle.diff.tracked).hits,
+      secretScanHits: secretScan.hits,
+      secretScanIncomplete: secretScan.incomplete,
     })
     risk = ev.risk
     gates = ev.gates.map((g) => ({ name: g.name, status: g.status }))

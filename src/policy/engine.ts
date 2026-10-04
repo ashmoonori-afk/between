@@ -1,4 +1,5 @@
 import type { Policy } from './schema'
+import type { DiffInput } from '../core/types'
 
 export type RiskLevel = 'high' | 'normal'
 export type GateStatus = 'pass' | 'fail' | 'not_enforced'
@@ -14,8 +15,10 @@ export interface PolicyInput {
   blockingFindings: number
   /** true/false from the verification record, or null when none exists. */
   verifyPassed: boolean | null
-  /** secret-shaped hits in the added diff lines (B3); null/undefined = scan not run. */
+  /** secret-shaped hits in added content (B3); null/undefined = scan not run. */
   secretScanHits?: number | null
+  /** true when an opted-in untracked entry has no matching captured content. */
+  secretScanIncomplete?: boolean
   /** total npm-audit vulnerabilities (B3); null/undefined = audit not run. */
   depAuditVulns?: number | null
 }
@@ -86,6 +89,16 @@ export function changedPathsFromRaw(trackedRaw: string): string[] {
     .filter((p) => p.length > 0)
 }
 
+/** Include opted-in untracked paths even when their payload was too large to capture. */
+export function changedPathsFromDiff(diff: DiffInput): string[] {
+  return [
+    ...new Set([
+      ...changedPathsFromRaw(diff.trackedRaw),
+      ...diff.untracked.map((entry) => entry.path),
+    ]),
+  ]
+}
+
 /** A change is high-risk if ANY changed path matches a high_risk_paths glob. */
 export function classifyRisk(policy: Policy, changedPaths: string[]): RiskLevel {
   const high = changedPaths.some((p) => policy.high_risk_paths.some((g) => globMatch(g, p)))
@@ -111,6 +124,13 @@ function evaluateGate(name: string, input: PolicyInput): GateResult {
       }
     case 'secret_scan': {
       // B3: enforced when a scan result is supplied; otherwise advisory (scan not run).
+      if (input.secretScanIncomplete) {
+        return {
+          name,
+          status: 'fail',
+          detail: 'secret scan incomplete: untracked content unavailable',
+        }
+      }
       const hits = input.secretScanHits
       if (hits === null || hits === undefined) {
         return { name, status: 'not_enforced', detail: 'secret scan not run' }
@@ -118,7 +138,7 @@ function evaluateGate(name: string, input: PolicyInput): GateResult {
       return {
         name,
         status: hits === 0 ? 'pass' : 'fail',
-        detail: `${hits} secret-shaped hit(s) in the added diff`,
+        detail: `${hits} secret-shaped hit(s) in added content`,
       }
     }
     case 'dependency_audit': {
