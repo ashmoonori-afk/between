@@ -549,7 +549,7 @@ This prevents accidental hardening of one-off reviewer preferences into permanen
 ## 14. MVP Commands
 
 ```bash
-between init --vault "C:/Users/lg/ObsidianVault"
+between init --vault "C:/Users/user/ObsidianVault"
 between start
 between status
 between pause
