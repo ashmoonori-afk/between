@@ -22,7 +22,7 @@ describe('buildAgentSandboxEnv', () => {
         baseEnv: {
           Path: 'C:/Windows/System32',
           SystemRoot: 'C:/Windows',
-          USERPROFILE: 'C:/Users/lg',
+          USERPROFILE: 'C:/Users/user',
           [APPROVAL_SECRET_ENV]: secret,
           GITHUB_TOKEN: secret,
           GH_TOKEN: secret,
@@ -40,7 +40,7 @@ describe('buildAgentSandboxEnv', () => {
 
     expect(result.env.Path).toBe('C:/Windows/System32')
     expect(result.env.SystemRoot).toBe('C:/Windows')
-    expect(result.env.USERPROFILE).toBe('C:/Users/lg')
+    expect(result.env.USERPROFILE).toBe('C:/Users/user')
     expect(result.env.FORCE_COLOR).toBe('1')
     expect(result.env.BETWEEN_ROOT).toBe('C:/repo')
     for (const key of [

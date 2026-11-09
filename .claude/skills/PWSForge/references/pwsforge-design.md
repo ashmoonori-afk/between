@@ -601,5 +601,5 @@ PWSForge/
 현재 Hermes skill 위치에서는 이 문서가 다음 경로에 저장됩니다.
 
 ```text
-C:/Users/lg/AppData/Local/hermes/skills/software-development/pwsforge/references/pwsforge-design.md
+C:/Users/user/AppData/Local/hermes/skills/software-development/pwsforge/references/pwsforge-design.md
 ```

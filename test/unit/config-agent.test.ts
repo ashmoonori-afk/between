@@ -65,12 +65,12 @@ describe('config agent-embedding keys', () => {
     expect(() => parseConfig({ reviewer_agent_count: 17 })).toThrow(/reviewer_agent_count/)
     expect(() => parseConfig({ ide_cli_rules_mode: 'unsafe' })).toThrow(/ide_cli_rules_mode/)
     expect(() => parseConfig({ ide_cli_profile_dir: '../outside' })).toThrow(/ide_cli_profile_dir/)
-    expect(() => parseConfig({ ide_cli_profile_dir: 'C:\\Users\\lg\\.codex' })).toThrow(
+    expect(() => parseConfig({ ide_cli_profile_dir: 'C:\\Users\\user\\.codex' })).toThrow(
       /ide_cli_profile_dir/,
     )
     expect(() => parseConfig({ ide_permission_mode: 'root' })).toThrow(/ide_permission_mode/)
     expect(() => parseConfig({ ide_working_folder: '../outside' })).toThrow(/ide_working_folder/)
-    expect(() => parseConfig({ ide_working_folder: 'C:\\Users\\lg\\repo' })).toThrow(
+    expect(() => parseConfig({ ide_working_folder: 'C:\\Users\\user\\repo' })).toThrow(
       /ide_working_folder/,
     )
     expect(() => parseConfig({ ide_followup_mode: 'overwrite' })).toThrow(/ide_followup_mode/)

@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Stop'
 
-$Source = 'C:\Users\lg\AppData\Local\hermes\skills\software-development\pwsforge'
-$Desktop = 'C:\Users\lg\Desktop'
+$Source = 'C:\Users\user\AppData\Local\hermes\skills\software-development\pwsforge'
+$Desktop = 'C:\Users\user\Desktop'
 $Zip = Join-Path $Desktop 'PWSForge.zip'
 $StageRoot = Join-Path $env:TEMP 'PWSForge_zip_stage'
 $Stage = Join-Path $StageRoot 'PWSForge'
